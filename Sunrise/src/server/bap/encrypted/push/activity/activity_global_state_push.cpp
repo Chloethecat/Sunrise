@@ -4,24 +4,29 @@
 
 #include <algorithm>
 #include <string_view>
+
 #include "../../../../../middleware/bap/activity_message/activity_global_state_encoder.h"
 #include "../../../../../middleware/content/packages/tables/region_reader.h"
 #include "../../../../../middleware/secure_channel/runtime.h"
 #include "../../../../../state/activity/defaults/activity_defaults_snapshot.h"
 #include "../../../../../state/activity/destination/activity_destination_snapshot.h"
+#include "../../../../../state/activity/destination/activity_destination_spawn_binding.h"
 #include "../../../../../state/activity/experimental/world_state_override.h"
+#include "../../../../../state/activity/runtime.h"
 #include "../../../../../state/build_data/runtime.h"
 #include "activity_arrival.h"
 #include "activity_notification_frame.h"
 
 namespace sunrise::server::bap::encrypted::push::activity {
+
 namespace message = middleware::bap::activity_message::global_activity_state;
 
 namespace {
 
 /** The byte a bubble carries when its first slice-set state is enabled. */
 constexpr std::uint8_t kBubbleEnabledByte = 0x80;
-constexpr std::uint8_t kBubbleDisabledByte = 0x7F;
+/** The byte Sunrise/game data uses for an inactive/no-state bubble. */
+constexpr std::uint8_t kBubbleDisabledByte = message::kBubbleStateNone;
 
 /**
  * Copies one destination name into the fixed message field.
@@ -40,24 +45,27 @@ void copy_name(const state::activity::destination::DestinationSelection& selecti
     }
     state.nameLength = length;
 }
+
 } // namespace
 
 /** Builds the whole message body input for one session. */
 [[nodiscard]] bool
-resolve_state(std::uint64_t sessionId,
+resolve_state(const state::activity::SessionBinding& binding,
               message::GlobalActivityState& output,
               state::activity::destination::DestinationSelection& selection) noexcept {
     output = {};
+    if (!state::activity::binding_matches(binding)) {
+        return false;
+    }
+
     state::activity::defaults::ActivityDefaults defaults{};
     state::activity::defaults::snapshot(defaults);
     const state::activity::defaults::FallbackPolicy& fallback =
         defaults.defaultDestination.fallback;
-    // The session's own destination wins. The authored default covers a session that committed
-    // before any selection was readable.
-    if (!state::activity::destination::snapshot(sessionId, selection)) {
-        selection = defaults.defaultDestination.selection;
-    }
+
+    selection = binding.destination;
     copy_name(selection, output);
+
     // The descriptor view points into caller storage that outlives the encode.
     output.descriptorBits = std::span<const std::byte>(selection.descriptorBits);
     output.descriptorBitLength = selection.descriptorBitLength;
@@ -65,30 +73,36 @@ resolve_state(std::uint64_t sessionId,
     output.fromActivityIndex = selection.previousActivityIndex;
     output.activityIndex = selection.activityIndex;
     output.spawnSetHash =
-        state::activity::destination::resolve_spawn_set_hash(selection, fallback.spawnSetHash);
-    // The extracted layout wins where the packages carry one. The count and the output array must
-    // come from the same source: a count from one and states from another is how uniform values
-    // reach the wire and look as though they worked.
+        state::activity::destination::attachable_spawn_set_hash(selection, fallback.spawnSetHash);
+
     const std::string_view name(output.name.data(), output.nameLength);
     ::sunrise::state::build_data::scenarios::Definition layout{};
+
     if (::sunrise::state::build_data::find_scenario_layout(name, layout)) {
         output.bubbleCount = layout.bubbleCount;
         std::copy(
             layout.bubbleStates.begin(), layout.bubbleStates.end(), output.bubbleStates.begin());
+
         output.hasSliceSet = true;
         output.sliceSetIndex =
             arrival_slice_set(defaults.defaultDestination, selection, name, layout);
 
+        // World State Inspector override. It is deliberately scoped to the exact scenario tag
+        // selected in the UI, so travelling elsewhere automatically leaves normal state intact.
         const auto test =
             ::sunrise::state::activity::experimental::world_state::snapshot();
+
         if (test.enabled && test.scenarioTag == layout.tag
             && test.bubble < static_cast<std::uint32_t>(layout.bubbleCount)) {
             const std::size_t bubble = static_cast<std::size_t>(test.bubble);
-            if (test.overrideBubble) {
+
+            if (test.overrideBubble && bubble < output.bubbleStates.size()) {
                 output.bubbleStates[bubble] =
                     test.bubbleEnabled ? kBubbleEnabledByte : kBubbleDisabledByte;
             }
+
             if (test.overrideSliceSet
+                && bubble < layout.bubbleStateCounts.size()
                 && test.stateOrdinal
                        < static_cast<std::uint32_t>(layout.bubbleStateCounts[bubble])) {
                 output.sliceSetIndex =
@@ -96,47 +110,55 @@ resolve_state(std::uint64_t sessionId,
                     + test.stateOrdinal;
             }
         }
+
         return true;
     }
+
     output.bubbleCount = fallback.bubbleCount;
     for (std::size_t index = 0; index < message::kBubbleStateCount; ++index) {
         const bool stateful = (fallback.statefulBubbleMask >> index & 1U) != 0;
-        output.bubbleStates[index] = stateful ? kBubbleEnabledByte : message::kBubbleStateNone;
+        output.bubbleStates[index] =
+            stateful ? kBubbleEnabledByte : message::kBubbleStateNone;
     }
+
     output.hasSliceSet = true;
-    // No layout means no bubble array to derive an arrival from, so the authored index stands.
     output.sliceSetIndex = fallback.initialSliceSet;
     return true;
 }
 
 /** Appends one global-activity-state svc9 notification and advances its local nonce. */
-bool append_global_state_notification(Scratch& scratch,
-                                      std::uint64_t sessionId,
-                                      std::span<const std::byte, state::kAesKeySize> key,
-                                      std::array<std::byte, state::kBapNonceSize>& nonce,
-                                      std::span<std::byte> response,
-                                      std::size_t& written) noexcept {
+bool append_global_state_notification(
+    Scratch& scratch,
+    const state::activity::SessionBinding& binding,
+    std::span<const std::byte, state::kAesKeySize> key,
+    std::array<std::byte, state::kBapNonceSize>& nonce,
+    std::span<std::byte> response,
+    std::size_t& written) noexcept {
     message::GlobalActivityState body{};
     state::activity::destination::DestinationSelection selection{};
-    if (written > response.size() || !resolve_state(sessionId, body, selection)) {
+
+    if (written > response.size() || !resolve_state(binding, body, selection)) {
         return false;
     }
+
     const std::size_t initialWritten = written;
     auto initialNonce = nonce;
     std::size_t messageSize = 0;
+
     const bool encoded =
         message::encode_global_activity_state(body, scratch.responseBody, messageSize)
-        && append_notification_frame(scratch,
-                                     sessionId,
-                                     message::kMessageType,
-                                     std::span(scratch.responseBody).first(messageSize),
-                                     key,
-                                     nonce,
-                                     response,
-                                     written);
-    // A replayed descriptor makes the body wider than the minimum encoding, so the clear uses the
-    // size actually produced, not that minimum.
+        && append_notification_frame(
+            scratch,
+            binding.sessionId,
+            message::kMessageType,
+            std::span(scratch.responseBody).first(messageSize),
+            key,
+            nonce,
+            response,
+            written);
+
     SecureZeroMemory(scratch.responseBody.data(), messageSize);
+
     if (encoded) {
         middleware::secure_channel::advance_nonce(nonce);
     } else {
@@ -146,8 +168,10 @@ bool append_global_state_notification(Scratch& scratch,
         written = initialWritten;
         nonce = initialNonce;
     }
+
     SecureZeroMemory(&initialNonce, sizeof initialNonce);
     SecureZeroMemory(&body, sizeof body);
     return encoded;
 }
+
 } // namespace sunrise::server::bap::encrypted::push::activity
