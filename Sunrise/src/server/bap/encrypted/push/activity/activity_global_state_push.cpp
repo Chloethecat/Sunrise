@@ -4,25 +4,24 @@
 
 #include <algorithm>
 #include <string_view>
-
 #include "../../../../../middleware/bap/activity_message/activity_global_state_encoder.h"
+#include "../../../../../middleware/content/packages/tables/region_reader.h"
 #include "../../../../../middleware/secure_channel/runtime.h"
 #include "../../../../../state/activity/defaults/activity_defaults_snapshot.h"
 #include "../../../../../state/activity/destination/activity_destination_snapshot.h"
-#include "../../../../../state/activity/destination/activity_destination_spawn_binding.h"
-#include "../../../../../state/activity/runtime.h"
+#include "../../../../../state/activity/experimental/world_state_override.h"
 #include "../../../../../state/build_data/runtime.h"
 #include "activity_arrival.h"
 #include "activity_notification_frame.h"
 
 namespace sunrise::server::bap::encrypted::push::activity {
-
 namespace message = middleware::bap::activity_message::global_activity_state;
 
 namespace {
 
 /** The byte a bubble carries when its first slice-set state is enabled. */
 constexpr std::uint8_t kBubbleEnabledByte = 0x80;
+constexpr std::uint8_t kBubbleDisabledByte = 0x7F;
 
 /**
  * Copies one destination name into the fixed message field.
@@ -41,24 +40,23 @@ void copy_name(const state::activity::destination::DestinationSelection& selecti
     }
     state.nameLength = length;
 }
-
 } // namespace
 
 /** Builds the whole message body input for one session. */
 [[nodiscard]] bool
-resolve_state(const state::activity::SessionBinding& binding,
+resolve_state(std::uint64_t sessionId,
               message::GlobalActivityState& output,
               state::activity::destination::DestinationSelection& selection) noexcept {
     output = {};
-    if (!state::activity::binding_matches(binding)) {
-        return false;
-    }
     state::activity::defaults::ActivityDefaults defaults{};
     state::activity::defaults::snapshot(defaults);
     const state::activity::defaults::FallbackPolicy& fallback =
         defaults.defaultDestination.fallback;
-
-    selection = binding.destination;
+    // The session's own destination wins. The authored default covers a session that committed
+    // before any selection was readable.
+    if (!state::activity::destination::snapshot(sessionId, selection)) {
+        selection = defaults.defaultDestination.selection;
+    }
     copy_name(selection, output);
     // The descriptor view points into caller storage that outlives the encode.
     output.descriptorBits = std::span<const std::byte>(selection.descriptorBits);
@@ -67,8 +65,7 @@ resolve_state(const state::activity::SessionBinding& binding,
     output.fromActivityIndex = selection.previousActivityIndex;
     output.activityIndex = selection.activityIndex;
     output.spawnSetHash =
-        state::activity::destination::attachable_spawn_set_hash(selection, fallback.spawnSetHash);
-
+        state::activity::destination::resolve_spawn_set_hash(selection, fallback.spawnSetHash);
     // The extracted layout wins where the packages carry one. The count and the output array must
     // come from the same source: a count from one and states from another is how uniform values
     // reach the wire and look as though they worked.
@@ -81,6 +78,24 @@ resolve_state(const state::activity::SessionBinding& binding,
         output.hasSliceSet = true;
         output.sliceSetIndex =
             arrival_slice_set(defaults.defaultDestination, selection, name, layout);
+
+        const auto test =
+            ::sunrise::state::activity::experimental::world_state::snapshot();
+        if (test.enabled && test.scenarioTag == layout.tag
+            && test.bubble < static_cast<std::uint32_t>(layout.bubbleCount)) {
+            const std::size_t bubble = static_cast<std::size_t>(test.bubble);
+            if (test.overrideBubble) {
+                output.bubbleStates[bubble] =
+                    test.bubbleEnabled ? kBubbleEnabledByte : kBubbleDisabledByte;
+            }
+            if (test.overrideSliceSet
+                && test.stateOrdinal
+                       < static_cast<std::uint32_t>(layout.bubbleStateCounts[bubble])) {
+                output.sliceSetIndex =
+                    middleware::content::packages::tables::region_index(test.bubble)
+                    + test.stateOrdinal;
+            }
+        }
         return true;
     }
     output.bubbleCount = fallback.bubbleCount;
@@ -96,24 +111,23 @@ resolve_state(const state::activity::SessionBinding& binding,
 
 /** Appends one global-activity-state svc9 notification and advances its local nonce. */
 bool append_global_state_notification(Scratch& scratch,
-                                      const state::activity::SessionBinding& binding,
+                                      std::uint64_t sessionId,
                                       std::span<const std::byte, state::kAesKeySize> key,
                                       std::array<std::byte, state::kBapNonceSize>& nonce,
                                       std::span<std::byte> response,
                                       std::size_t& written) noexcept {
     message::GlobalActivityState body{};
     state::activity::destination::DestinationSelection selection{};
-    if (written > response.size() || !resolve_state(binding, body, selection)) {
+    if (written > response.size() || !resolve_state(sessionId, body, selection)) {
         return false;
     }
-
     const std::size_t initialWritten = written;
     auto initialNonce = nonce;
     std::size_t messageSize = 0;
     const bool encoded =
         message::encode_global_activity_state(body, scratch.responseBody, messageSize)
         && append_notification_frame(scratch,
-                                     binding.sessionId,
+                                     sessionId,
                                      message::kMessageType,
                                      std::span(scratch.responseBody).first(messageSize),
                                      key,
@@ -136,5 +150,4 @@ bool append_global_state_notification(Scratch& scratch,
     SecureZeroMemory(&body, sizeof body);
     return encoded;
 }
-
 } // namespace sunrise::server::bap::encrypted::push::activity
