@@ -397,6 +397,7 @@ void publish_derived(Table& table) noexcept {
         // A lore chapter's authored value is not claim state, so the catalogs replace it once.
         clear_lore_objectives(table);
         (void)build_data::complete_exotic_catalyst_objectives(table.objectiveValues);
+        (void)build_data::complete_exotic_catalyst_flags(table.accountFlags);
         g_loreSeedOwed = false;
     }
     (void)node_catalog::apply_visibility(table.accountFlags);
