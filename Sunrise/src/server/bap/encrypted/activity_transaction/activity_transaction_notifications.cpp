@@ -102,7 +102,8 @@ namespace {
                                  std::size_t& written,
                                  bool allowEntityRetirement) noexcept {
     bool staged = push::activity::append_global_state_notification(
-                      scratch, session.activity.session, key, nonce, response, written)
+                      scratch, session.activity.session, key, nonce, response, written,
+                      session.activityMissionSeed.configured ? &session.activityMissionSeed.plan : nullptr)
                   && push::activity::append_world_globals_notification(
                       scratch, session.activity.session.sessionId, key, nonce, response, written);
     bool stagedMembership = false;
