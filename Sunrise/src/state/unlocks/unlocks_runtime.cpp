@@ -46,6 +46,13 @@ bool account_flag_set(std::uint16_t index) noexcept {
     return index < g_table.accountFlags.size() && g_table.accountFlags[index] == kFlagSet;
 }
 
+/** @return True when the selected character's object flag at this row is set. */
+bool character_object_flag_set(std::uint16_t index) noexcept {
+    const std::shared_lock guard(g_lock);
+    return index < g_table.characterObjectFlags.size()
+           && g_table.characterObjectFlags[index] == kFlagSet;
+}
+
 /** Writes one account acquired flag. */
 bool set_account_flag(std::uint16_t index, std::uint8_t value) noexcept {
     const std::lock_guard guard(g_lock);

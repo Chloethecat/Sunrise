@@ -34,8 +34,9 @@ inline constexpr std::array<char, 8> kCacheMagic{'S', 'U', 'N', 'R', 'I', 'S', '
  * Current build-data cache format. Any other version on disk is rebuilt rather than read.
  * Bump it when a stored shape changes or when the extraction filling it changes what it writes,
  * because a cached row survives a code change and a corrected walk keeps publishing old rows.
+ * 63 added the catalyst completion flags' account bank indices to the catalyst record.
  */
-inline constexpr std::uint32_t kCacheFormatVersion = 62;
+inline constexpr std::uint32_t kCacheFormatVersion = 63;
 /** Signed -1 on disk means there is no equipment slot. */
 inline constexpr std::int8_t kAbsentEquipmentSlot = -1;
 /** The standard 64-bit FNV-1a offset basis starts the payload checksum. */
@@ -250,6 +251,8 @@ struct ExoticCatalystRecord {
     std::uint16_t progressPlugDefinitionIndex{};
     std::uint16_t effectDefinitionIndex{};
     std::uint16_t acquisitionDefinitionIndex{};
+    std::array<std::uint16_t, items::catalysts::kCompletionFlagCapacity>
+        completionAccountFlagIndices{};
     std::array<std::uint16_t, items::catalysts::kCompletionFlagCapacity>
         completionFlagDefinitionIndices{};
     std::array<std::uint16_t, items::catalysts::kCompletionValueCapacity> completionValueIndices{};
@@ -665,7 +668,7 @@ static_assert(sizeof(SocketPlugRuleRecord)
 static_assert(sizeof(SocketPlugPoolRecord) == 2 * sizeof(std::uint32_t));
 static_assert(sizeof(SocketPlugMemberRecord) == sizeof(std::uint16_t));
 static_assert(sizeof(ExoticCatalystRecord)
-              == 6 * sizeof(std::uint32_t) + 14 * sizeof(std::uint16_t) + 4 * sizeof(std::uint8_t));
+              == 6 * sizeof(std::uint32_t) + 18 * sizeof(std::uint16_t) + 4 * sizeof(std::uint8_t));
 static_assert(sizeof(InventoryBucketRecord)
               == 4 * sizeof(std::uint8_t) + 2 * sizeof(std::uint16_t));
 static_assert(sizeof(SocketEntryListRecord)

@@ -6,8 +6,8 @@
 
 namespace sunrise::state {
 
-/** Each family-5 override count ships in a 7-bit wire field, so 127 rows is the wire limit. */
-inline constexpr std::size_t kUnlockOverrideCapacity = 127;
+/** The native family-5 lists hold 100 rows each (RE/27). The 7-bit wire count is not the limit. */
+inline constexpr std::size_t kUnlockOverrideCapacity = 100;
 
 /** One logical unlock-flag value stored by slot. */
 struct UnlockFlagOverride {
