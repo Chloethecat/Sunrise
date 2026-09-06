@@ -440,7 +440,8 @@ bool consume_activity_keepalive(Session& session,
     // arm stops counting as armed once the client reports the region, which ends this.
     const bool needsRepublish =
         (advertisedRegionReady
-         || state::activity::membership::host_teleport_armed(session.activity.session.sessionId))
+         || state::activity::membership::host_teleport_armed(session.activity.session.sessionId)
+         || state::activity::membership::hard_wipe_needs_publish(session.activity.session.sessionId))
         && state::activity::membership::acknowledged(session.activity.session.sessionId);
     bool preparedRepublish = needsRepublish
                              && state::activity::membership::prepare_republish(

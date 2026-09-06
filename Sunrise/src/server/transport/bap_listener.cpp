@@ -1,4 +1,5 @@
 #include "bap_listener.h"
+#include "bap_frame_batch.h"
 
 #include <WS2tcpip.h>
 #include <WinSock2.h>
@@ -111,8 +112,7 @@ void receive_peer(Peer& peer) noexcept {
 }
 
 /**
- * Services one peer with one read, frame, write and due-poll budget.
- * @param peer Live peer.
+ * Services one peer with one read, a bounded frame batch and one due poll.
  * @param readable Ready-read set from select.
  * @param writable Ready-write set from select.
  * @param wasPending True when select saw output.
@@ -134,7 +134,7 @@ void service_peer(
     if (peer.socket == INVALID_SOCKET) {
         return;
     }
-    if (peer.outputSize == 0 && !drain_stream(peer)) {
+    if (peer.outputSize == 0 && !drain_frame_batch(peer, drain_stream, flush_peer)) {
         close_peer(peer);
         return;
     }

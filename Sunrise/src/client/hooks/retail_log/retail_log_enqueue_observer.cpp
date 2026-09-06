@@ -8,7 +8,7 @@
 
 #include "../../../core/logging/log.h"
 #include "../../targets/game.h"
-#include "../network/investment/internal.h"
+#include "../../diagnostics/entity_create_probe.h"
 
 namespace sunrise::client::hooks::retail_log {
 namespace {
@@ -110,6 +110,72 @@ void capture_line(std::int32_t siteId, const char* text) noexcept {
                             ? static_cast<std::size_t>(written)
                             : line.size() - 1;
     core::log::write(core::log::Channel::client, core::log::Level::info, {line.data(), length});
+}
+
+/** Text whose emitting call site is worth locating in the image. */
+constexpr std::string_view kTracedText = "failed to create";
+/** Call sites named per run, so a repeating line cannot flood the sink. */
+constexpr std::size_t kMaxCallSiteReports = 64;
+
+/** Reports already spent. */
+volatile LONG g_callSiteReports{};
+
+/**
+ * Names the image offset of the code that emitted one line.
+ * The packed executable cannot be disassembled on disk, so a dump of the mapped image is the only
+ * readable copy, and an offset from the load base is what addresses it. The retail text itself
+ * carries no address, and the site id is assigned by the game's own registration rather than by
+ * position, so nothing else here says which function produced a line. `_ReturnAddress` inside the
+ * funnel is the emitting call site, which is exactly the function to disassemble.
+ * @param returnAddress Return address captured in the funnel.
+ * @param text Already-formatted native line.
+ */
+void report_call_site(const void* returnAddress, const char* text) noexcept {
+    const bool entityFailure = std::string_view(text).find("networking:simulation:entity:")
+                               != std::string_view::npos;
+    const auto level = entityFailure ? core::log::Level::warn : core::log::Level::debug;
+    if (returnAddress == nullptr
+        || !core::log::accepts(core::log::Channel::client, level)) {
+        return;
+    }
+    const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+    const auto site = reinterpret_cast<std::uintptr_t>(returnAddress);
+    if (base == 0 || site < base) {
+        return;
+    }
+    if (InterlockedIncrement(&g_callSiteReports) > static_cast<LONG>(kMaxCallSiteReports)) {
+        return;
+    }
+    std::array<char, kEventCapacity> line{};
+    const int written = std::snprintf(line.data(),
+                                      line.size(),
+                                      "ev=retail_site stage=caller rva=0x%llX va=0x%llX text=%s",
+                                      static_cast<unsigned long long>(site - base),
+                                      static_cast<unsigned long long>(site),
+                                      text);
+    if (written > 0) {
+        const auto length = static_cast<std::size_t>(written) < line.size()
+                                ? static_cast<std::size_t>(written)
+                                : line.size() - 1;
+        core::log::write(core::log::Channel::client, level,
+                         {line.data(), length});
+    }
+    if (entityFailure) {
+        diagnostics::report_entity_create_failure_pool();
+        // Bird's retail line omits the entity identity and failure boundary. Capture
+        // the callers at the failure, while they still exist, at normal log settings.
+        // This observes the failure; it does not retry or suppress native creation.
+        std::array<void*, 12> frames{};
+        const auto count = RtlCaptureStackBackTrace(1, static_cast<DWORD>(frames.size()),
+                                                    frames.data(), nullptr);
+        for (USHORT index = 0; index < count; ++index) {
+            const auto address = reinterpret_cast<std::uintptr_t>(frames[index]);
+            core::log::writef(core::log::Channel::client, level,
+                "ev=entity_create_failure stage=stack frame=%u va=0x%llX image_base=0x%llX",
+                static_cast<unsigned>(index), static_cast<unsigned long long>(address),
+                static_cast<unsigned long long>(base));
+        }
+    }
 }
 
 /**

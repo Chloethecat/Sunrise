@@ -527,7 +527,7 @@ Framed frame_authority_release(const message::Request& request, bool expectReaso
     return {Verdict::framed, payload_bits(request)};
 }
 
-/** Frames one purge request before its transactional message-25 answer. */
+/** Frames one purge request; the activity route stages its exact msg-25 answer. */
 Framed frame_request_purge(const message::Request& request) noexcept {
     authority::PurgeRequest decoded{};
     if (!authority::parse_request_purge(request.payload, decoded)) {

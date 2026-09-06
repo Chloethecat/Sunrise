@@ -1,8 +1,5 @@
-/**
- * The Activity Host instance table, event ring, reducer queue and Auth-state lane.
- * Helpers here need the Host runtime lock; the entry points take it themselves.
- */
-
+#include "../../middleware/bap/activity_message/sense_observation_packet.h"
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdio>
@@ -190,6 +187,524 @@ void cancel_output(Instance& instance, std::uint64_t now) noexcept {
     instance.view.outputStatus = OutputStatus::canceled;
     append_event(event);
     instance.view.lastEventSequence = g_sequence;
+}
+
+/** @return True when one decoded object has the exact retained observation key. */
+[[nodiscard]] bool same_sense_key(
+    const SenseObservationKey& key,
+    const middleware::bap::activity_message::sense_update::DecodedObject& object) noexcept {
+    return key.registryKey == object.registryKey && key.objectTag == object.objectTag
+           && key.slotType == object.slotType && key.slotIndex == object.slotIndex
+           && key.senseSchema == object.senseSchema && key.schemaRow == object.schemaRow;
+}
+
+/** @return True when the packet carries this key at or after the selected object. */
+[[nodiscard]] bool
+packet_has_sense_key(const middleware::bap::activity_message::sense_update::DecodedPacket& packet,
+                     const SenseObservationKey& key,
+                     std::size_t first) noexcept {
+    for (std::size_t index = first; index < packet.objectCount; ++index) {
+        if (packet.objects[index].status == middleware::bap::activity_message::sense_update::ObjectStatus::decoded
+            && packet.objects[index].hasGeneration && same_sense_key(key, packet.objects[index])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** @return True when the envelope closed and each decoded object's storage is bounded. */
+[[nodiscard]] bool valid_sense_observation_input(const SenseInput& input) noexcept {
+    namespace sense = middleware::bap::activity_message::sense_update;
+    const auto& packet = input.decoded;
+    return input.sourceGeneration != 0 && input.clientMessageSequence != 0
+        && input.verdict == state::activity::receipts::Verdict::framed
+        && input.decodeStatus == packet.status && sense::observation_packet(packet)
+        && input.groupsSeen == packet.groupsSeen && input.groupsDecoded == packet.groupsDecoded
+        && input.groupsSkipped == packet.groupsSkipped && input.objectsSeen == packet.objectsSeen
+        && input.objectsDecoded == packet.objectsDecoded;
+}
+
+/** Retains one accepted client input independently from panel and output events. */
+void append_mission_input(
+    const Event& event,
+    const middleware::bap::activity_message::sense_update::DecodedPacket* sense,
+    const ClientMessageSnapshot* clientMessage = nullptr) noexcept {
+    if (event.missionSequence == 0) {
+        return;
+    }
+    g_missionInputSequence = next_nonzero(g_missionInputSequence);
+    MissionInputRecord record{};
+    record.view.event = event;
+    record.view.sequence = g_missionInputSequence;
+    if (record.view.event.sequence == 0) {
+        record.view.event.sequence = g_missionInputSequence;
+    }
+    if (sense != nullptr) {
+        record.sense = *sense;
+        record.hasSense = true;
+    }
+    if (clientMessage != nullptr) {
+        record.clientMessage = *clientMessage;
+        record.hasClientMessage = true;
+    }
+    // The slot was reserved when the durable sequence was issued, so this never reallocates.
+    g_missionInputs.push_back(std::move(record));
+}
+
+/** Mixes one fixed-width value into the local scene change guard. */
+void mix_scene_fingerprint(std::uint64_t& fingerprint, std::uint64_t value) noexcept {
+    constexpr std::uint64_t kPrime = 1'099'511'628'211ULL;
+    for (std::uint8_t shift = 0; shift < 64; shift += 8) {
+        fingerprint ^= (value >> shift) & 0xFFU;
+        fingerprint *= kPrime;
+    }
+}
+
+/** @return A run-local change guard over one decoded object and every retained value. */
+[[nodiscard]] std::uint64_t
+scene_fingerprint(const middleware::bap::activity_message::sense_update::DecodedObject& object,
+                  std::span<const middleware::bap::activity_message::sense_update::DecodedValue>
+                      values) noexcept {
+    constexpr std::uint64_t kOffset = 14'695'981'039'346'656'037ULL;
+    std::uint64_t fingerprint = kOffset;
+    mix_scene_fingerprint(fingerprint, object.objectRow);
+    mix_scene_fingerprint(fingerprint, object.slotRow);
+    mix_scene_fingerprint(fingerprint, object.schemaRow);
+    mix_scene_fingerprint(fingerprint, object.generationPlusOne);
+    mix_scene_fingerprint(fingerprint, object.deltaBits);
+    mix_scene_fingerprint(fingerprint, object.hasGeneration ? 1U : 0U);
+    mix_scene_fingerprint(fingerprint, values.size());
+    for (const auto& value : values) {
+        mix_scene_fingerprint(fingerprint, value.unsignedValue);
+        mix_scene_fingerprint(fingerprint, static_cast<std::uint64_t>(value.signedValue));
+        mix_scene_fingerprint(fingerprint, std::bit_cast<std::uint32_t>(value.realValue));
+        mix_scene_fingerprint(fingerprint, value.schemaRow);
+        mix_scene_fingerprint(fingerprint, value.fieldRow);
+        mix_scene_fingerprint(fingerprint, value.occurrence);
+        mix_scene_fingerprint(fingerprint, value.bitOffset);
+        mix_scene_fingerprint(fingerprint, value.fieldOrdinal);
+        mix_scene_fingerprint(fingerprint, value.width);
+        mix_scene_fingerprint(fingerprint, static_cast<std::uint8_t>(value.kind));
+        mix_scene_fingerprint(fingerprint, value.present ? 1U : 0U);
+    }
+    return fingerprint;
+}
+
+/** Writes one bounded type-43 diagnostic event. */
+void report_scene_sense(const char* format, ...) noexcept {
+    std::array<char, core::log::kLineCapacity> line{};
+    va_list arguments;
+    va_start(arguments, format);
+    const int written = std::vsnprintf(line.data(), line.size(), format, arguments);
+    va_end(arguments);
+    if (written <= 0) {
+        return;
+    }
+    const auto length = static_cast<std::size_t>(written) < line.size()
+                            ? static_cast<std::size_t>(written)
+                            : line.size() - 1;
+    core::log::write(core::log::Channel::server, core::log::Level::debug, {line.data(), length});
+}
+
+/** @return The trace row for one exact ClientRef, or null when it has not been seen. */
+[[nodiscard]] SceneSenseTraceRecord* find_scene_trace_record(
+    SceneSenseTrace& trace,
+    const middleware::bap::activity_message::sense_update::DecodedObject& object) noexcept {
+    for (SceneSenseTraceRecord& record : trace.records) {
+        if (record.occupied && same_sense_key(record.key, object)) {
+            return &record;
+        }
+    }
+    return nullptr;
+}
+
+/** @return One unused trace row, or null when the bounded table is full. */
+[[nodiscard]] SceneSenseTraceRecord* reserve_scene_trace_record(SceneSenseTrace& trace) noexcept {
+    for (SceneSenseTraceRecord& record : trace.records) {
+        if (!record.occupied) {
+            return &record;
+        }
+    }
+    return nullptr;
+}
+
+/** Reports one typed scalar with its exact reflected rows and wire position. */
+void report_scene_value(
+    const Instance& instance,
+    const SenseInput& input,
+    const middleware::bap::activity_message::sense_update::DecodedObject& object,
+    const middleware::bap::activity_message::sense_update::DecodedValue& value,
+    std::size_t valueIndex) noexcept {
+    using ValueKind = middleware::bap::activity_message::sense_update::ValueKind;
+    constexpr const char* kPrefix =
+        "ev=scene_sense kind=value activity=%d session=0x%llX binding_rev=%llu "
+        "source_gen=%llu msg_seq=%llu key=0x%08X tag=0x%08X type=%u index=%u "
+        "sense_schema=0x%08X gen_plus_one=%u value_index=%zu schema_row=%u "
+        "field_row=%u ordinal=%u occurrence=%u bit=%u width=%u present=%u";
+    std::array<char, core::log::kLineCapacity> prefix{};
+    const int written =
+        std::snprintf(prefix.data(),
+                      prefix.size(),
+                      kPrefix,
+                      static_cast<int>(instance.view.binding.destination.activityIndex),
+                      static_cast<unsigned long long>(instance.view.binding.sessionId),
+                      static_cast<unsigned long long>(instance.view.binding.createdRevision),
+                      static_cast<unsigned long long>(input.sourceGeneration),
+                      static_cast<unsigned long long>(input.clientMessageSequence),
+                      object.registryKey,
+                      object.objectTag,
+                      static_cast<unsigned>(object.slotType),
+                      static_cast<unsigned>(object.slotIndex),
+                      object.senseSchema,
+                      object.generationPlusOne,
+                      valueIndex,
+                      value.schemaRow,
+                      value.fieldRow,
+                      static_cast<unsigned>(value.fieldOrdinal),
+                      value.occurrence,
+                      value.bitOffset,
+                      static_cast<unsigned>(value.width),
+                      value.present ? 1U : 0U);
+    if (written <= 0 || static_cast<std::size_t>(written) >= prefix.size()) {
+        return;
+    }
+    if (!value.present) {
+        report_scene_sense("%s domain=%s value=absent",
+                           prefix.data(),
+                           value.kind == ValueKind::unsignedInteger ? "uint"
+                           : value.kind == ValueKind::signedInteger ? "int"
+                           : value.kind == ValueKind::boolean       ? "bool"
+                                                                    : "real32");
+        return;
+    }
+    switch (value.kind) {
+    case ValueKind::unsignedInteger:
+        report_scene_sense("%s domain=uint value=0x%llX",
+                           prefix.data(),
+                           static_cast<unsigned long long>(value.unsignedValue));
+        break;
+    case ValueKind::signedInteger:
+        report_scene_sense("%s domain=int raw=0x%llX value=%lld",
+                           prefix.data(),
+                           static_cast<unsigned long long>(value.unsignedValue),
+                           static_cast<long long>(value.signedValue));
+        break;
+    case ValueKind::boolean:
+        report_scene_sense("%s domain=bool raw=0x%llX value=%u",
+                           prefix.data(),
+                           static_cast<unsigned long long>(value.unsignedValue),
+                           value.unsignedValue != 0 ? 1U : 0U);
+        break;
+    case ValueKind::real32:
+        report_scene_sense("%s domain=real32 raw=0x%llX value_bits=0x%08X value=%.9g",
+                           prefix.data(),
+                           static_cast<unsigned long long>(value.unsignedValue),
+                           std::bit_cast<std::uint32_t>(value.realValue),
+                           static_cast<double>(value.realValue));
+        break;
+    }
+}
+
+/** Reports complete changed type-43 objects without changing retained activity state. */
+void trace_scene_sense(Instance& instance, const SenseInput& input) noexcept {
+    namespace sense = middleware::bap::activity_message::sense_update;
+    if (!core::log::accepts(core::log::Channel::server, core::log::Level::debug)) {
+        return;
+    }
+    SceneSenseTrace& trace = instance.sceneSenseTrace;
+    if (trace.sourceGeneration != input.sourceGeneration) {
+        trace = {};
+        trace.sourceGeneration = input.sourceGeneration;
+    }
+    const sense::DecodedPacket& packet = input.decoded;
+    bool hasScene = false;
+    const std::size_t retainedObjectCount = (std::min)(packet.objectCount, packet.objects.size());
+    for (std::size_t index = 0; index < retainedObjectCount; ++index) {
+        if (packet.objects[index].slotType
+            == static_cast<std::uint8_t>(state::activity_sdk::format::kAuthoredSceneSlotType)) {
+            hasScene = true;
+            break;
+        }
+    }
+    if (!valid_sense_observation_input(input)) {
+        if (!trace.incompleteReported && (hasScene || packet.objectsTruncated)) {
+            trace.incompleteReported = true;
+            report_scene_sense(
+                "ev=scene_sense kind=packet result=skip reason=incomplete activity=%d "
+                "session=0x%llX binding_rev=%llu source_gen=%llu msg_seq=%llu "
+                "status=%s objects_seen=%u objects_kept=%zu values_kept=%zu "
+                "objects_truncated=%u values_truncated=%u",
+                static_cast<int>(instance.view.binding.destination.activityIndex),
+                static_cast<unsigned long long>(instance.view.binding.sessionId),
+                static_cast<unsigned long long>(instance.view.binding.createdRevision),
+                static_cast<unsigned long long>(input.sourceGeneration),
+                static_cast<unsigned long long>(input.clientMessageSequence),
+                sense::decode_status_name(packet.status),
+                packet.objectsSeen,
+                packet.objectCount,
+                packet.valueCount,
+                packet.objectsTruncated ? 1U : 0U,
+                packet.valuesTruncated ? 1U : 0U);
+        }
+        return;
+    }
+    for (std::size_t index = 0; index < packet.objectCount; ++index) {
+        const sense::DecodedObject& object = packet.objects[index];
+        if (object.status != sense::ObjectStatus::decoded || !object.hasGeneration || object.slotType
+            != static_cast<std::uint8_t>(state::activity_sdk::format::kAuthoredSceneSlotType)
+            || packet_has_sense_key(packet,
+                                    {object.registryKey,
+                                     object.objectTag,
+                                     object.senseSchema,
+                                     object.schemaRow,
+                                     object.slotIndex,
+                                     object.slotType},
+                                    index + 1)) {
+            continue;
+        }
+        const std::span values(packet.values.data() + object.firstValue, object.valueCount);
+        const std::uint64_t fingerprint = scene_fingerprint(object, values);
+        SceneSenseTraceRecord* record = find_scene_trace_record(trace, object);
+        const bool known = record != nullptr;
+        if (known && record->fingerprint == fingerprint
+            && record->generationPlusOne == object.generationPlusOne
+            && record->valueCount == object.valueCount
+            && record->hasGeneration == object.hasGeneration) {
+            continue;
+        }
+        if (record == nullptr) {
+            record = reserve_scene_trace_record(trace);
+        }
+        if (record == nullptr) {
+            if (!trace.capacityReported) {
+                trace.capacityReported = true;
+                report_scene_sense(
+                    "ev=scene_sense kind=packet result=skip reason=trace_capacity activity=%d "
+                    "session=0x%llX binding_rev=%llu source_gen=%llu capacity=%zu",
+                    static_cast<int>(instance.view.binding.destination.activityIndex),
+                    static_cast<unsigned long long>(instance.view.binding.sessionId),
+                    static_cast<unsigned long long>(instance.view.binding.createdRevision),
+                    static_cast<unsigned long long>(input.sourceGeneration),
+                    trace.records.size());
+            }
+            continue;
+        }
+        record->key = {object.registryKey,
+                       object.objectTag,
+                       object.senseSchema,
+                       object.schemaRow,
+                       object.slotIndex,
+                       object.slotType};
+        record->fingerprint = fingerprint;
+        record->generationPlusOne = object.generationPlusOne;
+        record->valueCount = object.valueCount;
+        record->hasGeneration = object.hasGeneration;
+        record->occupied = true;
+        report_scene_sense("ev=scene_sense kind=object change=%s activity=%d session=0x%llX "
+                           "binding_rev=%llu source_gen=%llu msg_seq=%llu key=0x%08X tag=0x%08X "
+                           "object_row=%u type=%u index=%u slot_row=%u sense_schema=0x%08X "
+                           "schema_row=%u gen_plus_one=%u has_gen=%u delta_bits=%u values=%u",
+                           known ? "update" : "new",
+                           static_cast<int>(instance.view.binding.destination.activityIndex),
+                           static_cast<unsigned long long>(instance.view.binding.sessionId),
+                           static_cast<unsigned long long>(instance.view.binding.createdRevision),
+                           static_cast<unsigned long long>(input.sourceGeneration),
+                           static_cast<unsigned long long>(input.clientMessageSequence),
+                           object.registryKey,
+                           object.objectTag,
+                           object.objectRow,
+                           static_cast<unsigned>(object.slotType),
+                           static_cast<unsigned>(object.slotIndex),
+                           object.slotRow,
+                           object.senseSchema,
+                           object.schemaRow,
+                           object.generationPlusOne,
+                           object.hasGeneration ? 1U : 0U,
+                           object.deltaBits,
+                           object.valueCount);
+        for (std::size_t valueIndex = 0; valueIndex < values.size(); ++valueIndex) {
+            report_scene_value(instance, input, object, values[valueIndex], valueIndex);
+        }
+    }
+}
+
+/** Appends one observation and its complete owned value range. */
+[[nodiscard]] bool append_sense_observation(
+    SenseObservationSnapshot& output,
+    SenseObservation observation,
+    std::span<const middleware::bap::activity_message::sense_update::DecodedValue>
+        values) noexcept {
+    if (output.observationCount == output.observations.size()
+        || values.size() > output.values.size() - output.valueCount) {
+        return false;
+    }
+    observation.firstValue = static_cast<std::uint32_t>(output.valueCount);
+    observation.valueCount = static_cast<std::uint32_t>(values.size());
+    output.observations[output.observationCount++] = observation;
+    std::copy(values.begin(), values.end(), output.values.begin() + output.valueCount);
+    output.valueCount += values.size();
+    return true;
+}
+
+/** Replaces only fully decoded keys in an accepted packet; omitted or unsupported keys stay retained. */
+[[nodiscard]] bool
+retain_sense_observations(Instance& instance, const SenseInput& input, std::uint64_t now) noexcept {
+    namespace sense = middleware::bap::activity_message::sense_update;
+    if (!valid_sense_observation_input(input)) {
+        return false;
+    }
+    const sense::DecodedPacket& packet = input.decoded;
+    SenseObservationSnapshot next{};
+    next.revision = next_nonzero(instance.senseObservations.revision);
+    next.sourceGeneration = input.sourceGeneration;
+    for (std::size_t index = 0; index < packet.objectCount; ++index) {
+        const sense::DecodedObject& object = packet.objects[index];
+        if (object.status != sense::ObjectStatus::decoded || !object.hasGeneration) continue;
+        const SenseObservationKey key{object.registryKey,
+                                      object.objectTag,
+                                      object.senseSchema,
+                                      object.schemaRow,
+                                      object.slotIndex,
+                                      object.slotType};
+        if (packet_has_sense_key(packet, key, index + 1)) {
+            continue;
+        }
+        SenseObservation observation{};
+        observation.binding = input.binding;
+        observation.key = key;
+        observation.sequence = next.revision;
+        observation.tick = now;
+        observation.sourceGeneration = input.sourceGeneration;
+        observation.clientMessageSequence = input.clientMessageSequence;
+        observation.generationPlusOne = object.generationPlusOne;
+        observation.hasGeneration = object.hasGeneration;
+        const std::span values(packet.values.data() + object.firstValue, object.valueCount);
+        if (!append_sense_observation(next, observation, values)) {
+            return false;
+        }
+    }
+    if (instance.senseObservations.sourceGeneration == input.sourceGeneration) {
+        const SenseObservationSnapshot& current = instance.senseObservations;
+        for (std::size_t index = 0; index < current.observationCount; ++index) {
+            const SenseObservation& observation = current.observations[index];
+            if (packet_has_sense_key(packet, observation.key, 0)
+                || observation.firstValue > current.valueCount
+                || observation.valueCount > current.valueCount - observation.firstValue) {
+                continue;
+            }
+            const std::span values(current.values.data() + observation.firstValue,
+                                   observation.valueCount);
+            static_cast<void>(append_sense_observation(next, observation, values));
+        }
+    }
+    instance.senseObservations = next;
+    instance.view.senseObservationCount = static_cast<std::uint32_t>(next.observationCount);
+    instance.view.senseObservationValueCount = static_cast<std::uint32_t>(next.valueCount);
+    instance.view.senseObservationRevision = next.revision;
+    instance.view.senseObservationSourceGeneration = next.sourceGeneration;
+    return true;
+}
+
+/** Applies one copied msg-6 decode summary. */
+void apply_sense(const SenseInput& input, std::uint64_t now) noexcept {
+    Instance* const instance = find_instance(input.binding);
+    if (instance == nullptr || !instance->view.active) {
+        ++g_droppedIngress;
+        return;
+    }
+    touch(*instance);
+    ++instance->view.senseCount;
+    trace_scene_sense(*instance, input);
+    static_cast<void>(retain_sense_observations(*instance, input, now));
+    Event event{};
+    event.binding = input.binding;
+    event.tick = now;
+    event.kind = EventKind::senseUpdate;
+    event.epochFirst = input.epochFirst;
+    event.epochSecond = input.epochSecond;
+    event.payloadBytes = input.payloadBytes;
+    event.peerHeardMask = input.peerHeardMask;
+    event.tailBits = input.tailBits;
+    event.consumedBits = input.consumedBits;
+    event.firstGroupBits = input.firstGroupBits;
+    event.firstRegistryKey = input.firstRegistryKey;
+    event.groupsSeen = input.groupsSeen;
+    event.groupsDecoded = input.groupsDecoded;
+    event.groupsSkipped = input.groupsSkipped;
+    event.objectsSeen = input.objectsSeen;
+    event.objectsDecoded = input.objectsDecoded;
+    event.firstSlotIndex = input.firstSlotIndex;
+    event.firstSlotType = input.firstSlotType;
+    // The event names one slot only: the first decoded ClientRef of the packet.
+    if (input.decoded.objectCount != 0) {
+        event.slotObjectTag = input.decoded.objects.front().objectTag;
+        event.slotSenseSchema = input.decoded.objects.front().senseSchema;
+    }
+    event.senseDecodeStatus = input.decodeStatus;
+    event.senseSnapshotRetained = valid_sense_observation_input(input);
+    event.hasFirstObject = input.hasFirstObject;
+    event.stateRevision = instance->view.stateRevision;
+    event.sourceGeneration = input.sourceGeneration;
+    event.clientMessageSequence = input.clientMessageSequence;
+    event.lifetimeState = instance->view.lifetimeState;
+    event.verdict = input.verdict;
+    append_event(event);
+    append_mission_input(event, event.senseSnapshotRetained ? &input.decoded : nullptr);
+    instance->view.lastEventSequence = g_sequence;
+}
+
+/** Retains one outer-valid client incident for inspection and parsed-field replay. */
+void apply_incident(const IncidentInput& input, std::uint64_t now) noexcept {
+    Instance* const instance = find_instance(input.binding);
+    if (instance == nullptr || !instance->view.active) {
+        ++g_droppedIngress;
+        ++g_droppedIncidents;
+        return;
+    }
+    touch(*instance);
+    ++instance->view.incidentsReceived;
+    Event event{};
+    event.binding = input.binding;
+    event.tick = now;
+    event.kind = EventKind::incidentReceived;
+    event.sourceGeneration = input.sourceGeneration;
+    event.clientMessageSequence = input.clientMessageSequence;
+    event.payloadBytes = input.payloadBytes;
+    fill_incident_event(event, input.incident, 0);
+    event.hasPlayerTrigger = input.hasPlayerTrigger;
+    if (input.hasPlayerTrigger) {
+        event.playerTriggerRegistryKey = input.playerTrigger.registryKey;
+        event.playerTriggerSlotType = input.playerTrigger.slotType;
+        event.playerTriggerSlotIndex = input.playerTrigger.slotIndex;
+        event.playerTriggerResolvedObjectId = input.playerTrigger.resolvedObjectId;
+    }
+    event.hasCinematic = input.hasCinematic;
+    if (input.hasCinematic) {
+        event.cinematicRegistryKey = input.cinematic.registryKey;
+        event.cinematicSlotType = input.cinematic.slotType;
+        event.cinematicSlotIndex = input.cinematic.slotIndex;
+        event.cinematicRuntimeObjectId = input.cinematic.runtimeObjectId;
+        event.cinematicEventValue = input.cinematic.eventValue;
+        event.cinematicSignal = input.cinematicSignal;
+    }
+    append_event(event);
+    append_mission_input(event, nullptr);
+    instance->view.lastEventSequence = g_sequence;
+
+    IncidentRecord* const record = reserve_incident_record();
+    if (record == nullptr) {
+        ++g_droppedIncidents;
+        return;
+    }
+    *record = {};
+    record->binding = input.binding;
+    record->incident = input.incident;
+    record->sequence = g_sequence;
+    record->tick = now;
+    record->lastSourceGeneration = input.sourceGeneration;
+    record->clientMessageSequence = input.clientMessageSequence;
+    record->payloadBytes = input.payloadBytes;
+    record->status = IncidentStatus::received;
 }
 
 /** Retains one safe committed client State change in Host and ordered mission histories. */
@@ -503,6 +1018,274 @@ void read_events_after(EventCursor after, EventRead& output) noexcept {
         }
     }
     ReleaseSRWLockShared(&g_lock);
+}
+
+/** Reads the current accepted-mission-input position without replaying retained history. */
+MissionInputCursor current_mission_input_cursor() noexcept {
+    AcquireSRWLockShared(&g_lock);
+    const MissionInputCursor cursor{g_eventGeneration, g_missionInputSequence};
+    ReleaseSRWLockShared(&g_lock);
+    return cursor;
+}
+
+/** @return True when durable mission State still owes this retained accepted row. */
+[[nodiscard]] bool mission_input_owed(const MissionInputRecord& record) noexcept {
+    state::activity::mission::InputSequenceSnapshot cursors{};
+    // A faulted binding owes nothing. Its program is skipped, so it never commits, and its rows
+    // would otherwise be retained for the life of the process.
+    if (!state::activity::mission::input_sequence_snapshot(record.view.event.binding, cursors)
+        || cursors.faulted) {
+        return false;
+    }
+    const std::uint64_t sequence = record.view.event.missionSequence;
+    return sequence > cursors.committed && sequence <= cursors.issued;
+}
+
+/** Drops every retained row that durable mission State no longer owes. */
+void retire_settled_mission_inputs() noexcept {
+    static_cast<void>(std::erase_if(g_missionInputs, [](const MissionInputRecord& record) noexcept {
+        return !mission_input_owed(record);
+    }));
+}
+
+/** Copies accepted client mission inputs after one cursor. */
+void read_mission_inputs_after(MissionInputCursor after, MissionInputRead& output) noexcept {
+    output = {};
+    AcquireSRWLockExclusive(&g_lock);
+    output.reset = after.generation != g_eventGeneration;
+    const std::uint64_t afterSequence = output.reset ? 0 : after.sequence;
+    retire_settled_mission_inputs();
+    output.cursor = {g_eventGeneration, afterSequence};
+    if (!g_missionInputs.empty()) {
+        const std::uint64_t retainedPredecessor = g_missionInputs.front().view.sequence - 1;
+        if (afterSequence < retainedPredecessor) {
+            output.gap = true;
+            output.missed = retainedPredecessor - afterSequence;
+        }
+        for (const MissionInputRecord& record : g_missionInputs) {
+            if (record.view.sequence <= afterSequence) {
+                continue;
+            }
+            if (output.count == output.events.size()) {
+                break;
+            }
+            output.events[output.count++] = record.view;
+        }
+        if (output.count != 0) {
+            output.cursor.sequence = output.events[output.count - 1].sequence;
+        }
+    } else if (afterSequence < g_missionInputSequence) {
+        output.gap = true;
+        output.missed = g_missionInputSequence - afterSequence;
+        output.cursor.sequence = g_missionInputSequence;
+    }
+    ReleaseSRWLockExclusive(&g_lock);
+}
+
+/** Copies the exact Sense values owned by one retained accepted-input row. */
+bool mission_input_sense_snapshot(std::uint64_t sequence,
+                                  SenseObservationSnapshot& output) noexcept {
+    namespace sense = middleware::bap::activity_message::sense_update;
+    output = {};
+    if (sequence == 0) {
+        return false;
+    }
+    AcquireSRWLockShared(&g_lock);
+    const MissionInputRecord* selected = nullptr;
+    for (std::size_t offset = g_missionInputs.size(); offset != 0; --offset) {
+        const MissionInputRecord& candidate = g_missionInputs[offset - 1];
+        if (candidate.view.sequence == sequence) {
+            selected = &candidate;
+            break;
+        }
+    }
+    bool copied = selected != nullptr && selected->hasSense
+                  && selected->view.event.kind == EventKind::senseUpdate;
+    if (copied) {
+        const Event& event = selected->view.event;
+        const sense::DecodedPacket& packet = selected->sense;
+        copied = sense::observation_packet(packet);
+        if (copied) {
+            output.revision = event.sequence;
+            output.sourceGeneration = event.sourceGeneration;
+        }
+        for (std::size_t index = 0; copied && index < packet.objectCount; ++index) {
+            const sense::DecodedObject& object = packet.objects[index];
+            if (object.status != sense::ObjectStatus::decoded || !object.hasGeneration) continue;
+            if (object.firstValue > packet.valueCount
+                || object.valueCount > packet.valueCount - object.firstValue) {
+                copied = false;
+                break;
+            }
+            SenseObservation observation{};
+            observation.binding = event.binding;
+            observation.key = {object.registryKey,
+                               object.objectTag,
+                               object.senseSchema,
+                               object.schemaRow,
+                               object.slotIndex,
+                               object.slotType};
+            observation.sequence = event.sequence;
+            observation.tick = event.tick;
+            observation.sourceGeneration = event.sourceGeneration;
+            observation.clientMessageSequence = event.clientMessageSequence;
+            observation.generationPlusOne = object.generationPlusOne;
+            observation.hasGeneration = object.hasGeneration;
+            copied = append_sense_observation(
+                output, observation, {packet.values.data() + object.firstValue, object.valueCount});
+        }
+    }
+    if (!copied) {
+        output = {};
+    }
+    ReleaseSRWLockShared(&g_lock);
+    return copied;
+}
+
+/** Copies one exact generic client-message snapshot owned by the mission-input feed. */
+bool mission_input_client_message_snapshot(std::uint64_t sequence,
+                                           ClientMessageSnapshot& output) noexcept {
+    output = {};
+    if (sequence == 0) {
+        return false;
+    }
+    AcquireSRWLockShared(&g_lock);
+    const MissionInputRecord* selected = nullptr;
+    for (std::size_t offset = g_missionInputs.size(); offset != 0; --offset) {
+        const MissionInputRecord& candidate = g_missionInputs[offset - 1];
+        if (candidate.view.sequence == sequence) {
+            selected = &candidate;
+            break;
+        }
+    }
+    const bool copied = selected != nullptr && selected->hasClientMessage
+                        && selected->view.event.kind == EventKind::clientMessageReceived;
+    if (copied) {
+        output = selected->clientMessage;
+    }
+    ReleaseSRWLockShared(&g_lock);
+    return copied;
+}
+
+/** Copies the latest complete Sense observations for one exact activity generation. */
+bool snapshot_sense_observations(const state::activity::SessionBinding& binding,
+                                 SenseObservationSnapshot& output) noexcept {
+    output = {};
+    AcquireSRWLockShared(&g_lock);
+    const Instance* const instance = find_instance(binding);
+    const bool found = instance != nullptr;
+    if (found) {
+        output = instance->senseObservations;
+    }
+    ReleaseSRWLockShared(&g_lock);
+    return found;
+}
+
+/** Selects one exact reflected scalar without changing the retained snapshot. */
+SenseScalarStatus select_sense_scalar(const SenseObservationSnapshot& snapshot,
+                                      const state::activity::SessionBinding& binding,
+                                      const SenseScalarIdentity& identity,
+                                      SenseScalarSample& output) noexcept {
+    namespace sense = middleware::bap::activity_message::sense_update;
+    output = {};
+    if (binding.sessionId == state::activity::kAbsentSessionId
+        || binding.createdRevision == state::activity::kInvalidRevision
+        || identity.object.schemaRow == sense::kAbsentRuntimeRow
+        || identity.fieldSchemaRow == sense::kAbsentRuntimeRow
+        || identity.fieldRow == sense::kAbsentRuntimeRow
+        || identity.fieldSchemaRow != identity.object.schemaRow) {
+        return SenseScalarStatus::invalidIdentity;
+    }
+    if (snapshot.sourceGeneration == 0 || snapshot.observationCount > snapshot.observations.size()
+        || snapshot.valueCount > snapshot.values.size()) {
+        return SenseScalarStatus::invalidSnapshot;
+    }
+    const auto sameKey = [&identity](const SenseObservationKey& candidate) noexcept {
+        const SenseObservationKey& expected = identity.object;
+        return candidate.registryKey == expected.registryKey
+               && candidate.objectTag == expected.objectTag
+               && candidate.senseSchema == expected.senseSchema
+               && candidate.schemaRow == expected.schemaRow
+               && candidate.slotIndex == expected.slotIndex
+               && candidate.slotType == expected.slotType;
+    };
+    bool found = false;
+    for (std::size_t observationIndex = 0; observationIndex < snapshot.observationCount;
+         ++observationIndex) {
+        const SenseObservation& observation = snapshot.observations[observationIndex];
+        if (!same_binding(observation.binding, binding) || !sameKey(observation.key)) {
+            continue;
+        }
+        if (observation.sourceGeneration != snapshot.sourceGeneration
+            || observation.firstValue > snapshot.valueCount
+            || observation.valueCount > snapshot.valueCount - observation.firstValue) {
+            output = {};
+            return SenseScalarStatus::invalidSnapshot;
+        }
+        for (std::size_t valueIndex = 0; valueIndex < observation.valueCount; ++valueIndex) {
+            const sense::DecodedValue& value = snapshot.values[observation.firstValue + valueIndex];
+            if (value.schemaRow != identity.fieldSchemaRow || value.fieldRow != identity.fieldRow
+                || value.fieldOrdinal != identity.fieldOrdinal
+                || value.occurrence != identity.occurrence || value.kind != identity.kind) {
+                continue;
+            }
+            if (found) {
+                output = {};
+                return SenseScalarStatus::ambiguous;
+            }
+            output.binding = observation.binding;
+            output.identity = identity;
+            output.value = value;
+            output.observationRevision = observation.sequence;
+            output.tick = observation.tick;
+            output.sourceGeneration = observation.sourceGeneration;
+            output.clientMessageSequence = observation.clientMessageSequence;
+            output.generationPlusOne = observation.generationPlusOne;
+            output.hasGeneration = observation.hasGeneration;
+            found = true;
+        }
+    }
+    return found ? SenseScalarStatus::ready : SenseScalarStatus::notFound;
+}
+
+/** @return True when two selected scalars have the same presence and raw typed value. */
+bool same_sense_scalar_value(const SenseScalarSample& left,
+                             const SenseScalarSample& right) noexcept {
+    if (left.value.kind != right.value.kind || left.value.present != right.value.present) {
+        return false;
+    }
+    if (!left.value.present) {
+        return true;
+    }
+    return left.value.unsignedValue == right.value.unsignedValue
+           && left.value.signedValue == right.value.signedValue
+           && std::bit_cast<std::uint32_t>(left.value.realValue)
+                  == std::bit_cast<std::uint32_t>(right.value.realValue);
+}
+
+/** @return True when both samples name the same ActivityClient and reported object generations. */
+bool same_sense_scalar_generations(const SenseScalarSample& left,
+                                   const SenseScalarSample& right) noexcept {
+    return left.sourceGeneration != 0 && left.sourceGeneration == right.sourceGeneration
+           && left.hasGeneration && right.hasGeneration
+           && left.generationPlusOne == right.generationPlusOne;
+}
+
+/** @return Stable text for one exact scalar-selection result. */
+const char* sense_scalar_status_name(SenseScalarStatus status) noexcept {
+    switch (status) {
+    case SenseScalarStatus::ready:
+        return "ready";
+    case SenseScalarStatus::invalidIdentity:
+        return "invalid_identity";
+    case SenseScalarStatus::invalidSnapshot:
+        return "invalid_snapshot";
+    case SenseScalarStatus::notFound:
+        return "not_found";
+    case SenseScalarStatus::ambiguous:
+        return "ambiguous";
+    }
+    return "invalid_status";
 }
 
 /** Reads the committed Auth state for one exact activity generation. */

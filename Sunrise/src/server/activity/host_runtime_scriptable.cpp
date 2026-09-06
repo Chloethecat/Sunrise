@@ -4,7 +4,14 @@
 #include <new>
 
 #include "../../middleware/bap/activity_message/sensor_auth_update.h"
+#include "../../middleware/bap/activity_message/mission_auth_patch.h"
+#include "../../middleware/bap/activity_message/squad_objective_auth.h"
+#include "../../middleware/bap/activity_message/combatant_path_auth.h"
+#include "../../middleware/bap/activity_message/combatant_action_auth.h"
+#include "../../middleware/bap/activity_message/combatant_delivery_auth.h"
+#include "../../middleware/bap/activity_message/combatant_retire_auth.h"
 #include "../../state/activity/mission/runtime.h"
+#include "../../core/logging/log.h"
 #include "../../state/activity/runtime.h"
 #include "../gameplay/squad_entity_retirement.h"
 #include "host_runtime_internal.h"
@@ -225,6 +232,22 @@ valid_state_local_group(const ScriptableTarget& target,
     }
     if (pending.byteCount == 0 || pending.byteCount > pending.body.size()) {
         return false;
+    }
+    // Record the exact transported Ember ship body, including path revision and manifest.
+    // Four fixed targets and short bodies keep this diagnostic bounded during flight.
+    if (pending.target.registryKey == 0xF6FFB59EU && pending.target.slotType == 2
+        && (pending.target.slotIndex == 22 || pending.target.slotIndex == 28
+            || pending.target.slotIndex == 30 || pending.target.slotIndex == 32)
+        && pending.byteCount <= 128) {
+        std::array<char,257> hex{};
+        constexpr char digits[] = "0123456789abcdef";
+        for (std::size_t i=0;i<pending.byteCount;++i) {
+            const auto byte=std::to_integer<unsigned>(pending.body[i]);
+            hex[i*2]=digits[byte>>4]; hex[i*2+1]=digits[byte&15];
+        }
+        core::log::writef(core::log::Channel::server,core::log::Level::info,
+            "ev=ember_transport stage=auth_staged slot=%u bits=%u body=%s",
+            static_cast<unsigned>(pending.target.slotIndex),static_cast<unsigned>(pending.bitCount),hex.data());
     }
     PendingScriptableOverride owned = pending;
     if (owned.expectedActivityClientGeneration == 0) {
@@ -524,6 +547,36 @@ void apply_scriptable_control(const ScriptableRequest& request, std::uint64_t no
     } else {
         encoded = false;
     }
+    // These mission APIs emit root-field patches; native overrides are complete Auth
+    // replacements. Keep the last transported state before publishing another command.
+    namespace message = middleware::bap::activity_message;
+    const auto patch = std::span(pending.body).first(written);
+    const bool missionPatch = encoded && (request.kind == ScriptableOverrideKind::squad
+        || (request.kind == ScriptableOverrideKind::sdkAuth
+            && ((request.target.slotType == 1 && request.target.authSchema == squad::kSchema
+                 && message::squad_objective::validate(patch, pending.bitCount))
+                || (request.target.slotType == 2 && request.target.authSchema == 0x80807DA1U
+                    && (message::combatant_path::validate(patch, pending.bitCount)
+                        || message::combatant_delivery::validate(patch, pending.bitCount)
+                        || message::combatant_action::validate(patch, pending.bitCount)
+                        || message::combatant_retire::validate(patch, pending.bitCount))))));
+    if (missionPatch) {
+        std::span<const std::byte> previous{};
+        std::size_t previousBits=0;
+        // A tail cannot contain the same ClientRef as another pending body, so its
+        // predecessor is always in the transported estate, not an uncommitted row.
+        for (const auto& retained : instance->scriptableAuthEstate) {
+            if (same_client_ref(retained.target, request.target)) {
+                previous=std::span(retained.body).first(retained.byteCount);
+                previousBits=retained.bitCount;
+                break;
+            }
+        }
+        std::size_t composedBits{};
+        encoded=message::mission_auth_patch::compose(request.target.authSchema,
+            previous,previousBits,patch,pending.bitCount,pending.body,written,composedBits);
+        if (encoded) pending.bitCount=static_cast<std::uint16_t>(composedBits);
+    }
     if (!encoded || written > (std::numeric_limits<std::uint16_t>::max)()) {
         ++g_refusedControls;
     } else {
@@ -659,6 +712,749 @@ ScriptableWithdrawStatus withdraw_scriptable_output(const state::activity::Sessi
     }
     ReleaseSRWLockExclusive(&g_lock);
     return ScriptableWithdrawStatus::absent;
+}
+
+/** Queues one generation-bound type-23 update for an exact package-derived ClientRef. */
+bool request_type23_override(const state::activity::SessionBinding& binding,
+                             const ScriptableTarget& target,
+                             auth::Type23Channel channel,
+                             float value,
+                             bool snap,
+                             std::uint64_t expectedActivityClientGeneration,
+                             const ScriptableOutputReservation* reservation) noexcept {
+    const auto channelIndex = static_cast<std::size_t>(channel);
+    if (target.slotType != auth::kType23SlotType || target.authSchema != auth::kType23Schema
+        || channelIndex >= auth::kType23ChannelCount || expectedActivityClientGeneration == 0) {
+        return false;
+    }
+    ScriptableRequest request{};
+    request.binding = binding;
+    request.target = target;
+    request.channel = channel;
+    request.value = value;
+    request.expectedActivityClientGeneration = expectedActivityClientGeneration;
+    request.kind = ScriptableOverrideKind::type23;
+    request.snap = snap;
+    return enqueue_request(request, reservation);
+}
+
+/** Queues one package-owned type-4 entry transition. */
+bool request_state_local_type4_override(
+    const state::activity::SessionBinding& binding,
+    const ScriptableTarget& target,
+    const state::build_data::scenarios::RosterGroup& stateLocalRosterGroup,
+    std::int32_t entryIndex,
+    bool active,
+    std::uint64_t expectedActivityClientGeneration,
+    const ScriptableOutputReservation* reservation,
+    const ScriptableOutputReservation* burstHead) noexcept {
+    if (target.slotType != auth::kType4SlotType || target.authSchema != auth::kType4Schema
+        || !valid_state_local_group(target, stateLocalRosterGroup) || entryIndex < 0
+        || expectedActivityClientGeneration == 0) {
+        return false;
+    }
+    ScriptableRequest request{};
+    request.binding = binding;
+    request.target = target;
+    request.stateLocalRosterGroup = stateLocalRosterGroup;
+    request.entryIndex = entryIndex;
+    request.active = active;
+    request.expectedActivityClientGeneration = expectedActivityClientGeneration;
+    request.kind = ScriptableOverrideKind::object;
+    if (burstHead != nullptr) {
+        // Every body in one burst answers under the revision the head reserved for all of them.
+        request.burstMember = true;
+        request.expectedRevision = burstHead->revision;
+        request.expectedIntentSequence = burstHead->intentSequence;
+    }
+    return enqueue_request(request, burstHead != nullptr ? nullptr : reservation);
+}
+
+/** Queues one retained named actor-channel write. */
+bool request_state_local_type2_channel_override(
+    const state::activity::SessionBinding& binding,
+    const ScriptableTarget& target,
+    const state::build_data::scenarios::RosterGroup& stateLocalRosterGroup,
+    std::uint32_t channelHash,
+    float value,
+    std::uint64_t expectedActivityClientGeneration,
+    const ScriptableOutputReservation* reservation) noexcept {
+    if (target.slotType != auth::kType2SlotType || target.authSchema != auth::kType2Schema
+        || !valid_state_local_group(target, stateLocalRosterGroup) || !std::isfinite(value)
+        || expectedActivityClientGeneration == 0) {
+        return false;
+    }
+    ScriptableRequest request{};
+    request.binding = binding;
+    request.target = target;
+    request.stateLocalRosterGroup = stateLocalRosterGroup;
+    request.channelHash = channelHash;
+    request.value = value;
+    request.expectedActivityClientGeneration = expectedActivityClientGeneration;
+    request.kind = ScriptableOverrideKind::combatantChannel;
+    return enqueue_request(request, reservation);
+}
+
+/** Queues squad-member binding for one exact generated type-2 combatant. */
+bool request_state_local_type2_squad_binding(
+    const state::activity::SessionBinding& binding,
+    const ScriptableTarget& target,
+    const state::build_data::scenarios::RosterGroup& stateLocalRosterGroup,
+    std::uint64_t expectedActivityClientGeneration,
+    const ScriptableOutputReservation* reservation) noexcept {
+    if (target.slotType != auth::kType2SlotType || target.authSchema != auth::kType2Schema
+        || !valid_state_local_group(target, stateLocalRosterGroup)
+        || expectedActivityClientGeneration == 0) {
+        return false;
+    }
+    ScriptableRequest request{};
+    request.binding = binding;
+    request.target = target;
+    request.stateLocalRosterGroup = stateLocalRosterGroup;
+    request.expectedActivityClientGeneration = expectedActivityClientGeneration;
+    request.kind = ScriptableOverrideKind::combatantBinding;
+    return enqueue_request(request, reservation);
+}
+
+/** Queues one generation-bound type-23 update from an exact generated roster group. */
+bool request_state_local_type23_override(
+    const state::activity::SessionBinding& binding,
+    const ScriptableTarget& target,
+    const state::build_data::scenarios::RosterGroup& stateLocalRosterGroup,
+    auth::Type23Channel channel,
+    float value,
+    bool snap,
+    std::uint64_t expectedActivityClientGeneration,
+    const ScriptableOutputReservation* reservation) noexcept {
+    const auto channelIndex = static_cast<std::size_t>(channel);
+    if (target.slotType != auth::kType23SlotType || target.authSchema != auth::kType23Schema
+        || !valid_state_local_group(target, stateLocalRosterGroup)
+        || channelIndex >= auth::kType23ChannelCount || expectedActivityClientGeneration == 0) {
+        return false;
+    }
+    ScriptableRequest request{};
+    request.binding = binding;
+    request.target = target;
+    request.stateLocalRosterGroup = stateLocalRosterGroup;
+    request.expectedActivityClientGeneration = expectedActivityClientGeneration;
+    request.channel = channel;
+    request.value = value;
+    request.kind = ScriptableOverrideKind::type23;
+    request.snap = snap;
+    return enqueue_request(request, reservation);
+}
+
+/** Queues one type-31 pulse for an exact package-derived ClientRef. */
+bool request_type31_override(const state::activity::SessionBinding& binding,
+                             const ScriptableTarget& target,
+                             const ScriptableOutputReservation* reservation) noexcept {
+    if (target.slotType != auth::kType31SlotType || target.authSchema != auth::kType31Schema) {
+        return false;
+    }
+    ScriptableRequest request{};
+    request.binding = binding;
+    request.target = target;
+    request.kind = ScriptableOverrideKind::type31;
+    return enqueue_request(request, reservation);
+}
+
+/** Queues one generation-bound type-31 pulse from an exact generated roster group. */
+bool request_state_local_type31_override(
+    const state::activity::SessionBinding& binding,
+    const ScriptableTarget& target,
+    const state::build_data::scenarios::RosterGroup& stateLocalRosterGroup,
+    std::uint64_t expectedActivityClientGeneration,
+    const ScriptableOutputReservation* reservation) noexcept {
+    if (target.slotType != auth::kType31SlotType || target.authSchema != auth::kType31Schema
+        || !valid_state_local_group(target, stateLocalRosterGroup)
+        || expectedActivityClientGeneration == 0) {
+        return false;
+    }
+    ScriptableRequest request{};
+    request.binding = binding;
+    request.target = target;
+    request.stateLocalRosterGroup = stateLocalRosterGroup;
+    request.expectedActivityClientGeneration = expectedActivityClientGeneration;
+    request.kind = ScriptableOverrideKind::type31;
+    return enqueue_request(request, reservation);
+}
+
+/** Queues one state-local sequence override, but only for an exact type-5 target. */
+bool request_state_local_sequence_override(
+    const state::activity::SessionBinding& binding,
+    const ScriptableTarget& target,
+    const state::build_data::scenarios::RosterGroup& stateLocalRosterGroup,
+    std::uint64_t expectedActivityClientGeneration,
+    const ScriptableOutputReservation* reservation) noexcept {
+    if (target.slotType != auth::kType5SlotType || target.authSchema != auth::kType5Schema
+        || !valid_state_local_group(target, stateLocalRosterGroup)
+        || expectedActivityClientGeneration == 0) {
+        return false;
+    }
+    ScriptableRequest request{};
+    request.binding = binding;
+    request.target = target;
+    request.stateLocalRosterGroup = stateLocalRosterGroup;
+    request.expectedActivityClientGeneration = expectedActivityClientGeneration;
+    request.kind = ScriptableOverrideKind::sequence;
+    return enqueue_request(request, reservation);
+}
+
+/** Queues one state-local cinematic override, but only for an exact type-5 target. */
+bool request_state_local_cinematic_override(
+    const state::activity::SessionBinding& binding,
+    const ScriptableTarget& target,
+    const state::build_data::scenarios::RosterGroup& stateLocalRosterGroup,
+    bool active,
+    std::uint64_t expectedActivityClientGeneration,
+    const ScriptableOutputReservation* reservation) noexcept {
+    if (target.slotType != auth::kType6SlotType || target.authSchema != auth::kType6Schema
+        || !valid_state_local_group(target, stateLocalRosterGroup)
+        || expectedActivityClientGeneration == 0) {
+        return false;
+    }
+    ScriptableRequest request{};
+    request.binding = binding;
+    request.target = target;
+    request.stateLocalRosterGroup = stateLocalRosterGroup;
+    request.expectedActivityClientGeneration = expectedActivityClientGeneration;
+    request.kind = ScriptableOverrideKind::cinematic;
+    request.active = active;
+    return enqueue_request(request, reservation);
+}
+
+/** Queues one type-42 performance start; the encoder assigns the rising generation. */
+bool request_state_local_performance_override(
+    const state::activity::SessionBinding& binding,
+    const ScriptableTarget& target,
+    const state::build_data::scenarios::RosterGroup& stateLocalRosterGroup,
+    std::uint32_t stateNameHash,
+    std::uint64_t expectedActivityClientGeneration,
+    const ScriptableOutputReservation* reservation) noexcept {
+    if (target.slotType != auth::kType42SlotType || target.authSchema != auth::kType42Schema
+        || !valid_state_local_group(target, stateLocalRosterGroup)
+        || expectedActivityClientGeneration == 0 || stateNameHash == 0) {
+        return false;
+    }
+    ScriptableRequest request{};
+    request.binding = binding;
+    request.target = target;
+    request.stateLocalRosterGroup = stateLocalRosterGroup;
+    request.expectedActivityClientGeneration = expectedActivityClientGeneration;
+    request.kind = ScriptableOverrideKind::performance;
+    request.nameHash = stateNameHash;
+    return enqueue_request(request, reservation);
+}
+
+/** Queues one objective reset from an exact generated roster group. */
+bool request_state_local_objective_reset(
+    const state::activity::SessionBinding& binding,
+    const ScriptableTarget& target,
+    const state::build_data::scenarios::RosterGroup& stateLocalRosterGroup,
+    std::uint64_t expectedActivityClientGeneration,
+    const ScriptableOutputReservation* reservation) noexcept {
+    if (target.slotType != auth::kType3SlotType || target.authSchema != auth::kType3Schema
+        || !valid_state_local_group(target, stateLocalRosterGroup)
+        || expectedActivityClientGeneration == 0) {
+        return false;
+    }
+    ScriptableRequest request{};
+    request.binding = binding;
+    request.target = target;
+    request.stateLocalRosterGroup = stateLocalRosterGroup;
+    request.expectedActivityClientGeneration = expectedActivityClientGeneration;
+    request.kind = ScriptableOverrideKind::objectiveReset;
+    return enqueue_request(request, reservation);
+}
+
+/** Queues one generation-bound authored-task change from an exact generated roster group. */
+bool request_state_local_task_override(
+    const state::activity::SessionBinding& binding,
+    const ScriptableTarget& target,
+    const state::build_data::scenarios::RosterGroup& stateLocalRosterGroup,
+    std::uint64_t expectedActivityClientGeneration,
+    const ScriptableOutputReservation* reservation) noexcept {
+    if (target.slotType != auth::kType38SlotType || target.authSchema != auth::kType38Schema
+        || !valid_state_local_group(target, stateLocalRosterGroup)
+        || expectedActivityClientGeneration == 0) {
+        return false;
+    }
+    ScriptableRequest request{};
+    request.binding = binding;
+    request.target = target;
+    request.stateLocalRosterGroup = stateLocalRosterGroup;
+    request.expectedActivityClientGeneration = expectedActivityClientGeneration;
+    request.kind = ScriptableOverrideKind::task;
+    return enqueue_request(request, reservation);
+}
+
+/** Queues one generation-bound authored-scene activation from an exact generated roster group. */
+bool request_state_local_authored_scene_override(
+    const state::activity::SessionBinding& binding,
+    const ScriptableTarget& target,
+    const state::build_data::scenarios::RosterGroup& stateLocalRosterGroup,
+    std::uint64_t expectedActivityClientGeneration,
+    const ScriptableOutputReservation* reservation) noexcept {
+    if (target.slotType != scene::kAuthoredSceneSlotType
+        || target.authSchema != scene::kAuthoredSceneAuthSchema
+        || !valid_state_local_group(target, stateLocalRosterGroup)
+        || expectedActivityClientGeneration == 0) {
+        return false;
+    }
+    ScriptableRequest request{};
+    request.binding = binding;
+    request.target = target;
+    request.stateLocalRosterGroup = stateLocalRosterGroup;
+    request.expectedActivityClientGeneration = expectedActivityClientGeneration;
+    request.kind = ScriptableOverrideKind::authoredScene;
+    return enqueue_request(request, reservation);
+}
+
+/** Queues one SDK-bounded dialogue line pulse from an exact generated roster group. */
+bool request_state_local_dialogue_override(
+    const state::activity::SessionBinding& binding,
+    const ScriptableTarget& target,
+    const state::build_data::scenarios::RosterGroup& stateLocalRosterGroup,
+    std::uint16_t cueIndex,
+    std::uint16_t authoredCueCount,
+    std::uint64_t expectedActivityClientGeneration,
+    const ScriptableOutputReservation* reservation) noexcept {
+    if (target.slotType != auth::kType53SlotType || target.authSchema != auth::kType53Schema
+        || !valid_state_local_group(target, stateLocalRosterGroup) || authoredCueCount == 0
+        || authoredCueCount > auth::kType53EntryCount || cueIndex >= authoredCueCount
+        || expectedActivityClientGeneration == 0) {
+        return false;
+    }
+    ScriptableRequest request{};
+    request.binding = binding;
+    request.target = target;
+    request.stateLocalRosterGroup = stateLocalRosterGroup;
+    request.expectedActivityClientGeneration = expectedActivityClientGeneration;
+    request.dialogueCue = cueIndex;
+    request.kind = ScriptableOverrideKind::dialogue;
+    return enqueue_request(request, reservation);
+}
+
+/** Queues one squad placement intent for an exact package-derived ClientRef. */
+bool request_squad_override(const state::activity::SessionBinding& binding,
+                            const ScriptableTarget& target,
+                            const state::build_data::scenarios::RosterGroup* stateLocalRosterGroup,
+                            std::span<const std::int32_t> requestedCounts,
+                            squad::Mode mode,
+                            std::uint64_t expectedActivityClientGeneration,
+                            std::optional<std::uint32_t> nameHash,
+                            const ScriptableOutputReservation* reservation,
+                            std::array<std::int8_t, 4> authoredProfile) noexcept {
+    if (target.slotType != squad::kSlotType || target.authSchema != squad::kSchema
+        || (target.stateLocalRoster
+                ? stateLocalRosterGroup == nullptr
+                      || !valid_state_local_group(target, *stateLocalRosterGroup)
+                : stateLocalRosterGroup != nullptr)
+        || requestedCounts.size() < squad::kMinimumRequestedCountLength
+        || requestedCounts.size() > squad::kMaximumRequestedCountLength
+        || expectedActivityClientGeneration == 0
+        || !squad::valid_mode(mode)
+        || !std::ranges::all_of(requestedCounts, [](std::int32_t count) { return count >= 0; })) {
+        return false;
+    }
+    ScriptableRequest request{};
+    request.binding = binding;
+    request.target = target;
+    if (stateLocalRosterGroup != nullptr) {
+        request.stateLocalRosterGroup = *stateLocalRosterGroup;
+    }
+    std::ranges::copy(requestedCounts, request.requestedCounts.begin());
+    request.requestedCountLength = requestedCounts.size();
+    request.squadAuthoredProfile = authoredProfile;
+    request.nameHash = nameHash;
+    request.expectedActivityClientGeneration = expectedActivityClientGeneration;
+    request.squadMode = mode;
+    request.kind = ScriptableOverrideKind::squad;
+    return enqueue_request(request, reservation);
+}
+
+/** Queues one generation-bound activity lifetime state through the serialized output slot. */
+bool request_lifetime_override(const state::activity::SessionBinding& binding,
+                               std::uint8_t lifetimeState,
+                               std::uint64_t expectedActivityClientGeneration,
+                               const ScriptableOutputReservation* reservation) noexcept {
+    // Above the highest jump-table entry the client's spawn gate jumps out of its image.
+    if (lifetimeState > kMaximumLifetimeState || expectedActivityClientGeneration == 0) {
+        return false;
+    }
+    ScriptableRequest request{};
+    request.binding = binding;
+    request.expectedActivityClientGeneration = expectedActivityClientGeneration;
+    request.kind = ScriptableOverrideKind::lifetime;
+    request.lifetimeState = lifetimeState;
+    return enqueue_request(request, reservation);
+}
+
+/** Queues one exact SDK-compiled Auth body for a generation-bound ClientRef. */
+bool request_sdk_auth_override(
+    const state::activity::SessionBinding& binding,
+    const ScriptableTarget& target,
+    const state::build_data::scenarios::RosterGroup* stateLocalRosterGroup,
+    std::span<const std::byte> body,
+    std::uint16_t bitCount,
+    std::uint64_t expectedActivityClientGeneration,
+    const ScriptableOutputReservation* reservation) noexcept {
+    if (body.empty() || body.size() > scene::kAuthOverrideByteCapacity
+        || body.size() > (std::numeric_limits<std::uint16_t>::max)()
+        || expectedActivityClientGeneration == 0 || !valid_auth_storage(body, bitCount)
+        || (target.stateLocalRoster
+                ? stateLocalRosterGroup == nullptr
+                      || !valid_state_local_group(target, *stateLocalRosterGroup)
+                : stateLocalRosterGroup != nullptr)) {
+        return false;
+    }
+    ScriptableRequest request{};
+    request.binding = binding;
+    request.target = target;
+    if (stateLocalRosterGroup != nullptr) {
+        request.stateLocalRosterGroup = *stateLocalRosterGroup;
+    }
+    std::copy(body.begin(), body.end(), request.authBody.begin());
+    request.authBitCount = bitCount;
+    request.authByteCount = static_cast<std::uint16_t>(body.size());
+    request.expectedActivityClientGeneration = expectedActivityClientGeneration;
+    request.kind = ScriptableOverrideKind::sdkAuth;
+    return enqueue_request(request, reservation);
+}
+
+/** Reads the one pending typed ClientRef body without changing its counter. */
+bool pending_scriptable_override(const state::activity::SessionBinding& binding,
+                                 PendingScriptableOverride& output) noexcept {
+    output = {};
+    AcquireSRWLockShared(&g_lock);
+    const Instance* const instance = find_instance(binding);
+    const bool pending = instance != nullptr && instance->view.active
+                         && instance->view.outputPending
+                         && instance->view.outputKind == OutputKind::scriptableOverride
+                         && instance->pendingScriptable.revision != 0;
+    if (pending) {
+        output = instance->pendingScriptable;
+    }
+    ReleaseSRWLockShared(&g_lock);
+    return pending;
+}
+
+/** Reads one pending body only for the ActivityClient generation that authorized it. */
+bool pending_scriptable_override_for_activity_client(const state::activity::SessionBinding& binding,
+                                                     std::uint64_t activityClientGeneration,
+                                                     PendingScriptableOverride& output) noexcept {
+    output = {};
+    AcquireSRWLockExclusive(&g_lock);
+    Instance* const instance = find_instance(binding);
+    bool pending = instance != nullptr && instance->view.active && instance->view.outputPending
+                   && instance->view.outputKind == OutputKind::scriptableOverride
+                   && instance->pendingScriptable.revision != 0;
+    if (pending && instance->pendingScriptable.expectedActivityClientGeneration != 0
+        && instance->pendingScriptable.expectedActivityClientGeneration
+               != activityClientGeneration) {
+        const std::uint64_t revision = instance->pendingScriptable.revision;
+        cancel_pending(*instance, binding, revision);
+        pending = false;
+    }
+    if (pending) {
+        output = instance->pendingScriptable;
+    }
+    ReleaseSRWLockExclusive(&g_lock);
+    return pending;
+}
+
+/** Cancels one exact unstaged typed override revision without advancing its slot counter. */
+bool cancel_pending_scriptable_override(const state::activity::SessionBinding& binding,
+                                        std::uint64_t expectedRevision) noexcept {
+    if (expectedRevision == 0) {
+        return false;
+    }
+    AcquireSRWLockExclusive(&g_lock);
+    Instance* const instance = find_instance(binding);
+    const bool canceled = instance != nullptr && instance->view.active
+                          && instance->view.outputPending
+                          && instance->view.outputKind == OutputKind::scriptableOverride
+                          && instance->pendingScriptable.revision == expectedRevision;
+    if (canceled) {
+        cancel_pending(*instance, binding, expectedRevision);
+    }
+    ReleaseSRWLockExclusive(&g_lock);
+    return canceled;
+}
+
+/** Records one refused typed-body attempt without consuming its sequence or generation. */
+void note_scriptable_attempt(const state::activity::SessionBinding& binding,
+                             std::uint64_t sourceGeneration,
+                             const PendingScriptableOverride& pending,
+                             OutputStatus status) noexcept {
+    if (pending.revision == 0 || status == OutputStatus::idle || status == OutputStatus::pending
+        || status == OutputStatus::transportStaged || status == OutputStatus::canceled) {
+        return;
+    }
+    AcquireSRWLockExclusive(&g_lock);
+    Instance* const instance = find_instance(binding);
+    if (instance != nullptr && instance->view.outputPending
+        && instance->view.outputKind == OutputKind::scriptableOverride
+        && same_pending(instance->pendingScriptable, pending)) {
+        instance->view.lastOutputAttemptTick = GetTickCount64();
+        instance->view.lastOutputSourceGeneration = sourceGeneration;
+        ++instance->view.outputAttempts;
+        instance->view.outputStatus = status;
+        const bool terminal = status == OutputStatus::noLayout || status == OutputStatus::noGroups
+                              || status == OutputStatus::noOverrideTarget
+                              || status == OutputStatus::ambiguousLinks
+                              || status == OutputStatus::frameRefused;
+        if (terminal) {
+            const std::uint64_t revision = instance->pendingScriptable.revision;
+            cancel_pending(*instance, binding, revision);
+            instance->view.outputStatus = status;
+        }
+    }
+    ReleaseSRWLockExclusive(&g_lock);
+}
+
+/** @return True when this body carries the exact next counter its committed guard expects. */
+[[nodiscard]] bool staged_counter_matches(const ScriptableGuard* guard,
+                                          const PendingScriptableOverride& pending) noexcept {
+    bool nextCounter = false;
+    if (pending.kind == ScriptableOverrideKind::lifetime) {
+        nextCounter = true;
+    } else if (guard != nullptr && pending.kind == ScriptableOverrideKind::squad
+               && pending.generation <= squad::kMaximumGeneration) {
+        std::uint32_t next = 0;
+        nextCounter = squad::next_generation(guard->squad, next) && next == pending.generation;
+    } else if (guard != nullptr && pending.kind == ScriptableOverrideKind::combatantChannel) {
+        auth::Type2ChannelState candidate = guard->type2;
+        std::uint32_t revision = 0;
+        nextCounter =
+            auth::next_type2_revision(candidate, revision) && revision == pending.generation;
+        candidate.revision = revision;
+        nextCounter =
+            nextCounter
+            && auth::set_type2_channel(candidate, pending.channelHash, pending.channelValue);
+    } else if (guard != nullptr && pending.kind == ScriptableOverrideKind::combatantBinding) {
+        auth::Type2ChannelState candidate = guard->type2;
+        std::uint32_t revision = 0;
+        nextCounter =
+            auth::next_type2_revision(candidate, revision) && revision == pending.generation;
+        candidate.revision = revision;
+        candidate.actorBinding = auth::Type2ActorBinding::squadMember;
+    } else if (guard != nullptr && pending.kind == ScriptableOverrideKind::object) {
+        std::int32_t next = 0;
+        nextCounter = auth::next_type4_generation(guard->type4, next)
+                      && static_cast<std::uint64_t>(next) == pending.generation;
+    } else if (guard != nullptr && pending.kind == ScriptableOverrideKind::sequence) {
+        std::uint8_t next = 0;
+        nextCounter = auth::next_type5_revision(guard->type5, next) && next == pending.generation;
+    } else if (guard != nullptr && pending.kind == ScriptableOverrideKind::cinematic) {
+        std::uint32_t next = 0;
+        nextCounter = auth::next_type6_generation(guard->type6, next) && next == pending.generation;
+    } else if (guard != nullptr && pending.kind == ScriptableOverrideKind::performance) {
+        std::int32_t next = 0;
+        nextCounter = auth::next_type42_generation(guard->type42, next)
+                      && static_cast<std::uint64_t>(next) == pending.generation;
+    } else if (guard != nullptr && pending.kind == ScriptableOverrideKind::type23) {
+        std::int16_t next = 0;
+        nextCounter = auth::next_type23_sequence(guard->type23, pending.channel, next)
+                      && next == pending.sequence;
+    } else if (guard != nullptr && pending.kind == ScriptableOverrideKind::type31) {
+        std::uint64_t next = 0;
+        nextCounter =
+            auth::next_type31_generation(guard->type31, next) && next == pending.generation;
+    } else if (guard != nullptr && pending.kind == ScriptableOverrideKind::objectiveReset) {
+        std::int32_t next = 0;
+        nextCounter = auth::next_type3_generation(guard->type3, next)
+                      && static_cast<std::uint64_t>(next) == pending.generation;
+    } else if (guard != nullptr && pending.kind == ScriptableOverrideKind::task) {
+        std::int32_t next = 0;
+        nextCounter = auth::next_type38_generation(guard->type38, next)
+                      && static_cast<std::uint64_t>(next) == pending.generation;
+    } else if (guard != nullptr && pending.kind == ScriptableOverrideKind::authoredScene) {
+        std::uint32_t next = 0;
+        nextCounter = next_authored_scene_generation(guard->authoredSceneGeneration, next)
+                      && next == pending.generation;
+    } else if (guard != nullptr && pending.kind == ScriptableOverrideKind::dialogue) {
+        std::int32_t next = 0;
+        nextCounter = auth::next_type53_sequence(guard->type53, pending.dialogueCue, next)
+                      && next == pending.dialogueSequence;
+    } else if (guard != nullptr && pending.kind == ScriptableOverrideKind::sdkAuth
+               && pending.sdkCompiled) {
+        nextCounter = true;
+    }
+    return nextCounter;
+}
+
+/** Advances one committed guard to the body that has just reached transport. */
+void advance_staged_guard(ScriptableGuard* guard,
+                          const PendingScriptableOverride& pending) noexcept {
+    if (guard == nullptr) {
+        return;
+    }
+    if (pending.kind == ScriptableOverrideKind::squad) {
+        guard->squad.last = static_cast<std::uint32_t>(pending.generation);
+        guard->squad.hasLast = true;
+    } else if (pending.kind == ScriptableOverrideKind::combatantChannel) {
+        guard->type2.revision = static_cast<std::uint32_t>(pending.generation);
+        static_cast<void>(
+            auth::set_type2_channel(guard->type2, pending.channelHash, pending.channelValue));
+    } else if (pending.kind == ScriptableOverrideKind::combatantBinding) {
+        guard->type2.revision = static_cast<std::uint32_t>(pending.generation);
+        guard->type2.actorBinding = auth::Type2ActorBinding::squadMember;
+    } else if (pending.kind == ScriptableOverrideKind::object) {
+        guard->type4.last = static_cast<std::int32_t>(pending.generation);
+        guard->type4.hasLast = true;
+    } else if (pending.kind == ScriptableOverrideKind::sequence) {
+        guard->type5.last = static_cast<std::uint8_t>(pending.generation);
+        guard->type5.hasLast = true;
+    } else if (pending.kind == ScriptableOverrideKind::cinematic) {
+        guard->type6.last = static_cast<std::uint32_t>(pending.generation);
+        guard->type6.hasLast = true;
+    } else if (pending.kind == ScriptableOverrideKind::performance) {
+        guard->type42.last = static_cast<std::int32_t>(pending.generation);
+        guard->type42.hasLast = true;
+    } else if (pending.kind == ScriptableOverrideKind::type23) {
+        guard->type23.last[static_cast<std::size_t>(pending.channel)] = pending.sequence;
+    } else if (pending.kind == ScriptableOverrideKind::type31) {
+        guard->type31.last = pending.generation;
+        guard->type31.hasLast = true;
+    } else if (pending.kind == ScriptableOverrideKind::objectiveReset) {
+        guard->type3.last = static_cast<std::int32_t>(pending.generation);
+        guard->type3.hasLast = true;
+    } else if (pending.kind == ScriptableOverrideKind::task) {
+        guard->type38.last = static_cast<std::int32_t>(pending.generation);
+        guard->type38.hasLast = true;
+    } else if (pending.kind == ScriptableOverrideKind::authoredScene) {
+        guard->authoredSceneGeneration = static_cast<std::uint32_t>(pending.generation);
+    } else if (pending.kind == ScriptableOverrideKind::dialogue) {
+    }
+}
+
+/** Records that one pending body reached the transport, so its retained estate can advance. */
+void note_scriptable_transport_staged(const state::activity::SessionBinding& binding,
+                                      std::uint64_t sourceGeneration,
+                                      const PendingScriptableOverride& pending) noexcept {
+    if (pending.revision == 0
+        || (pending.expectedActivityClientGeneration != 0
+            && pending.expectedActivityClientGeneration != sourceGeneration)) {
+        return;
+    }
+    AcquireSRWLockExclusive(&g_lock);
+    Instance* const instance = find_instance(binding);
+    ScriptableGuard* guard = instance != nullptr ? find_guard(*instance, pending.target) : nullptr;
+    const bool nextCounter = staged_counter_matches(guard, pending);
+    if (instance != nullptr && nextCounter && instance->view.outputPending
+        && instance->view.outputKind == OutputKind::scriptableOverride
+        && same_pending(instance->pendingScriptable, pending)) {
+        const bool retained = retain_scriptable_auth(*instance, pending, sourceGeneration);
+        if (!retained) {
+            ++g_refusedControls;
+            ReleaseSRWLockExclusive(&g_lock);
+            return;
+        }
+        advance_staged_guard(guard, pending);
+        if (pending.kind == ScriptableOverrideKind::lifetime) {
+            // Latch the state so every later msg 5 keeps reporting it.
+            instance->view.lifetimeState = pending.lifetimeState;
+        }
+        instance->view.lastOutputAttemptTick = GetTickCount64();
+        Event event{};
+        event.binding = binding;
+        event.tick = instance->view.lastOutputAttemptTick;
+        event.kind = EventKind::scriptableOverrideTransportStaged;
+        event.sourceGeneration = sourceGeneration;
+        // The tail rode out on this same body, so it stages with the head or not at all.
+        for (std::size_t index = 0; index < instance->pendingScriptableTailCount; ++index) {
+            const PendingScriptableOverride& queued = instance->pendingScriptableTail[index];
+            ScriptableGuard* const queuedGuard = find_guard(*instance, queued.target);
+            if (!staged_counter_matches(queuedGuard, queued)
+                || !retain_scriptable_auth(*instance, queued, sourceGeneration)) {
+                ++g_refusedControls;
+                continue;
+            }
+            advance_staged_guard(queuedGuard, queued);
+            event.scriptableRevision = queued.revision;
+            append_event(event);
+        }
+        instance->pendingScriptableTail.fill({});
+        instance->pendingScriptableTailCount = 0;
+        instance->view.scriptableTransportRevision = instance->view.scriptableRevision;
+        instance->view.lastOutputSourceGeneration = sourceGeneration;
+        ++instance->view.outputAttempts;
+        instance->view.outputStatus = OutputStatus::transportStaged;
+        instance->view.outputPending = false;
+        instance->view.outputKind = OutputKind::none;
+        instance->pendingScriptable = {};
+        event.scriptableRevision = pending.revision;
+        append_event(event);
+        instance->view.lastEventSequence = g_sequence;
+    }
+    ReleaseSRWLockExclusive(&g_lock);
+}
+
+/** Copies the pending overrides that have no output yet. @return How many were written. */
+std::size_t pending_scriptable_tail(const state::activity::SessionBinding& binding,
+                                    std::span<PendingScriptableOverride> output) noexcept {
+    AcquireSRWLockShared(&g_lock);
+    const Instance* const instance = find_instance(binding);
+    std::size_t written = 0;
+    if (instance != nullptr && instance->view.active && instance->view.outputPending
+        && instance->view.outputKind == OutputKind::scriptableOverride) {
+        const std::size_t count = (std::min)(instance->pendingScriptableTailCount, output.size());
+        for (; written < count; ++written) {
+            output[written] = instance->pendingScriptableTail[written];
+        }
+    }
+    ReleaseSRWLockShared(&g_lock);
+    return written;
+}
+
+/** @return True when any instance still owes a Host output. */
+bool any_output_pending() noexcept {
+    AcquireSRWLockShared(&g_lock);
+    bool pending = false;
+    for (const Instance& instance : g_instances) {
+        pending =
+            pending
+            || (instance.occupied && instance.view.active
+                && (instance.view.outputPending || has_queued_control(instance.view.binding)));
+    }
+    ReleaseSRWLockShared(&g_lock);
+    return pending;
+}
+
+/** Copies the retained Auth estate for one exact ActivityClient generation. */
+bool scriptable_auth_estate(const state::activity::SessionBinding& binding,
+                            std::uint64_t activityClientGeneration,
+                            std::vector<PendingScriptableOverride>& output) noexcept {
+    output.clear();
+    if (activityClientGeneration == 0) {
+        return false;
+    }
+    AcquireSRWLockShared(&g_lock);
+    const Instance* instance = nullptr;
+    for (const Instance& candidate : g_instances) {
+        if (candidate.occupied && same_binding(candidate.view.binding, binding)) {
+            instance = &candidate;
+            break;
+        }
+    }
+    bool copied = true;
+    if (instance != nullptr && instance->view.active) {
+        try {
+            output.reserve(instance->scriptableAuthEstate.size());
+            for (const PendingScriptableOverride& retained : instance->scriptableAuthEstate) {
+                // The ActivityClient generation is a transport revision that advances on ordinary
+                // region advertisements, and the SessionBinding already owns estate lifetime.
+                // Filtering retained mission state by it erases every non-squad Auth lane.
+                output.push_back(retained);
+            }
+        } catch (const std::bad_alloc&) {
+            output.clear();
+            copied = false;
+        }
+    }
+    ReleaseSRWLockShared(&g_lock);
+    return copied;
 }
 
 } // namespace sunrise::server::activity::host

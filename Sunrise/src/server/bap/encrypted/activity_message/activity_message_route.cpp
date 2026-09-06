@@ -1,6 +1,7 @@
 #include "activity_message_route.h"
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -11,6 +12,11 @@
 #include "../../../../core/settings/settings.h"
 #include "../../../../middleware/bap/activity_message/activity_join_request_parser.h"
 #include "../../../../middleware/bap/activity_message/activity_message_request_parser.h"
+#include "../../../../middleware/bap/activity_message/activity_state_refresh_parser.h"
+#include "../../../../middleware/bap/activity_message/cinematic_incident.h"
+#include "../../../../middleware/bap/activity_message/client_authoritative_data.h"
+#include "../../../../middleware/bap/activity_message/entity_authority.h"
+#include "../../../../middleware/bap/activity_message/authority_cleanup.h"
 #include "../../../../middleware/bap/activity_message/entity_slots.h"
 #include "../../../../middleware/bap/activity_message/wire_schema/activity_communication_route.h"
 #include "../../../../middleware/crypto/hmac.h"
@@ -34,6 +40,42 @@ namespace sunrise::server::bap::encrypted::activity_message {
 namespace {
 
 namespace activity_sdk = state::activity_sdk;
+
+// Read-only evidence for the pending checkpoint/wipe policy. A death can be an
+// extra target of a combat incident; never infer its victim from the sending session.
+void report_player_lifecycle(const service::incident::Incident& incident,
+                             std::uint64_t sessionId, std::uint64_t sequence) noexcept {
+    if (!core::settings::get().server.activation.missionScripting) return;
+    const auto signal = [](std::uint32_t target) -> unsigned {
+        switch (target) {
+        case 1121: return 1; // player_spawned, schema 80806437
+        case 439: return 2;  // player_respawned
+        case 7117: return 4; // player_resurrected
+        case 4053: return 8; // player_died, schema 8080645A
+        case 5896: return 16; // hard_wipe, schema 808087B7
+        default: return 0;
+        }
+    };
+    unsigned signals = signal(incident.primaryTarget);
+    for (unsigned i = 0; i < incident.extraTargetCount; ++i) signals |= signal(incident.extraTargets[i]);
+    if (!signals) return;
+    static std::atomic<unsigned> reports{};
+    if (reports.fetch_add(1, std::memory_order_relaxed) >= 128) return;
+    constexpr char hex[] = "0123456789abcdef";
+    for (std::size_t offset = 0; offset < incident.payloadLength; offset += 256) {
+        std::array<char, 513> bytes{};
+        const auto count = (std::min)(std::size_t{256}, incident.payloadLength - offset);
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto value = std::to_integer<unsigned>(incident.payload[offset + i]);
+            bytes[2*i] = hex[value >> 4]; bytes[2*i + 1] = hex[value & 15];
+        }
+        core::log::writef(core::log::Channel::server, core::log::Level::info,
+            "ev=player_lifecycle session=%llu sequence=%llu target=%u signals=%u bytes=%u offset=%zu payload=%s",
+            static_cast<unsigned long long>(sessionId), static_cast<unsigned long long>(sequence),
+            incident.primaryTarget, signals, incident.payloadLength, offset, bytes.data());
+    }
+}
+
 
 /** Asks for the membership snapshot as it stands, naming no bubble. */
 constexpr std::uint32_t kCurrentRevision = 0;
@@ -336,17 +378,29 @@ std::uint64_t record(const service::Request& request,
             input.authoritative = *diagnostic.authoritative;
             input.hasAuthoritative = true;
         }
-        communication::ActivityCommunicationRoute route{};
-        const bool executableRoute =
-            activity_sdk::executable_communication_route(request.messageType, route);
-        // Message handlers parse their own authored native body. Routing retains no parallel
-        // schema-driven scalar decode.
-        sequence = server::activity::host::record_client_message(input, diagnostic.sense);
-        if (sequence != 0 && request.messageType != service::entity_slot_request::kMessageType
-            && executableRoute
-            && route.ingressDelivery == communication::IngressDeliveryPolicy::protocolHostInput
-            && !server::activity::host::submit_client_message(input, sequence)) {
-            report_message(request.messageType, request.sessionId, "mission_ingress_refused");
+    } else if (isIncident && framed.verdict == store::Verdict::framed) {
+        report_player_lifecycle(parsedIncident, request.sessionId, clientMessageSequence);
+        server::activity::host::IncidentInput input{};
+        input.binding = binding.session;
+        input.incident = parsedIncident;
+        input.sourceGeneration = binding.bindingGeneration;
+        input.clientMessageSequence = clientMessageSequence;
+        input.payloadBytes = static_cast<std::uint32_t>(request.payload.size());
+        if (parsedIncident.primaryTarget == player_trigger_incident::kPrimaryTarget
+            && parsedIncident.payloadLength == player_trigger_incident::kPayloadBytes) {
+            input.hasPlayerTrigger = player_trigger_incident::decode(
+                std::span(parsedIncident.payload).first(parsedIncident.payloadLength),
+                input.playerTrigger);
+        }
+        if (parsedIncident.payloadLength == cinematic_incident::kPayloadBytes
+            && cinematic_incident::signal_for_target(parsedIncident.primaryTarget,
+                                                     input.cinematicSignal)) {
+            input.hasCinematic = cinematic_incident::decode(
+                std::span(parsedIncident.payload).first(parsedIncident.payloadLength),
+                input.cinematic);
+        }
+        if (!server::activity::host::submit_incident(input)) {
+            report_message(request.messageType, request.sessionId, "host_ingress_refused");
         }
     }
     store::Arrival arrival{};
@@ -439,12 +493,20 @@ bool process(const ActivityClientBinding& binding,
     case IngressAdapter::authorityResetAcknowledgement:
         return prepare_authority_reset_acknowledgement(
             binding, rosterDecode, adapter, request, plan, hasTransaction);
-    case IngressAdapter::authorityAbdicate:
-        return prepare_authority_abdication(
-            binding, rosterDecode, adapter, request, plan, hasTransaction);
+    case IngressAdapter::authorityAbandon:
     case IngressAdapter::authorityRequestPurge:
-        return prepare_authority_purge(
-            binding, rosterDecode, adapter, request, plan, hasTransaction);
+        if (!frame_only(binding, rosterDecode, adapter, request)) return false;
+        if (!service::authority_cleanup::prepare(request.messageType, request.payload,
+                                                 binding.authorityEpoch, plan.authorityPurge)) {
+            return true;
+        }
+        plan.sessionId = request.sessionId;
+        plan.targetBinding = binding.session;
+        plan.authorityPurgeGeneration = binding.bindingGeneration;
+        plan.delivery = Delivery::authorityPurgeNotification;
+        plan.mutationDomain = MutationDomain::authorityPurge;
+        hasTransaction = true;
+        return true;
     case IngressAdapter::authorityQueryAnswer:
         return prepare_authority_query_answer(
             binding, rosterDecode, adapter, request, plan, hasTransaction);
