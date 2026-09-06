@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <array>
-#include <functional>
+#include <cstddef>
 #include <optional>
 
 #include "../../../unlocks/definition.h"
@@ -31,7 +31,10 @@ struct LaneResult {
  */
 [[nodiscard]] bool valid_hashes(std::span<const std::uint32_t> hashes) noexcept {
     return std::none_of(hashes.begin(), hashes.end(), [](std::uint32_t hash) { return hash == 0; })
-           && std::adjacent_find(hashes.begin(), hashes.end(), std::greater_equal{})
+           && std::adjacent_find(
+                  hashes.begin(),
+                  hashes.end(),
+                  [](std::uint32_t left, std::uint32_t right) { return left >= right; })
                   == hashes.end();
 }
 
@@ -409,6 +412,13 @@ bool supports_build(const BuildIdentity& build, const Facts& facts) noexcept {
            && build.imageTimestamp == facts.imageTimestamp && build.imageSize == facts.imageSize;
 }
 
+/**
+ * Derives all released and placeholder catalyst records; no partial row survives a failure.
+ * @param output Fixed storage that receives the complete catalog.
+ * @param count Receives the number of used output rows; zero on failure.
+ * @param report Receives the counts and the first unsafe released relation.
+ * @return False when a released relation is unclear or the catalog does not fit.
+ */
 bool derive(const Source& source,
             const Facts& facts,
             std::span<Definition> output,
@@ -522,10 +532,16 @@ bool derive(const Source& source,
                 output, count, report, Error::missingReleased, facts.releasedWeaponHashes[index]);
         }
     }
-    std::sort(output.begin(), output.begin() + count, definition_index_less);
+    std::sort(
+        output.begin(), output.begin() + static_cast<std::ptrdiff_t>(count), definition_index_less);
     return true;
 }
 
+/**
+ * Re-derives the catalog and compares every row with the candidate.
+ * @param definitions Candidate catalog to verify.
+ * @return False when the derivation fails or any row differs.
+ */
 bool matches_derived(const Source& source,
                      const Facts& facts,
                      std::span<const Definition> definitions) noexcept {
@@ -536,9 +552,17 @@ bool matches_derived(const Source& source,
         || expectedCount != definitions.size()) {
         return false;
     }
-    return std::equal(expected.begin(), expected.begin() + expectedCount, definitions.begin());
+    return std::equal(expected.begin(),
+                      expected.begin() + static_cast<std::ptrdiff_t>(expectedCount),
+                      definitions.begin());
 }
 
+/**
+ * Rebuilds the package-only relations from a stored catalog, then re-derives it.
+ * @param source Installed cache domains; its transient spans are ignored.
+ * @param definitions Stored candidate catalog.
+ * @return False when a stored row names no installed item, conflicts, or does not re-derive.
+ */
 bool matches_cached(const Source& source,
                     const Facts& facts,
                     std::span<const Definition> definitions) noexcept {
@@ -550,13 +574,15 @@ bool matches_cached(const Source& source,
     std::size_t objectiveCount = 0;
 
     const auto appendCondition = [&](const CompletionCondition& condition) {
-        const auto prior = std::find_if(
-            completionConditions.begin(),
-            completionConditions.begin() + completionCount,
-            [&condition](const CompletionCondition& candidate) {
-                return candidate.itemDefinitionIndex == condition.itemDefinitionIndex;
-            });
-        if (prior != completionConditions.begin() + completionCount) {
+        const auto conditionEnd =
+            completionConditions.begin() + static_cast<std::ptrdiff_t>(completionCount);
+        const auto prior =
+            std::find_if(completionConditions.begin(),
+                         conditionEnd,
+                         [&condition](const CompletionCondition& candidate) {
+                             return candidate.itemDefinitionIndex == condition.itemDefinitionIndex;
+                         });
+        if (prior != conditionEnd) {
             return prior->completion == condition.completion
                    && prior->objectiveDefinitionIndex == condition.objectiveDefinitionIndex
                    && prior->state == condition.state;
@@ -595,18 +621,19 @@ bool matches_cached(const Source& source,
         }
         for (std::size_t value = 0; value < definition.completion.valueCount; ++value) {
             const CompletionValue& requirement = definition.completion.values[value];
-            if (requirement.index >= kUnavailableCompletionValueIndex
-                || requirement.minimum <= 0) {
+            if (requirement.index >= kUnavailableCompletionValueIndex || requirement.minimum <= 0) {
                 return false;
             }
         }
 
         const std::uint16_t socketType = detail->socketTypes[definition.socketLane];
+        const auto gateEnd =
+            acquisitionGates.begin() + static_cast<std::ptrdiff_t>(acquisitionCount);
         const auto priorGate = std::find_if(
-            acquisitionGates.begin(),
-            acquisitionGates.begin() + acquisitionCount,
-            [socketType](const AcquisitionGate& gate) { return gate.socketType == socketType; });
-        if (priorGate != acquisitionGates.begin() + acquisitionCount) {
+            acquisitionGates.begin(), gateEnd, [socketType](const AcquisitionGate& gate) {
+                return gate.socketType == socketType;
+            });
+        if (priorGate != gateEnd) {
             if (priorGate->definitionIndex != definition.acquisitionDefinitionIndex) {
                 return false;
             }
@@ -645,21 +672,20 @@ bool matches_cached(const Source& source,
                 return false;
             }
             objective = definition.objective.value;
-            objectiveCount = (std::max)(objectiveCount,
-                                        static_cast<std::size_t>(
-                                            definition.objective.definitionIndex)
-                                            + 1);
+            objectiveCount =
+                (std::max)(objectiveCount,
+                           static_cast<std::size_t>(definition.objective.definitionIndex) + 1);
         }
     }
     std::sort(completionConditions.begin(),
-              completionConditions.begin() + completionCount,
-              [](const CompletionCondition& left, const CompletionCondition& right) {
-                  return left.itemDefinitionIndex < right.itemDefinitionIndex;
+              completionConditions.begin() + static_cast<std::ptrdiff_t>(completionCount),
+              [](const CompletionCondition& first, const CompletionCondition& second) {
+                  return first.itemDefinitionIndex < second.itemDefinitionIndex;
               });
     std::sort(acquisitionGates.begin(),
-              acquisitionGates.begin() + acquisitionCount,
-              [](const AcquisitionGate& left, const AcquisitionGate& right) {
-                  return left.socketType < right.socketType;
+              acquisitionGates.begin() + static_cast<std::ptrdiff_t>(acquisitionCount),
+              [](const AcquisitionGate& first, const AcquisitionGate& second) {
+                  return first.socketType < second.socketType;
               });
     Source rebuilt = source;
     rebuilt.completionConditions = std::span(completionConditions).first(completionCount);

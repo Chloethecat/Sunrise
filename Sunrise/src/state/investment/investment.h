@@ -6,7 +6,7 @@
 
 namespace sunrise::state {
 
-/** Fixed runtime capacity for safe account unlock overrides. */
+/** Each family-5 override count ships in a 7-bit wire field, so 127 rows is the wire limit. */
 inline constexpr std::size_t kUnlockOverrideCapacity = 127;
 
 /** One logical unlock-flag value stored by slot. */

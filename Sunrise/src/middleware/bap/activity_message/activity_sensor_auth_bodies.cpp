@@ -1,10 +1,5 @@
+#include "auth_schema_catalog.h"
 #include "sensor_auth_update.h"
-
-#include <array>
-#include <atomic>
-#include <cstdio>
-
-#include "../../../core/logging/log.h"
 
 namespace sunrise::middleware::bap::activity_message::sensor_auth_update {
 namespace {
@@ -18,25 +13,14 @@ constexpr std::uint8_t kSlotTypeConfiguration = 8;
 constexpr std::uint8_t kSlotTypePackage = 16;
 constexpr std::uint8_t kSlotTypeQueues = 41;
 constexpr std::uint8_t kSlotTypeSpawnKeys = 67;
-/**
- * The one published slot this host still announces without a body.
- * A run measured every published width: 13 carries 224 bits, 16 carries 7, 17 carries 520, 18
- * carries 386, 35 carries 359, and 37 carries **zero**. Its 1750-bit width was recovered from the
- * client's own field tables alongside the type-35 and type-18 ones, and never written. The block
- * ships on every region -- the roster body is byte-identical at region 8, 112 and 144 -- so it is
- * in the stream while the player stands at the Wall of Wishes.
- */
-constexpr std::uint8_t kSlotTypeWideRecord = 37;
-/**
- * The slot the bubble-14 roster group brought in, and the second one found shipping bodyless.
- * Publishing the Wall of Wishes room's object added type 30 to the stream and a measured run
- * reported it at `bits=0`.
- */
-constexpr std::uint8_t kSlotTypeRegionRecord = 30;
-/** The mission director. Its body is what an encounter bubble's script objects come from. */
-constexpr std::uint8_t kSlotTypeDirector = 35;
-/** The activity script runtime, which ships beside the director in the same group. */
-constexpr std::uint8_t kSlotTypeScriptRuntime = 18;
+/** Map generator, announced on every region. */
+constexpr std::uint8_t kSlotTypeMapGenerator = 37;
+/** Player monitor, which a published room object brings into the stream. */
+constexpr std::uint8_t kSlotTypePlayerMonitor = 30;
+/** Hard-wipe globals. Its body is what an encounter bubble's script objects come from. */
+constexpr std::uint8_t kSlotTypeHardWipeGlobals = 35;
+/** Activity timer, which ships beside the hard-wipe globals in the same group. */
+constexpr std::uint8_t kSlotTypeActivityTimer = 18;
 
 /** Body widths, each checked against the writer after the body is written. */
 constexpr std::size_t kParticipationBits = 192;
@@ -47,46 +31,48 @@ constexpr std::size_t kPackageBits = 7;
 constexpr std::size_t kQueueBits = 12;
 constexpr std::size_t kSpawnKeyBits = 32 * 32 + 1 + 32;
 /**
- * Width of the empty type-37 body, derived from the client's schema tree rather than recalled.
- *
- * Slot 37 is schema `0x80805007` -> `0x80805008`, which holds two `0x8080500B` records and one
- * `0x80805009`. `0x8080500B` is 32 + 8 + `0x8080500F` (four groups of i8,i8,u32,bool = 196) + 7 + 1
- * + 32 + 32 + five biased i32 + `0x8080500D`. With the dynamic arrays empty each is 475 bits.
- * The final `0x80805009` contains a u32 plus `0x8080956C` and `0x8080954D`: fixed arrays of 32
- * and 64 u8 elements. Their schema array lengths apply even when the dynamic arrays are empty.
- *
- * The empty body is 2 x 475 + 32 + 32 x 8 + 64 x 8 = 1750 bits. Counting each fixed array as
- * one byte truncates it by 752 bits and prevents the client from applying the roster.
+ * Empty map-generator body, schema `0x80805007`.
+ * Two 475-bit records, a u32, then fixed arrays of 32 and 64 u8. The fixed array lengths apply
+ * even with both dynamic arrays empty; counting one byte each truncates the body by 752 bits.
  */
-constexpr std::size_t kWideRecordBits = 2 * 475 + 32 + 32 * 8 + 64 * 8;
+constexpr std::size_t kMapGeneratorBits = 2 * 475 + 32 + 32 * 8 + 64 * 8;
 /**
- * Width of the type-30 body, from the client's field tables.
- * Slot 30 is schema `0x80809532`: a nested `0x80809C42` of {u32, 7-bit biased +1, 16-bit biased
- * +0x8000} followed by a 32-bit field biased +2^31. Fixed width, no presence bit and no array, so
- * there is exactly one legal length and the width check below is exact -- the same shape as the
- * type-35 and type-18 bodies, which this same decode reproduces at 359 and 386 exactly.
+ * Player-monitor body, schema `0x80809532`: a slot reference then a biased i32.
+ * Fixed width: no presence bit and no array, so there is exactly one legal length.
  */
-constexpr std::size_t kRegionRecordBits = 32 + 7 + 16 + 32;
-/**
- * The record shared by the director and the script runtime, class `0x808099C4`.
- * One bool, five raw 64-bit words and a raw 32-bit word. Every field is unbiased, so a zero body
- * decodes to zeroes rather than to a sentinel.
- */
-constexpr std::size_t kSharedDirectorRecordBits = 1 + 5 * 64 + 32;
-/** Words in that shared record. */
-constexpr std::size_t kSharedDirectorWords = 5;
-/** Director body: two bools, two bias-1 selectors, then the shared record. */
-constexpr std::size_t kDirectorBits = 1 + 1 + 2 + 2 + kSharedDirectorRecordBits;
-/** Script-runtime body: the shared record, a bool, then one biased signed word. */
-constexpr std::size_t kScriptRuntimeBits = kSharedDirectorRecordBits + 1 + 32;
-/** Width of the director's two selectors, each stored as a signed byte biased by one. */
-constexpr std::uint8_t kDirectorSelectorWidth = 2;
-/** Wire value those selectors need for zero. Zero would decode to -1, the none sentinel. */
-constexpr std::uint32_t kDirectorSelectorZero = 1;
-/** Type-30's 7-bit field carries a bias of one, so this wire value decodes to a literal zero. */
-constexpr std::uint32_t kRegionSelectorZero = 1;
-/** Type-30's 16-bit field carries a bias of 0x8000, so this wire value decodes to zero. */
+constexpr std::size_t kPlayerMonitorBits = 32 + 7 + 16 + 32;
+/** Clock window, schema `0x808099C4`: a bool, five u64 and a raw u32, every field unbiased. */
+constexpr std::size_t kClockWindowBits = 1 + 5 * 64 + 32;
+/** Words in the clock window. */
+constexpr std::size_t kClockWindowWords = 5;
+/** Hard-wipe globals body: two bools, two bias-1 selectors, then the clock window. */
+constexpr std::size_t kHardWipeGlobalsBits = 1 + 1 + 2 + 2 + kClockWindowBits;
+/** Activity-timer body: the clock window, a bool, then one biased signed word. */
+constexpr std::size_t kActivityTimerBits = kClockWindowBits + 1 + 32;
+/** Width of the hard-wipe selectors, each a signed byte biased by one. */
+constexpr std::uint8_t kHardWipeSelectorWidth = 2;
+/** Wire value for a zero selector. A wire zero decodes to -1, the none sentinel. */
+constexpr std::uint32_t kHardWipeSelectorZero = 1;
+/** Type 30's 7-bit field carries a bias of one, so this wire value decodes to zero. */
+constexpr std::uint32_t kPlayerMonitorSelectorZero = 1;
+/** Type 30's 16-bit field carries a bias of 0x8000, so this wire value decodes to zero. */
 constexpr std::uint32_t kUnsignedShortZero = 0x8000;
+
+/** @return Least legal wire width of one slot type, or zero when the census has no row. */
+[[nodiscard]] constexpr std::size_t census_minimum_bits(std::uint8_t slotType) noexcept {
+    for (const auth_schema_catalog::Type& type : auth_schema_catalog::kTypes) {
+        if (type.slotType == slotType) {
+            return type.minimumBits;
+        }
+    }
+    return 0;
+}
+
+// A composed width that drifts from the census truncates the block and desynchronises the stream.
+static_assert(kMapGeneratorBits == census_minimum_bits(kSlotTypeMapGenerator));
+static_assert(kPlayerMonitorBits == census_minimum_bits(kSlotTypePlayerMonitor));
+static_assert(kHardWipeGlobalsBits == census_minimum_bits(kSlotTypeHardWipeGlobals));
+static_assert(kActivityTimerBits == census_minimum_bits(kSlotTypeActivityTimer));
 
 /** Signed fields in these bodies carry a -2^31 bias, so this wire value stores zero. */
 constexpr std::uint32_t kSignedZero = 0x80000000;
@@ -170,52 +156,41 @@ constexpr std::size_t kSpawnKeyCount = 32;
 }
 
 /**
- * Writes the record shared by the director and the script-runtime bodies, class `0x808099C4`.
- * Recovered from the client's own static field table, whose walker reads a 1-bit bool, five
- * unbiased 64-bit words and one unbiased raw 32-bit word. Unbiased means a zero wire value stores
- * a literal zero, so this is the neutral, fully-constructed form of the record rather than one
- * that decodes to a sentinel.
+ * Writes the clock window shared by the hard-wipe globals and activity-timer bodies.
+ * Every field is unbiased, so zeros store literal zeros and leave the timer stopped.
  * @param writer Body writer.
  * @return True when the record fits.
  */
-[[nodiscard]] bool write_shared_director_record(bits::Writer& writer) noexcept {
+[[nodiscard]] bool write_clock_window(bits::Writer& writer) noexcept {
     bool encoded = writer.write(0, kPresenceWidth);
-    for (std::size_t word = 0; encoded && word < kSharedDirectorWords; ++word) {
+    for (std::size_t word = 0; encoded && word < kClockWindowWords; ++word) {
         encoded = writer.write(0, 64);
     }
     return encoded && writer.write(0, 32);
 }
 
 /**
- * Writes the mission-director body, class `0x808099BF`.
- * The director is the slot an encounter bubble's script objects are authored from, and until this
- * existed `auth_body_bits` returned zero for it, so the block went out with a header and no body.
- * The body is fixed width: the client's field table declares no presence bit, no array and no
- * variant field, so there is exactly one legal length and the width check below is exact.
- *
- * The two selectors are the only fields that are not zero-safe. Their descriptors carry a bias of
- * one, so a zero wire value decodes to -1 — the engine's none sentinel, the same shape as the
- * lifetime's `+1` and the bias-one spawn-override index whose zero disables the override.
+ * Writes the hard-wipe globals body, schema `0x808099BF`.
+ * Fixed width: no presence bit, no array and no variant field, so one legal length.
  * @param writer Body writer.
  * @return True when the body fits.
  */
-[[nodiscard]] bool write_director(bits::Writer& writer) noexcept {
+[[nodiscard]] bool write_hard_wipe_globals(bits::Writer& writer) noexcept {
+    // TODO: the client seeds the second selector to -1; confirm zero is the value to assert.
     return writer.write(0, kPresenceWidth) && writer.write(0, kPresenceWidth)
-           && writer.write(kDirectorSelectorZero, kDirectorSelectorWidth)
-           && writer.write(kDirectorSelectorZero, kDirectorSelectorWidth)
-           && write_shared_director_record(writer);
+           && writer.write(kHardWipeSelectorZero, kHardWipeSelectorWidth)
+           && writer.write(kHardWipeSelectorZero, kHardWipeSelectorWidth)
+           && write_clock_window(writer);
 }
 
 /**
- * Writes the activity-script-runtime body, class `0x80809919`.
- * The shared record comes first here, then this slot's own bool and signed word. The trailing word
- * rides the same `+2^31` bias as every other signed field in these bodies, so it carries the bias
- * rather than a plain zero.
+ * Writes the activity-timer body, schema `0x80809919`.
+ * The trailing signed word carries the same `+2^31` bias as the other signed fields here.
  * @param writer Body writer.
  * @return True when the body fits.
  */
-[[nodiscard]] bool write_script_runtime(bits::Writer& writer) noexcept {
-    return write_shared_director_record(writer) && writer.write(0, kPresenceWidth)
+[[nodiscard]] bool write_activity_timer(bits::Writer& writer) noexcept {
+    return write_clock_window(writer) && writer.write(0, kPresenceWidth)
            && writer.write(kSignedZero, 32);
 }
 
@@ -234,10 +209,9 @@ constexpr std::size_t kSpawnKeyCount = 32;
 
 } // namespace
 
-/** Reports how many bits of auth body one slot carries, without reporting it. */
-std::size_t auth_body_bits_of(const Snapshot& snapshot,
-                              std::uint8_t slotType,
-                              bool carriesPlayerKey) noexcept {
+/** Reports how many bits of auth body one slot carries. */
+std::size_t
+auth_body_bits(const Snapshot& snapshot, std::uint8_t slotType, bool carriesPlayerKey) noexcept {
     if (slotType == kSlotTypeParticipation) {
         return carriesPlayerKey
                    ? kParticipationBits + (snapshot.hasRegion ? kParticipationRegionBits : 0)
@@ -258,67 +232,20 @@ std::size_t auth_body_bits_of(const Snapshot& snapshot,
     if (slotType == kSlotTypeSpawnKeys) {
         return kSpawnKeyBits;
     }
-    // Both are settings-gated: a body of the wrong width does not fail this host's own width
-    // check, it desynchronises the client's parse of every block after it in the same phase-2
-    // stream, which would cost the player their spawn. Off, they go out bodyless as before.
-    if (slotType == kSlotTypeDirector) {
-        return snapshot.authorDirectorBodies ? kDirectorBits : 0;
+    if (slotType == kSlotTypeHardWipeGlobals) {
+        return kHardWipeGlobalsBits;
     }
-    if (slotType == kSlotTypeScriptRuntime) {
-        return snapshot.authorDirectorBodies ? kScriptRuntimeBits : 0;
+    if (slotType == kSlotTypeActivityTimer) {
+        return kActivityTimerBits;
     }
-    if (slotType == kSlotTypeWideRecord) {
-        return snapshot.authorWideRecordBodies ? kWideRecordBits : 0;
+    if (slotType == kSlotTypeMapGenerator) {
+        return kMapGeneratorBits;
     }
-    if (slotType == kSlotTypeRegionRecord) {
-        return snapshot.authorWideRecordBodies ? kRegionRecordBits : 0;
+    if (slotType == kSlotTypePlayerMonitor) {
+        return kPlayerMonitorBits;
     }
     return 0;
 }
-
-/**
- * Names each published slot type and the body width it goes out with, once per distinct pair.
- *
- * A slot whose width is zero is announced to the client and then described with nothing -- the
- * exact shape of the gap that types 35 and 18 had before their bodies were written. Types 21 and
- * 37 are admitted by `kRosterSlotTypes` and still fall through to `return 0` here, and type 37's
- * body was measured at 1750 bits and never implemented. Printing the pairs says which published
- * slots are actually bodyless on this destination instead of inferring it from the filter.
- * @param slotType Slot type being sized.
- * @param bits Body width it will carry.
- */
-void report_slot_width(std::uint8_t slotType, std::size_t bits) noexcept {
-    static std::atomic<std::uint64_t> reported{};
-    if (slotType >= 64 || !core::log::accepts(core::log::Channel::middleware,
-                                              core::log::Level::debug)) {
-        return;
-    }
-    const std::uint64_t bit = 1ULL << slotType;
-    if ((reported.fetch_or(bit, std::memory_order_relaxed) & bit) != 0) {
-        return;
-    }
-    std::array<char, core::log::kLineCapacity> line{};
-    const int written = std::snprintf(line.data(),
-                                      line.size(),
-                                      "ev=activity stage=slot_width type=%u bits=%zu%s",
-                                      static_cast<unsigned>(slotType),
-                                      bits,
-                                      bits == 0 ? " result=bodyless" : "");
-    if (written > 0) {
-        core::log::write(core::log::Channel::middleware,
-                         core::log::Level::debug,
-                         {line.data(), static_cast<std::size_t>(written)});
-    }
-}
-
-/** Reports how many bits of auth body one slot carries. */
-std::size_t
-auth_body_bits(const Snapshot& snapshot, std::uint8_t slotType, bool carriesPlayerKey) noexcept {
-    const std::size_t width = auth_body_bits_of(snapshot, slotType, carriesPlayerKey);
-    report_slot_width(slotType, width);
-    return width;
-}
-
 
 /** Writes one slot's auth body. */
 bool write_auth_body(bits::Writer& writer,
@@ -343,21 +270,17 @@ bool write_auth_body(bits::Writer& writer,
         encoded = writer.write(0, 7) && writer.write(0, 5);
     } else if (slotType == kSlotTypeSpawnKeys) {
         encoded = write_spawn_keys(writer);
-    } else if (slotType == kSlotTypeDirector && snapshot.authorDirectorBodies) {
-        encoded = write_director(writer);
-    } else if (slotType == kSlotTypeScriptRuntime && snapshot.authorDirectorBodies) {
-        encoded = write_script_runtime(writer);
-    } else if (slotType == kSlotTypeRegionRecord && snapshot.authorWideRecordBodies) {
-        // Zero is NOT the constructed state here: three of the four fields carry a bias, so a
-        // neutral body writes each bias rather than a zero. Writing zeros would decode to -1 in
-        // the 7-bit field and to large negatives in the other two.
-        encoded = writer.write(0, 32) && writer.write(kRegionSelectorZero, 7)
+    } else if (slotType == kSlotTypeHardWipeGlobals) {
+        encoded = write_hard_wipe_globals(writer);
+    } else if (slotType == kSlotTypeActivityTimer) {
+        encoded = write_activity_timer(writer);
+    } else if (slotType == kSlotTypePlayerMonitor) {
+        // Three of the four fields carry a bias, so a neutral body writes each bias, not a zero.
+        encoded = writer.write(0, 32) && writer.write(kPlayerMonitorSelectorZero, 7)
                   && writer.write(kUnsignedShortZero, 16) && writer.write(kSignedZero, 32);
-    } else if (slotType == kSlotTypeWideRecord && snapshot.authorWideRecordBodies) {
-        // Zeroes are the empty form here rather than merely a neutral one: the two element
-        // counts inside `0x8080500D` read zero, so the body declares two empty arrays and every
-        // other field at its unbiased zero.
-        encoded = pad_bits(writer, kWideRecordBits);
+    } else if (slotType == kSlotTypeMapGenerator) {
+        // Zero element counts declare two empty arrays; every other field is unbiased.
+        encoded = pad_bits(writer, kMapGeneratorBits);
     }
     return encoded && writer.bit_count() == start + expected;
 }

@@ -171,6 +171,7 @@ namespace {
         || types.size() % 47 != 0) {
         return false;
     }
+    // Every bit a runtime type row may set; any other bit means an unknown extraction.
     constexpr std::uint32_t kTypeFlagMask =
         format::kRuntimeTypeDefinitionExact | format::kRuntimeTypeFixed
         | format::kRuntimeTypeParametric | format::kRuntimeTypeValueDependent
@@ -499,6 +500,7 @@ bool relations(const Catalog& catalog) {
         const char* name;
         bool (*run)(const Catalog&) noexcept;
     };
+    // Every relation check a catalog must pass, named so a refusal reports which one failed.
     static constexpr std::array<Check, 7> kChecks{{{"task_targets", &task_targets},
                                                    {"authored_text", &authored_text},
                                                    {"behavior_edges", &behavior_edges},

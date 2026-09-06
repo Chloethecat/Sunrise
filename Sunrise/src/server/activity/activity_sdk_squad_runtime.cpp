@@ -378,34 +378,49 @@ retirement_eligibility(const sdk::BoundView& view,
                        bool enabled) noexcept {
     state::gameplay::squad_entity_retirement::Eligibility result{};
     result.squad = {target.registryKey, target.slotIndex, target.slotType};
-    if (!enabled || !view.catalog || target.slotType != 1) return result;
+    if (!enabled || !view.catalog || target.slotType != 1) {
+        return result;
+    }
     const auto& catalog = *view.catalog;
     const auto squads = catalog.squads();
-    if (squadRow >= squads.size()) return result;
+    if (squadRow >= squads.size()) {
+        return result;
+    }
     const auto members = sdk::squad_members(catalog, squads[squadRow]);
     const auto classes = catalog.actor_classes();
-    if (members.size() != counts.size()) return result;
+    if (members.size() != counts.size()) {
+        return result;
+    }
     std::uint32_t selected = 0;
     for (std::size_t i = 0; i < members.size(); ++i) {
-        if (counts[i] <= 0) continue;
+        if (counts[i] <= 0) {
+            continue;
+        }
         if ((members[i].flags & format::kSquadMemberActorClassExact) == 0
-            || members[i].actorClassIndex >= classes.size())
+            || members[i].actorClassIndex >= classes.size()) {
             return result;
+        }
         const auto rsat = classes[members[i].actorClassIndex].rsatTag;
-        if (rsat == 0 || (selected != 0 && selected != rsat)) return result;
+        if (rsat == 0 || (selected != 0 && selected != rsat)) {
+            return result;
+        }
         selected = rsat;
     }
     if (selected == 0 || std::count_if(classes.begin(), classes.end(), [&](const auto& actor) {
                              return actor.rsatTag == selected;
-                         }) != 1)
+                         }) != 1) {
         return result;
+    }
     const auto occurrences = catalog.occurrences();
     const auto bubbles = catalog.bubbles();
-    if (squads[squadRow].occurrenceIndex >= occurrences.size()) return result;
+    if (squads[squadRow].occurrenceIndex >= occurrences.size()) {
+        return result;
+    }
     const auto& occurrence = occurrences[squads[squadRow].occurrenceIndex];
     if (occurrence.bubbleIndex >= bubbles.size()
-        || bubbles[occurrence.bubbleIndex].bubbleOrdinal >= 64)
+        || bubbles[occurrence.bubbleIndex].bubbleOrdinal >= 64) {
         return result;
+    }
     result.rsatTag = selected;
     result.bubble = static_cast<std::uint8_t>(bubbles[occurrence.bubbleIndex].bubbleOrdinal);
     result.enabled = result.bubble < 64;

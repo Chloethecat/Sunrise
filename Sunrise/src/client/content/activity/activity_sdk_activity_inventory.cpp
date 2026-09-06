@@ -203,8 +203,8 @@ template <typename Root>
 
 /** Sorts live roots by tag and refuses zero or duplicate tags. */
 [[nodiscard]] bool unique_sorted_live(std::vector<LiveRoot>& rows) noexcept {
-    std::sort(rows.begin(), rows.end(), [](const LiveRoot& left, const LiveRoot& right) {
-        return left.tag < right.tag;
+    std::sort(rows.begin(), rows.end(), [](const LiveRoot& first, const LiveRoot& second) {
+        return first.tag < second.tag;
     });
     for (std::size_t index = 0; index < rows.size(); ++index) {
         if (rows[index].tag == 0 || (index != 0 && rows[index - 1U].tag == rows[index].tag)) {
@@ -223,8 +223,9 @@ void canonicalize(std::vector<std::uint32_t>& rows) {
 /** Sorts and deduplicates package locators by their serialized identity. */
 void canonicalize(std::vector<PackageLocator>& rows) {
     std::sort(
-        rows.begin(), rows.end(), [](const PackageLocator& left, const PackageLocator& right) {
-            return left.tag < right.tag || (left.tag == right.tag && left.offset < right.offset);
+        rows.begin(), rows.end(), [](const PackageLocator& first, const PackageLocator& second) {
+            return first.tag < second.tag
+                   || (first.tag == second.tag && first.offset < second.offset);
         });
     rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
 }
@@ -376,6 +377,7 @@ void measure(const ActivityVariant& row,
                               : BindingCompletenessStatus::blockedUnresolvedRunnable;
 }
 
+/** @return True when both variants agree on every joined binding field. */
 [[nodiscard]] bool same_binding(const ActivityVariant& left,
                                 const ActivityVariant& right) noexcept {
     return left.activityRootTag == right.activityRootTag && left.scenarioTag == right.scenarioTag

@@ -7,6 +7,7 @@
 
 namespace sunrise::state::build_data::scriptables {
 
+/** Fixed name storage on disk and in memory; the last byte holds the terminator. */
 inline constexpr std::size_t kScenarioNameCapacity = 64;
 inline constexpr std::size_t kNameCapacity = 128;
 /** Raw package-inline name evidence keeps complete strings through this byte count. */
@@ -61,6 +62,7 @@ enum class StructuralFamily : std::uint8_t {
     count,
 };
 
+/** Coverage carries one result per structural family, so the count fixes that array. */
 inline constexpr std::size_t kStructuralFamilyCount =
     static_cast<std::size_t>(StructuralFamily::count);
 static_assert(kStructuralFamilyCount == 10);

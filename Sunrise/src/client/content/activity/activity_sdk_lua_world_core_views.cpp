@@ -12,8 +12,8 @@ namespace {
 using Field = std::pair<std::string_view, std::string_view>;
 
 void sort_keys(Value::Object& value) {
-    std::sort(value.begin(), value.end(), [](const auto& left, const auto& right) {
-        return left.first < right.first;
+    std::sort(value.begin(), value.end(), [](const auto& first, const auto& second) {
+        return first.first < second.first;
     });
 }
 
@@ -75,6 +75,7 @@ void append_name_fields(Value::Object& output, std::string_view prefix) {
 
 } // namespace
 
+/** Appends the core world view declarations to the contract object. */
 void append_world_core_views(Value::Object& output) {
     output.push_back(
         {"WorldView",

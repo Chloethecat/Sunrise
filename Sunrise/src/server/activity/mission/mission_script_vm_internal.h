@@ -10,7 +10,6 @@
 #include <new>
 #include <span>
 #include <string_view>
-#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -145,15 +144,15 @@ void* arena_allocate(void* context,
 /** @return The VM instance carried in the Lua state's extra space, or null before attach. */
 [[nodiscard]] inline Impl* impl_from_state(lua_State* state) noexcept {
     Impl* impl = nullptr;
-    static_assert(LUA_EXTRASPACE >= sizeof(impl));
-    std::memcpy(&impl, lua_getextraspace(state), sizeof(impl));
+    static_assert(LUA_EXTRASPACE >= sizeof(Impl*));
+    std::memcpy(&impl, lua_getextraspace(state), sizeof(Impl*));
     return impl;
 }
 
 /** Stores the VM instance in the Lua state's extra space. */
 inline void attach_impl(lua_State* state, Impl& impl) noexcept {
     Impl* const pointer = &impl;
-    std::memcpy(lua_getextraspace(state), &pointer, sizeof(pointer));
+    std::memcpy(lua_getextraspace(state), &pointer, sizeof(Impl*));
 }
 
 /** @return The captured non-event entry, or LUA_NOREF when the program declares none. */

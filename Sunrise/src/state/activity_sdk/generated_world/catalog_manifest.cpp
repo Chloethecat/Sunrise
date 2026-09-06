@@ -343,8 +343,10 @@ template <std::size_t Capacity>
             || size > evidenceTags.size() - begin) {
             return false;
         }
+        const auto offset = static_cast<std::ptrdiff_t>(begin);
+        const auto span = static_cast<std::ptrdiff_t>(size);
         try {
-            values.assign(evidenceTags.begin() + begin, evidenceTags.begin() + begin + size);
+            values.assign(evidenceTags.begin() + offset, evidenceTags.begin() + offset + span);
         } catch (...) {
             return false;
         }

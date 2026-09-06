@@ -71,4 +71,7 @@ offer(Peer& peer, client::network::BapEvent event, std::span<const std::byte> fr
 /** Closes one peer and reports its session end to the Server. */
 void close_peer(Peer& peer) noexcept;
 
+/** @param port Host-order loopback port. Zero picks an ephemeral port. */
+[[nodiscard]] bool initialize_on_port(std::uint16_t port) noexcept;
+
 } // namespace sunrise::server::transport

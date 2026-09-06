@@ -4,8 +4,6 @@
 #include <span>
 
 #include "../../../../../core/logging/log.h"
-#include "../../../../../middleware/datagen/definitions.h"
-#include "../../../../../middleware/secure_channel/runtime.h"
 #include "../../../../../state/account/account_state.h"
 #include "../../../../../state/build_data/runtime.h"
 #include "../../../../../state/runtime/runtime.h"
@@ -52,93 +50,6 @@ void report_fail(const char* stage, const char* reason) noexcept {
     }
 }
 
-/** Validates and appends one same-character Family-0 appearance refresh. */
-[[nodiscard]] bool append_appearance_frame(Scratch& scratch,
-                                           const queuez::CharacterAppearanceRefresh& refresh,
-                                           snapshot::Prepared& prepared,
-                                           [[maybe_unused]] const char* stage,
-                                           std::span<const std::byte, state::kAesKeySize> key,
-                                           std::array<std::byte, state::kBapNonceSize>& nonce,
-                                           std::span<std::byte> response,
-                                           std::size_t& written) noexcept {
-    const std::size_t objectCount = prepared.family.objects.size();
-    const bool replacement =
-        objectCount >= 2
-        && prepared.family.objects.front().id == middleware::datagen::kBannerCharacterObjectId
-        && prepared.family.objects.front().version == refresh.characterSoid
-        && prepared.family.objects.front().payload.empty();
-    const std::size_t characterIndex = replacement ? 1U : 0U;
-    const bool hasAnchor = objectCount == characterIndex + 2U;
-    if ((objectCount != characterIndex + 1U && !hasAnchor)
-        || prepared.family.type != queuez::kBannerFamilyType
-        || prepared.family.rootSoid != refresh.after.family4RootSoid
-        || prepared.family.version != refresh.after.family0Version || prepared.family.flags != 0
-        // The replacement begins with upstream's codec-free delete, not a raw upsert.
-        // Rejecting that marker drops the entire appearance refresh (including titles).
-        || (replacement
-            && prepared.family.objects.front().encoding != middleware::queuez::Encoding::none)
-        || prepared.family.objects[characterIndex].id
-               != middleware::datagen::kBannerCharacterObjectId
-        || prepared.family.objects[characterIndex].version != refresh.characterSoid
-        || prepared.family.objects[characterIndex].encoding != middleware::queuez::Encoding::oodle
-        || prepared.family.objects[characterIndex].payload.empty()
-        || (hasAnchor
-            && (prepared.family.objects.back().id != middleware::datagen::kBannerAnchorObjectId
-                || prepared.family.objects.back().version != refresh.after.family4RootSoid
-                || prepared.family.objects.back().encoding != middleware::queuez::Encoding::oodle
-                || prepared.family.objects.back().payload.empty()))
-        || !queuez_frame::append(scratch,
-                                 prepared.family,
-                                 prepared.rawClearSize,
-                                 prepared.compressedClearSize,
-                                 key,
-                                 nonce,
-                                 response,
-                                 written)) {
-        return false;
-    }
-    middleware::secure_channel::advance_nonce(nonce);
-    return true;
-}
-
-/** Validates and appends one incremental Family-3 appearance frame. */
-[[nodiscard]] bool
-append_roster_appearance_frame(Scratch& scratch,
-                               const queuez::RosterAppearanceRefresh& refresh,
-                               snapshot::Prepared& prepared,
-                               [[maybe_unused]] const char* stage,
-                               std::span<const std::byte, state::kAesKeySize> key,
-                               std::array<std::byte, state::kBapNonceSize>& nonce,
-                               std::span<std::byte> response,
-                               std::size_t& written) noexcept {
-    const std::size_t expectedObjects = refresh.includeRoster ? 2U : 1U;
-    const std::size_t objectCount = prepared.family.objects.size();
-    if (objectCount != expectedObjects || prepared.family.type != queuez::kRosterFamilyType
-        || prepared.family.rootSoid != refresh.after.family3RootSoid
-        || prepared.family.version != refresh.after.family3Version || prepared.family.flags != 0
-        || prepared.family.objects.front().id != middleware::datagen::kRosterCharacterObjectId
-        || prepared.family.objects.front().version != refresh.characterSoid
-        || prepared.family.objects.front().encoding != middleware::queuez::Encoding::oodle
-        || prepared.family.objects.front().payload.empty()
-        || (refresh.includeRoster
-            && (prepared.family.objects.back().id != middleware::datagen::kRosterObjectId
-                || prepared.family.objects.back().version != refresh.after.family3RootSoid
-                || prepared.family.objects.back().encoding != middleware::queuez::Encoding::oodle
-                || prepared.family.objects.back().payload.empty()))
-        || !queuez_frame::append(scratch,
-                                 prepared.family,
-                                 prepared.rawClearSize,
-                                 prepared.compressedClearSize,
-                                 key,
-                                 nonce,
-                                 response,
-                                 written)) {
-        return false;
-    }
-    middleware::secure_channel::advance_nonce(nonce);
-    return true;
-}
-
 } // namespace
 
 /**
@@ -162,8 +73,8 @@ bool append_banner_notification(Scratch& scratch,
                                 std::size_t& written,
                                 queuez::SessionState& after) noexcept {
     after = before;
-    // Before the account is read, so this pair cannot describe a different account than the
-    // family-three roster or the family-four manifest.
+    // Runs before the account is read, so this pair matches the family-three and family-four
+    // images.
     ensure_account_canonical();
     // The pair names the first character when none is picked yet. The client's family-zero record
     // accepts a snapshot for about ten seconds, then clears the family and refuses every later
@@ -180,20 +91,12 @@ bool append_banner_notification(Scratch& scratch,
                          "ev=queuez stage=banner result=fail reason=prepare");
         return false;
     }
-    if (!queuez_frame::append(scratch,
-                              prepared.family,
-                              prepared.rawClearSize,
-                              prepared.compressedClearSize,
-                              key,
-                              nonce,
-                              response,
-                              written)) {
+    if (!queuez_frame::append_prepared_frame(scratch, prepared, key, nonce, response, written)) {
         core::log::write(core::log::Channel::server,
                          core::log::Level::warn,
                          "ev=queuez stage=banner result=fail reason=frame");
         return false;
     }
-    middleware::secure_channel::advance_nonce(nonce);
     // The Client now holds this pair, so the ladder owns it. Without this an unsubscribe leaves
     // family zero unrecorded and the next pick has no previous record to release.
     const std::uint64_t delivered =
@@ -271,19 +174,11 @@ bool append_banner_move_notification(Scratch& scratch,
         after = before;
         return false;
     }
-    if (!queuez_frame::append(scratch,
-                              prepared.family,
-                              prepared.rawClearSize,
-                              prepared.compressedClearSize,
-                              key,
-                              nonce,
-                              response,
-                              written)) {
+    if (!queuez_frame::append_prepared_frame(scratch, prepared, key, nonce, response, written)) {
         report_fail(stage, "frame");
         after = before;
         return false;
     }
-    middleware::secure_channel::advance_nonce(nonce);
     return true;
 }
 
@@ -309,8 +204,7 @@ bool append_equipment_appearance_refresh_notification(
                                                         prepared)) {
         return false;
     }
-    return append_appearance_frame(
-        scratch, refresh, prepared, "equip_appearance", key, nonce, response, written);
+    return queuez_frame::append_prepared_frame(scratch, prepared, key, nonce, response, written);
 }
 
 /** Appends one Family-0 record upsert after a socket change on an equipped item. */
@@ -355,8 +249,7 @@ bool append_socket_appearance_refresh_notification(
                                                         prepared)) {
         return false;
     }
-    return append_appearance_frame(
-        scratch, refresh, prepared, "socket_appearance", key, nonce, response, written);
+    return queuez_frame::append_prepared_frame(scratch, prepared, key, nonce, response, written);
 }
 
 /** Appends one Family-0 character ability refresh after a subclass selection. */
@@ -399,8 +292,7 @@ bool append_subclass_appearance_refresh_notification(
             prepared)) {
         return false;
     }
-    return append_appearance_frame(
-        scratch, refresh, prepared, "subclass_appearance", key, nonce, response, written);
+    return queuez_frame::append_prepared_frame(scratch, prepared, key, nonce, response, written);
 }
 
 /** Appends the Family-3 character-then-roster refresh owed by one equipment mutation. */
@@ -421,8 +313,7 @@ bool append_equipment_roster_refresh_notification(
             scratch, refresh, mutation.afterCharacter, mutation.characterIndex, prepared)) {
         return false;
     }
-    return append_roster_appearance_frame(
-        scratch, refresh, prepared, "equip_roster", key, nonce, response, written);
+    return queuez_frame::append_prepared_frame(scratch, prepared, key, nonce, response, written);
 }
 
 /** Appends the Family-3 character-only refresh owed by a socket change on equipped gear. */
@@ -447,8 +338,7 @@ bool append_socket_roster_refresh_notification(Scratch& scratch,
             scratch, refresh, mutation.afterCharacter, mutation.characterIndex, prepared)) {
         return false;
     }
-    return append_roster_appearance_frame(
-        scratch, refresh, prepared, "socket_roster", key, nonce, response, written);
+    return queuez_frame::append_prepared_frame(scratch, prepared, key, nonce, response, written);
 }
 
 /** Appends the Family-3 character-only refresh owed by a subclass selection. */
@@ -476,8 +366,7 @@ bool append_subclass_roster_refresh_notification(Scratch& scratch,
             scratch, refresh, mutation.afterCharacter, mutation.characterIndex, prepared)) {
         return false;
     }
-    return append_roster_appearance_frame(
-        scratch, refresh, prepared, "subclass_roster", key, nonce, response, written);
+    return queuez_frame::append_prepared_frame(scratch, prepared, key, nonce, response, written);
 }
 
 /** Refreshes the selected character's complete Family-0 appearance from committed State. */
@@ -516,8 +405,7 @@ bool append_account_resync_appearance_notification(
         || !queuez::stage_character_appearance_refresh(before, selected, refresh)
         || !snapshot::prepare_character_appearance_refresh(
             scratch, refresh, account.characters[characterIndex], characterIndex, 0, true, prepared)
-        || !append_appearance_frame(
-            scratch, refresh, prepared, "peer_resync_appearance", key, nonce, response, written)) {
+        || !queuez_frame::append_prepared_frame(scratch, prepared, key, nonce, response, written)) {
         return false;
     }
     after = refresh.after;
@@ -552,8 +440,7 @@ bool append_account_resync_roster_notification(Scratch& scratch,
         || !queuez::stage_roster_appearance_refresh(before, selected, true, refresh)
         || !snapshot::prepare_roster_appearance_refresh(
             scratch, refresh, account.characters[characterIndex], characterIndex, prepared)
-        || !append_roster_appearance_frame(
-            scratch, refresh, prepared, "peer_resync_roster", key, nonce, response, written)) {
+        || !queuez_frame::append_prepared_frame(scratch, prepared, key, nonce, response, written)) {
         return false;
     }
     after = refresh.after;

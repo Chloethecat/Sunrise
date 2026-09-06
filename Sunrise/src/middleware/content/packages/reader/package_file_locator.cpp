@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <cwchar>
 #include <string_view>
-#include <utility>
 
 #include "handle_cache.h"
 #include "internal.h"
@@ -109,6 +108,46 @@ bool parse_leaf(std::wstring_view fileName,
     return true;
 }
 
+namespace {
+
+/**
+ * Reports the table row that holds or may hold one package id.
+ * The table is sized on first use and never erases a row, so a forward probe finds every held id.
+ * @param scratch Reader whose location table is used.
+ * @param packageId Package id being resolved.
+ * @return The row, or null when the table cannot be sized or holds no free row.
+ */
+[[nodiscard]] PackageLocationSlot* location_slot(Scratch& scratch,
+                                                 std::uint16_t packageId) noexcept {
+    if (scratch.packageLocations.empty()) {
+        try {
+            scratch.packageLocations.resize(kPackageLocationSlots);
+        } catch (...) {
+            scratch.packageLocations.clear();
+            return nullptr;
+        }
+    }
+    const std::size_t rows = scratch.packageLocations.size();
+    std::size_t probe = static_cast<std::size_t>(packageId) % rows;
+    for (std::size_t step = 0; step < rows; ++step) {
+        PackageLocationSlot& slot = scratch.packageLocations[probe];
+        if (!slot.held || slot.packageId == packageId) {
+            return &slot;
+        }
+        probe = probe + 1U == rows ? 0U : probe + 1U;
+    }
+    return nullptr;
+}
+
+} // namespace
+
+/** @param scratch Reader whose held package locations are dropped. */
+void release_locations(Scratch& scratch) noexcept {
+    for (PackageLocationSlot& slot : scratch.packageLocations) {
+        slot.held = false;
+    }
+}
+
 /** Finds the highest-patch file for one package id. */
 bool find_latest(std::wstring_view directory,
                  std::uint16_t packageId,
@@ -166,7 +205,7 @@ bool resolve_latest(Scratch& scratch,
         directory.size() != 0 && directory.size() == scratch.packageDirectoryLength
         && std::equal(directory.begin(), directory.end(), scratch.packageDirectory.chars.begin());
     if (!sameDirectory) {
-        scratch.packageLocations.clear();
+        release_locations(scratch);
         scratch.packageDirectory = {};
         scratch.packageDirectoryLength = 0;
         if (directory.size() < scratch.packageDirectory.chars.size()) {
@@ -175,26 +214,26 @@ bool resolve_latest(Scratch& scratch,
         }
         scratch.packageLocationFallback = {};
     }
-    const auto held = scratch.packageLocations.find(packageId);
-    if (held != scratch.packageLocations.end()) {
+    PackageLocationSlot* const slot = location_slot(scratch, packageId);
+    if (slot != nullptr && slot->held) {
         ++scratch.packageLocationHits;
-        output = held->second.found ? &held->second : nullptr;
-        return held->second.found;
+        output = slot->location.found ? &slot->location : nullptr;
+        return slot->location.found;
     }
 
     ++scratch.packageLocationMisses;
     PackageLocation pending{};
     pending.found = find_latest(directory, packageId, pending.stem, pending.patchIndex)
                     && build_path(pending.stem, pending.patchIndex, pending.latestPath);
-    try {
-        const auto inserted = scratch.packageLocations.emplace(packageId, pending);
-        output = inserted.first->second.found ? &inserted.first->second : nullptr;
-        return inserted.first->second.found;
-    } catch (...) {
-        scratch.packageLocationFallback = std::move(pending);
-        output = scratch.packageLocationFallback.found ? &scratch.packageLocationFallback : nullptr;
-        return scratch.packageLocationFallback.found;
+    // A full or unallocated table keeps the result in the fallback, so the caller still gets it.
+    PackageLocation& kept = slot != nullptr ? slot->location : scratch.packageLocationFallback;
+    kept = pending;
+    if (slot != nullptr) {
+        slot->packageId = packageId;
+        slot->held = true;
     }
+    output = kept.found ? &kept : nullptr;
+    return kept.found;
 }
 
 /** Builds the full path of one patch of a package stem. */

@@ -35,39 +35,39 @@ namespace catalog = state::build_data::scriptables;
         return field_u64(output, localRow);
     }
 #define WORLD_FIELD_U32(lua_key, member)                                                           \
-    if (key == lua_key) {                                                                          \
+    if (key == (lua_key)) {                                                                        \
         return field_u64(output, member);                                                          \
     }
 #define WORLD_FIELD_U64(lua_key, member)                                                           \
-    if (key == lua_key) {                                                                          \
+    if (key == (lua_key)) {                                                                        \
         return field_u64(output, member, lua_vm::WorldFieldKind::unsignedDecimalString);           \
     }
 #define WORLD_FIELD_I32(lua_key, member)                                                           \
-    if (key == lua_key) {                                                                          \
+    if (key == (lua_key)) {                                                                        \
         return field_i64(output, member);                                                          \
     }
 #define WORLD_FIELD_I64(lua_key, member)                                                           \
-    if (key == lua_key) {                                                                          \
+    if (key == (lua_key)) {                                                                        \
         return field_i64(output, member, lua_vm::WorldFieldKind::signedDecimalString);             \
     }
 #define WORLD_FIELD_BOOL(lua_key, member)                                                          \
-    if (key == lua_key) {                                                                          \
+    if (key == (lua_key)) {                                                                        \
         return field_bool(output, member);                                                         \
     }
 #define WORLD_FIELD_ROW(lua_key, member)                                                           \
-    if (key == lua_key) {                                                                          \
+    if (key == (lua_key)) {                                                                        \
         return field_row(output, member);                                                          \
     }
 #define WORLD_FIELD_FIRST(lua_key, first, count)                                                   \
-    if (key == lua_key) {                                                                          \
+    if (key == (lua_key)) {                                                                        \
         return field_first_row(output, first, count);                                              \
     }
 #define WORLD_FIELD_VECTOR(lua_key, member)                                                        \
-    if (key == lua_key) {                                                                          \
+    if (key == (lua_key)) {                                                                        \
         return field_vector(output, member);                                                       \
     }
 #define WORLD_FIELD_BYTES(lua_key, member)                                                         \
-    if (key == lua_key) {                                                                          \
+    if (key == (lua_key)) {                                                                        \
         return field_bytes(output, member);                                                        \
     }
 #define WORLD_FIELD_NAME(prefix, member, is_tag)                                                   \
@@ -126,6 +126,7 @@ namespace catalog = state::build_data::scriptables;
         WORLD_FIELD_ROW("registry_name_row", row.registryNameRow)
         WORLD_FIELD_ROW("object_name_row", row.objectNameRow)
         WORLD_FIELD_U32("registry_descriptor", row.registryDescriptor)
+
         if (key == "safety") {
             const char* const text = safety_text(row.safety);
             return field_string(output, text == nullptr ? std::string_view{} : text, true);
@@ -188,6 +189,7 @@ namespace catalog = state::build_data::scriptables;
         WORLD_FIELD_U32("target_slot_index", row.targetSlotIndex)
         WORLD_FIELD_U32("target_slot_type", row.targetSlotType)
         WORLD_FIELD_ROW("source_config_name_row", row.sourceConfigNameRow)
+
         if (key == "join") {
             const char* const text = reference_join_text(row.join);
             return field_string(output, text == nullptr ? std::string_view{} : text, true);
@@ -218,6 +220,7 @@ namespace catalog = state::build_data::scriptables;
         WORLD_FIELD_ROW("container_name_row", row.containerNameRow)
         WORLD_FIELD_U64("scenario_bubble_mask", row.scenarioBubbleMask)
         WORLD_FIELD_BYTES("map_bubble_mask", row.mapBubbleMask)
+
         if (key == "context") {
             const char* const text = spatial_context_text(row.context);
             return field_string(output, text == nullptr ? std::string_view{} : text, true);
@@ -261,6 +264,7 @@ namespace catalog = state::build_data::scriptables;
         WORLD_FIELD_U32("active_candidate_count", row.activeCandidateCount)
         WORLD_FIELD_ROW("resolved_candidate_row", row.resolvedCandidate)
         WORLD_FIELD_U64("placement_identifier", row.placementIdentifier)
+
         if (key == "join") {
             const char* const text = reference_join_text(row.join);
             return field_string(output, text == nullptr ? std::string_view{} : text, true);
@@ -303,6 +307,7 @@ namespace catalog = state::build_data::scriptables;
         WORLD_FIELD_ROW("parent_name_row", row.parentNameRow)
         WORLD_FIELD_U64("scenario_bubble_mask", row.scenarioBubbleMask)
         WORLD_FIELD_BYTES("map_bubble_mask", row.mapBubbleMask)
+
         if (key == "context") {
             const char* const text = spatial_context_text(row.context);
             return field_string(output, text == nullptr ? std::string_view{} : text, true);
@@ -338,6 +343,7 @@ namespace catalog = state::build_data::scriptables;
             "first_incoming_reference_row", row.firstIncomingReference, row.incomingReferenceCount)
         WORLD_FIELD_U32("incoming_reference_count", row.incomingReferenceCount)
         WORLD_FIELD_U32("incoming_reference_match_count", row.incomingReferenceMatchCount)
+
         if (key == "slot_join") {
             const char* const text = reference_join_text(row.slotJoin);
             return field_string(output, text == nullptr ? std::string_view{} : text, true);
@@ -372,6 +378,7 @@ namespace catalog = state::build_data::scriptables;
         WORLD_FIELD_FIRST("first_candidate_row", row.firstCandidate, row.candidateCount)
         WORLD_FIELD_U32("candidate_count", row.candidateCount)
         WORLD_FIELD_ROW("selected_candidate_row", row.selectedCandidate)
+
         if (key == "provenance") {
             const char* const text = provenance_text(static_cast<std::uint32_t>(row.provenance));
             return field_string(output, text == nullptr ? std::string_view{} : text, true);
@@ -388,6 +395,7 @@ namespace catalog = state::build_data::scriptables;
         WORLD_FIELD_FIRST("first_candidate_row", row.firstCandidate, row.candidateCount)
         WORLD_FIELD_U32("candidate_count", row.candidateCount)
         WORLD_FIELD_ROW("selected_candidate_row", row.selectedCandidate)
+
         if (key == "provenance") {
             const char* const text = provenance_text(static_cast<std::uint32_t>(row.provenance));
             return field_string(output, text == nullptr ? std::string_view{} : text, true);
@@ -407,6 +415,7 @@ namespace catalog = state::build_data::scriptables;
         WORLD_FIELD_U32("source_tag", row.sourceTag)
         WORLD_FIELD_U32("source_class_id", row.sourceClassId)
         WORLD_FIELD_U32("length", row.length)
+
         if (key == "provenance") {
             const char* const text = provenance_text(static_cast<std::uint32_t>(row.provenance));
             return field_string(output, text == nullptr ? std::string_view{} : text, true);
@@ -419,6 +428,7 @@ namespace catalog = state::build_data::scriptables;
         WORLD_FIELD_U32("hash", row.hash)
         WORLD_FIELD_U32("first_byte", row.firstByte)
         WORLD_FIELD_U32("byte_count", row.byteCount)
+
         if (key == "value") {
             if (row.firstByte > snapshot.inlineNameBytes.size()
                 || row.byteCount > snapshot.inlineNameBytes.size() - row.firstByte) {
@@ -491,6 +501,7 @@ namespace catalog = state::build_data::scriptables;
         WORLD_FIELD_ROW("global_first_match_row", row.globalFirstMatch)
         WORLD_FIELD_FIRST("first_match_row", row.firstMatch, row.matchCount)
         WORLD_FIELD_U32("match_count", row.matchCount)
+
         if (key == "status") {
             const char* const text = point_context_status_text(row.status);
             return field_string(output, text == nullptr ? std::string_view{} : text, true);

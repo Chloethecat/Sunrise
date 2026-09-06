@@ -77,6 +77,7 @@ namespace manifest = state::activity_sdk::generated_world::manifest;
 [[nodiscard]] bool parse_shard_leaf(std::wstring_view leaf,
                                     std::uint32_t& scenarioTag,
                                     generated::Digest& digest) noexcept {
+    // A shard leaf is an 8-hex tag, a dash, the hex digest, then the pack suffix.
     constexpr std::size_t kTagLength = 8;
     constexpr std::size_t kDigestLength = generated::Digest{}.size() * 2;
     constexpr std::wstring_view kSuffix = L".pack";
@@ -109,14 +110,14 @@ namespace manifest = state::activity_sdk::generated_world::manifest;
 /** Deletes only owned shards missing from the active manifest or carrying a stale digest. */
 bool clean_stale_shards(const std::wstring& directory,
                         std::span<const manifest::Record> active) noexcept {
-    const auto ordered = [](const manifest::Record& left, const manifest::Record& right) {
-        return left.scenarioTag < right.scenarioTag;
+    const auto ordered = [](const manifest::Record& first, const manifest::Record& second) {
+        return first.scenarioTag < second.scenarioTag;
     };
     if (!std::is_sorted(active.begin(), active.end(), ordered)
         || std::adjacent_find(active.begin(),
                               active.end(),
-                              [](const manifest::Record& left, const manifest::Record& right) {
-                                  return left.scenarioTag == right.scenarioTag;
+                              [](const manifest::Record& first, const manifest::Record& second) {
+                                  return first.scenarioTag == second.scenarioTag;
                               })
                != active.end()) {
         return false;

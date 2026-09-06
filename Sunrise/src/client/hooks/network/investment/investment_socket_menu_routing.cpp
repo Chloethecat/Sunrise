@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -11,6 +10,8 @@
 #include <span>
 
 #include "../../../../core/logging/log.h"
+#include "../../../../core/settings/settings.h"
+#include "../../../../state/build_data/items/socket_plugs/definition.h"
 #include "../../../../state/build_data/runtime.h"
 #include "../../../../state/content/content_catalog.h"
 #include "../../../content/handles/handle_resolver.h"
@@ -33,14 +34,11 @@ namespace item_layout = client::content::items::layout;
 constexpr std::uint32_t kInvestmentGlobalsNameHash = 0x6F7125CBU;
 constexpr std::size_t kBootstrapCandidateCapacity = 64;
 
+namespace socket_plugs = state::build_data::items::socket_plugs;
+
 /** Exact installed item identities used to validate a candidate investment root. */
-constexpr std::uint32_t kLegArmorReferenceHash = 3'213'968'579U;
-constexpr std::array<std::uint32_t, 4> kArrivalsLegModHashes{
-    3'465'659'109U, // Flourishing Blade
-    3'465'659'111U, // Automatic Prize
-    3'465'659'104U, // Dimensional Tithes
-    3'465'659'105U, // Ascendant Bounty
-};
+using socket_plugs::kArrivalsLegModHashes;
+using socket_plugs::kArrivalsLegReferenceHash;
 
 /** Installed reusable-set layout and the two rows proved by package extraction. */
 constexpr std::size_t kTableArrayDescriptorOffset = 8;
@@ -61,9 +59,11 @@ constexpr std::size_t kArenaAlignment = 16U;
 constexpr std::size_t kPlugBlockOffset = 0x184;
 constexpr std::size_t kPlugCategoryOffset = 4;
 constexpr std::size_t kPlugBlockSize = 64;
-constexpr unsigned kCategoryAttemptLimit = 120;
-constexpr ULONGLONG kCategoryRetryIntervalMs = 250;
-constexpr ULONGLONG kCategoryRetryWindowMs = 30000;
+/** Class every plug block declares in its first field. */
+constexpr std::uint32_t kPlugBlockClass = 0x808077E3U;
+/** Plug-block bytes after the class and category, which must match the reference item exactly. */
+constexpr std::size_t kPlugBlockMetadataOffset = 8;
+constexpr std::size_t kPlugBlockMetadataSize = kPlugBlockSize - kPlugBlockMetadataOffset;
 
 struct ArrayDescriptor {
     std::uint64_t count{};
@@ -105,9 +105,10 @@ struct CategoryPatch {
     std::uintptr_t address{};
     std::uint32_t original{};
 };
+/** Plug category the four mods ship with, and the one their leg-armour presentation needs. */
 constexpr std::uint32_t kGeneralCategory = 0x94493B9BU;
-constexpr std::uint32_t kLegCategory = 0x7DDE0206U;
-std::array<CategoryPatch, 4> g_categories{};
+constexpr std::uint32_t kLegCategory = socket_plugs::kArrivalsLegCategoryHash;
+std::array<CategoryPatch, kArrivalsLegModHashes.size()> g_categories{};
 std::size_t g_categoryCount{};
 
 enum class Failure : std::uint8_t {
@@ -122,7 +123,6 @@ enum class Failure : std::uint8_t {
 };
 
 SRWLOCK g_lock{SRWLOCK_INIT};
-std::atomic_bool g_armed{false};
 std::array<Allocation, 2> g_allocations{};
 std::array<AppliedSet, 2> g_applied{};
 std::size_t g_appliedCount{};
@@ -132,13 +132,14 @@ std::size_t g_lowArenaUsed{};
 std::array<std::array<relocation::Row, relocation::kMaximumMembers>, 2> g_expected{};
 std::array<std::size_t, 2> g_expectedCounts{};
 content_investment::Source g_categorySource{};
-std::array<std::uint16_t, 4> g_categoryRoutes{};
+std::array<std::uint16_t, kArrivalsLegModHashes.size()> g_categoryRoutes{};
 std::uint16_t g_categoryReference{};
-unsigned g_categoryAttempts{};
-ULONGLONG g_categoryNext{};
-ULONGLONG g_categoryDeadline{};
 const char* g_categoryFailure = "none";
 
+/**
+ * Maps one failure code to its log token.
+ * @return "unknown" for a code outside the enum.
+ */
 [[nodiscard]] const char* failure_name(Failure failure) noexcept {
     switch (failure) {
     case Failure::buildData:
@@ -161,6 +162,10 @@ const char* g_categoryFailure = "none";
     return "unknown";
 }
 
+/**
+ * Logs one deferral line, and only when the failure differs from the last one.
+ * @param detail Failure-specific number carried in the line.
+ */
 void report_failure(Failure failure, std::uint64_t detail = 0) noexcept {
     if (failure == g_lastFailure) {
         return;
@@ -181,6 +186,14 @@ void report_failure(Failure failure, std::uint64_t detail = 0) noexcept {
     }
 }
 
+/** Rebuilds an image pointer without an implementation-defined integer conversion. */
+[[nodiscard]] void* image_pointer(std::uintptr_t address) noexcept {
+    void* pointer = nullptr;
+    static_assert(sizeof pointer == sizeof address);
+    std::memcpy(&pointer, &address, sizeof pointer);
+    return pointer;
+}
+
 [[nodiscard]] bool read_bytes(std::uintptr_t address, std::span<std::byte> output) noexcept {
     return !output.empty() && memory::read_current_process(nullptr, address, output);
 }
@@ -189,11 +202,15 @@ template <typename Value> [[nodiscard]] bool read(std::uintptr_t address, Value&
     return read_bytes(address, std::span(reinterpret_cast<std::byte*>(&value), sizeof value));
 }
 
+/**
+ * Writes bytes over read-only image data, then puts the page protection back.
+ * @return False when the address is null, the span is empty, or the page cannot be opened.
+ */
 [[nodiscard]] bool write_bytes(std::uintptr_t address, std::span<const std::byte> bytes) noexcept {
     if (address == 0 || bytes.empty()) {
         return false;
     }
-    void* destination = reinterpret_cast<void*>(address);
+    void* destination = image_pointer(address);
     DWORD previous = 0;
     if (VirtualProtect(destination, bytes.size(), PAGE_READWRITE, &previous) == FALSE) {
         return false;
@@ -210,6 +227,11 @@ template <typename Value>
                        std::span(reinterpret_cast<const std::byte*>(&value), sizeof value));
 }
 
+/**
+ * Applies one signed self-relative displacement to a base address.
+ * @param output Receives the result; unchanged on overflow.
+ * @return False when the sum leaves the address space.
+ */
 [[nodiscard]] bool
 add_relative(std::uintptr_t base, std::int64_t relative, std::uintptr_t& output) noexcept {
     if (relative >= 0) {
@@ -269,6 +291,10 @@ member_index(const ArrayView& array, std::size_t position, std::uint32_t& index)
            && read(array.data + static_cast<std::uintptr_t>(position) * kPlugMemberStride, index);
 }
 
+/**
+ * Counts how many rows of one plug set name the given item index.
+ * @return A count over kMaximumMemberCount when a row could not be read.
+ */
 [[nodiscard]] std::size_t count_member(const ArrayView& array, std::uint32_t index) noexcept {
     std::size_t count = 0;
     for (std::size_t position = 0; position < array.count; ++position) {
@@ -339,7 +365,7 @@ member_index(const ArrayView& array, std::size_t position, std::uint32_t& index)
         return read(itemRows + static_cast<std::uintptr_t>(index) * sizeof row, row)
                && row.definitionHash == hash;
     };
-    if (!matches_item(reference, kLegArmorReferenceHash)) {
+    if (!matches_item(reference, kArrivalsLegReferenceHash)) {
         return false;
     }
     for (std::size_t index = 0; index < routes.size(); ++index) {
@@ -427,8 +453,7 @@ member_index(const ArrayView& array, std::size_t position, std::uint32_t& index)
     while (cursor != 0 && cursor <= kMaximumLowAddress
            && kLowArenaSize <= kMaximumLowAddress - cursor + 1U) {
         MEMORY_BASIC_INFORMATION information{};
-        if (VirtualQuery(reinterpret_cast<const void*>(cursor), &information, sizeof information)
-            == 0) {
+        if (VirtualQuery(image_pointer(cursor), &information, sizeof information) == 0) {
             break;
         }
         const std::uintptr_t base = reinterpret_cast<std::uintptr_t>(information.BaseAddress);
@@ -443,7 +468,7 @@ member_index(const ArrayView& array, std::size_t position, std::uint32_t& index)
                 && kLowArenaSize <= kMaximumLowAddress - candidate + 1U && candidate >= base
                 && offset <= information.RegionSize
                 && kLowArenaSize <= information.RegionSize - offset) {
-                void* const allocated = VirtualAlloc(reinterpret_cast<void*>(candidate),
+                void* const allocated = VirtualAlloc(image_pointer(candidate),
                                                      kLowArenaSize,
                                                      MEM_RESERVE | MEM_COMMIT,
                                                      PAGE_READWRITE);
@@ -475,36 +500,39 @@ void release(Allocation& allocation) noexcept {
     allocation = {};
 }
 
+/** Copies one native member row and the single condition record it names. */
 [[nodiscard]] bool
 snapshot_row(const ArrayView& source, std::size_t position, relocation::Row& output) noexcept {
     output = {};
     const auto address = source.data + position * kPlugMemberStride;
-    if (position >= source.count || address % 8 != 0
-        || source.elementClass != relocation::kMemberClass || !read_bytes(address, output.bytes))
+    if (position >= source.count || address % relocation::kRecordAlignment != 0
+        || source.elementClass != relocation::kMemberClass || !read_bytes(address, output.bytes)) {
         return false;
-    const auto count = relocation::get<std::uint64_t>(output.bytes.data() + 8);
+    }
+    const auto count = relocation::get<std::uint64_t>(output.bytes.data()
+                                                      + relocation::kMemberConditionCountOffset);
     if (count != 0) {
-        std::uintptr_t header = 0;
+        const auto referenceAt = address + relocation::kMemberConditionRelativeOffset;
+        std::uintptr_t reference = 0;
         if (count != 1
-            || !add_relative(
-                address + 16, relocation::get<std::int64_t>(output.bytes.data() + 16), header)
-            || header < 4 || header % 8 != 0 || !read_bytes(header - 4, output.condition))
+            || !add_relative(referenceAt,
+                             relocation::get<std::int64_t>(
+                                 output.bytes.data() + relocation::kMemberConditionRelativeOffset),
+                             reference)
+            || reference < relocation::kConditionReferenceOffset
+            || reference % relocation::kRecordAlignment != 0
+            || !read_bytes(reference - relocation::kConditionReferenceOffset, output.condition)) {
             return false;
+        }
     }
     return relocation::valid(output);
-}
-
-[[nodiscard]] bool verify_owned(std::size_t set, const Allocation& allocation) noexcept {
-    return allocation
-           && relocation::verify(std::span(g_expected[set].data(), g_expectedCounts[set]),
-                                 std::span<const std::byte>(allocation.base, allocation.size));
 }
 
 /** Validates the exact plug blocks observed in this build before changing four category fields. */
 bool stage_categories(const content_investment::Source& source,
                       std::span<const std::uint16_t> routes,
                       std::uint16_t reference,
-                      std::array<CategoryPatch, 4>& output) noexcept {
+                      std::span<CategoryPatch> output) noexcept {
     std::uintptr_t globals = 0, root = 0, table = 0;
     g_categoryFailure = "table";
     std::uint32_t tag = 0;
@@ -512,8 +540,9 @@ bool stage_categories(const content_investment::Source& source,
         || !read(globals + content_investment::layout::kGlobalsRootTagOffset, tag)
         || !content_handles::resolve(source.handles, tag, root)
         || !read(root + content_investment::layout::kItemTableTagOffset, tag)
-        || !content_handles::resolve(source.handles, tag, table))
+        || !content_handles::resolve(source.handles, tag, table)) {
         return false;
+    }
     const auto block = [&](std::uint16_t index,
                            std::uint32_t hash,
                            std::uintptr_t& address,
@@ -523,35 +552,52 @@ bool stage_categories(const content_investment::Source& source,
         std::uintptr_t definition = 0;
         if (!read(table + item_layout::kTableFirstRowOffset + index * sizeof row, row)
             || row.definitionHash != hash
-            || !content_handles::resolve(source.handles, row.targetHandle, definition))
+            || !content_handles::resolve(source.handles, row.targetHandle, definition)) {
             return false;
+        }
         address = definition + kPlugBlockOffset + kPlugCategoryOffset;
         g_categoryFailure = "block";
         return read_bytes(definition + kPlugBlockOffset, bytes)
-               && relocation::get<std::uint32_t>(bytes.data()) == 0x808077E3U;
+               && relocation::get<std::uint32_t>(bytes.data()) == kPlugBlockClass;
     };
     std::array<std::byte, kPlugBlockSize> referenceBlock{};
     std::uintptr_t referenceAddress = 0;
-    if (!block(reference, kLegArmorReferenceHash, referenceAddress, referenceBlock)) return false;
+    if (!block(reference, kArrivalsLegReferenceHash, referenceAddress, referenceBlock)) {
+        return false;
+    }
     g_categoryFailure = "reference_category";
-    if (relocation::get<std::uint32_t>(referenceBlock.data() + 4) != kLegCategory) return false;
+    if (relocation::get<std::uint32_t>(referenceBlock.data() + kPlugCategoryOffset)
+        != kLegCategory) {
+        return false;
+    }
     for (std::size_t i = 0; i < routes.size(); ++i) {
         std::array<std::byte, kPlugBlockSize> bytes{};
-        if (!block(routes[i], kArrivalsLegModHashes[i], output[i].address, bytes)) return false;
-        output[i].original = relocation::get<std::uint32_t>(bytes.data() + 4);
+        if (!block(routes[i], kArrivalsLegModHashes[i], output[i].address, bytes)) {
+            return false;
+        }
+        output[i].original = relocation::get<std::uint32_t>(bytes.data() + kPlugCategoryOffset);
         g_categoryFailure = "category_or_metadata";
         if ((output[i].original != kGeneralCategory && output[i].original != kLegCategory)
-            || std::memcmp(bytes.data() + 8, referenceBlock.data() + 8, 56) != 0)
+            || std::memcmp(bytes.data() + kPlugBlockMetadataOffset,
+                           referenceBlock.data() + kPlugBlockMetadataOffset,
+                           kPlugBlockMetadataSize)
+                   != 0) {
             return false;
+        }
     }
     return true;
 }
 
+/** @return True while all four category fields hold the leg-armour value. */
 bool categories_current() noexcept {
-    if (g_categoryCount != g_categories.size()) return false;
+    if (g_categoryCount != g_categories.size()) {
+        return false;
+    }
     for (const auto& category : g_categories) {
         std::uint32_t value = 0;
-        if (!read(category.address, value) || value != kLegCategory) return false;
+        if (!read(category.address, value) || value != kLegCategory) {
+            return false;
+        }
     }
     return true;
 }
@@ -568,32 +614,30 @@ bool restore_categories() noexcept {
             restored = false;
         }
     }
-    if (restored) g_categoryCount = 0;
+    if (restored) {
+        g_categoryCount = 0;
+    }
     return restored;
 }
 
-/** Bounded retry for item definitions that become available after set-table initialization. */
-void apply_pending_categories() noexcept {
-    if (g_categoryAttempts == 0) return;
-    const auto now = GetTickCount64();
-    if (now < g_categoryNext) return;
-    g_categoryNext = now + kCategoryRetryIntervalMs;
-    --g_categoryAttempts;
-    std::array<CategoryPatch, 4> categories{};
+/** Rewrites the four plug categories once. A later relocation event gets its own attempt. */
+void apply_categories() noexcept {
+    if (g_categoryCount != 0 || g_categorySource.investmentGlobalsTag == 0) {
+        return;
+    }
+    std::array<CategoryPatch, kArrivalsLegModHashes.size()> categories{};
+    std::array<char, core::log::kLineCapacity> line{};
     if (!stage_categories(g_categorySource, g_categoryRoutes, g_categoryReference, categories)) {
-        if (now >= g_categoryDeadline) g_categoryAttempts = 0;
-        if (g_categoryAttempts == kCategoryAttemptLimit - 1 || g_categoryAttempts == 0) {
-            std::array<char, 200> line{};
+        const int written =
             std::snprintf(line.data(),
                           line.size(),
-                          "ev=investment stage=arrivals_leg_categories result=%s reason=%s",
-                          g_categoryAttempts == 0 ? "failed" : "pending",
+                          "ev=investment stage=arrivals_leg_categories result=failed reason=%s",
                           g_categoryFailure);
+        if (written > 0) {
             core::log::write(core::log::Channel::client, core::log::Level::warn, line.data());
         }
         return;
     }
-    g_categoryAttempts = 0;
     g_categories = categories;
     g_categoryCount = categories.size();
     bool written = true;
@@ -604,9 +648,14 @@ void apply_pending_categories() noexcept {
         }
     }
     if (written && categories_current()) {
-        core::log::write(core::log::Channel::client,
-                         core::log::Level::info,
-                         "ev=investment stage=arrivals_leg_categories result=applied verified=4");
+        const int length =
+            std::snprintf(line.data(),
+                          line.size(),
+                          "ev=investment stage=arrivals_leg_categories result=applied applied=%zu",
+                          g_categoryCount);
+        if (length > 0) {
+            core::log::write(core::log::Channel::client, core::log::Level::info, line.data());
+        }
         return;
     }
     (void)restore_categories();
@@ -616,6 +665,13 @@ void apply_pending_categories() noexcept {
         "ev=investment stage=arrivals_leg_categories result=failed reason=write_or_verify");
 }
 
+/**
+ * Builds the count and self-relative displacement that point one descriptor at our array.
+ * @param descriptor Address of the native descriptor the displacement is measured from.
+ * @param count Member count to store in the descriptor.
+ * @param output Receives the encoded descriptor.
+ * @return False when the displacement does not fit a signed 64-bit value.
+ */
 [[nodiscard]] bool encode_descriptor(std::uintptr_t descriptor,
                                      const Allocation& allocation,
                                      std::uint64_t count,
@@ -644,7 +700,9 @@ void apply_pending_categories() noexcept {
                                  Allocation& allocation,
                                  ArrayDescriptor& descriptor) noexcept {
     const std::uint64_t newCount = source.count - routes.size();
-    if (newCount != kGeneralMemberCount - kArrivalsLegModHashes.size()) return false;
+    if (newCount != kGeneralMemberCount - kArrivalsLegModHashes.size()) {
+        return false;
+    }
     std::size_t written = 0;
     for (std::size_t position = 0; position < source.count; ++position) {
         std::uint32_t index = 0;
@@ -669,7 +727,6 @@ void apply_pending_categories() noexcept {
     return allocation
            && relocation::build(std::span(g_expected[0].data(), written),
                                 std::span(allocation.base, allocation.size))
-           && verify_owned(0, allocation)
            && encode_descriptor(source.descriptor, allocation, newCount, descriptor);
 }
 
@@ -681,7 +738,9 @@ void apply_pending_categories() noexcept {
                               Allocation& allocation,
                               ArrayDescriptor& descriptor) noexcept {
     const std::uint64_t newCount = source.count + routes.size();
-    if (newCount != kLegMemberCount + kArrivalsLegModHashes.size()) return false;
+    if (newCount != kLegMemberCount + kArrivalsLegModHashes.size()) {
+        return false;
+    }
     std::size_t referencePosition = source.count;
     for (std::size_t position = 0; position < source.count; ++position) {
         if (!snapshot_row(source, position, g_expected[1][position])) {
@@ -705,27 +764,39 @@ void apply_pending_categories() noexcept {
         bool found = false;
         for (std::size_t position = 0; position < general.count; ++position) {
             std::uint32_t index = 0;
-            if (!member_index(general, position, index)) return false;
-            if (index != routes[route]) continue;
-            if (found || !snapshot_row(general, position, g_expected[1][source.count + route]))
+            if (!member_index(general, position, index)) {
                 return false;
+            }
+            if (index != routes[route]) {
+                continue;
+            }
+            if (found || !snapshot_row(general, position, g_expected[1][source.count + route])) {
+                return false;
+            }
             found = true;
         }
-        if (!found) return false;
+        if (!found) {
+            return false;
+        }
     }
     g_expectedCounts[1] = static_cast<std::size_t>(newCount);
     // Keep the native Empty Mod Socket first, followed by the four artifact mods.
     std::rotate(g_expected[1].begin() + 1,
-                g_expected[1].begin() + source.count,
-                g_expected[1].begin() + newCount);
+                g_expected[1].begin() + static_cast<std::ptrdiff_t>(source.count),
+                g_expected[1].begin() + static_cast<std::ptrdiff_t>(newCount));
     allocation = allocate_array(relocation::capacity(g_expectedCounts[1]));
     return allocation
            && relocation::build(std::span(g_expected[1].data(), g_expectedCounts[1]),
                                 std::span(allocation.base, allocation.size))
-           && verify_owned(1, allocation)
            && encode_descriptor(source.descriptor, allocation, newCount, descriptor);
 }
 
+/**
+ * Checks the exact post-patch membership: each routed mod left general and joined legs.
+ * @param routes Item indexes moved from the general set to the leg set.
+ * @param reference Item index that must stay in the leg set exactly once.
+ * @return False when either count or any routed row is not where the patch put it.
+ */
 [[nodiscard]] bool patched_membership(const ArrayView& general,
                                       const ArrayView& legs,
                                       std::span<const std::uint16_t> routes,
@@ -758,7 +829,7 @@ void apply_pending_categories() noexcept {
     return true;
 }
 
-/** Full post-write proof, deliberately paid only once rather than on every callback. */
+/** Proves the native reader now walks the relocated pair, which no encoder here owns. */
 [[nodiscard]] bool patched_sets_current(std::span<const std::uint16_t> routes,
                                         std::uint16_t reference) noexcept {
     if (!descriptors_current()) {
@@ -768,22 +839,22 @@ void apply_pending_categories() noexcept {
     ArrayView legs{};
     return resolve_array(g_applied[0].descriptor, kMaximumMemberCount, kPlugMemberStride, general)
            && resolve_array(g_applied[1].descriptor, kMaximumMemberCount, kPlugMemberStride, legs)
-           && patched_membership(general, legs, routes, reference)
-           && verify_owned(0, g_allocations[0]) && verify_owned(1, g_allocations[1]);
+           && patched_membership(general, legs, routes, reference);
 }
 
 /** Restores descriptors only when they still name this module's allocations. */
 bool restore_applied() noexcept {
-    g_categoryAttempts = 0;
     bool restoredAll = restore_categories();
     for (std::size_t index = g_appliedCount; index > 0; --index) {
         const AppliedSet& applied = g_applied[index - 1];
         ArrayDescriptor current{};
-        if (!read(applied.descriptor, current)) {
-            restoredAll = false;
-        } else if (current == applied.original) {
+        const bool loaded = read(applied.descriptor, current);
+        if (loaded && current == applied.original) {
             continue;
-        } else if (current != applied.replacement || !write(applied.descriptor, applied.original)) {
+        }
+        // Write only over this module's own replacement, so a foreign descriptor is left alone.
+        if (!loaded || current != applied.replacement
+            || !write(applied.descriptor, applied.original)) {
             restoredAll = false;
         }
     }
@@ -806,26 +877,17 @@ void reserve_socket_menu_routing_storage() noexcept {
     }
 }
 
-/** Arms the one synchronous correction after native content-table patching completes. */
-void arm_socket_menu_routing() noexcept {
-    g_armed.store(true, std::memory_order_release);
-}
-
 /** Moves exactly four members between two validated native reusable plug sets. */
 void apply_socket_menu_routing() noexcept {
-    AcquireSRWLockExclusive(&g_lock);
-    if (!g_armed.load(std::memory_order_acquire)) {
-        apply_pending_categories();
-        ReleaseSRWLockExclusive(&g_lock);
+    if (!core::settings::get().client.socketMenuRouting) {
         return;
     }
-    // One attempt per native patch-completion event. No callback-pump retry loop.
-    g_armed.store(false, std::memory_order_release);
-
+    AcquireSRWLockExclusive(&g_lock);
     std::array<std::uint16_t, kArrivalsLegModHashes.size()> routeIndices{};
     std::uint16_t referenceIndex = UINT16_MAX;
     state::build_data::items::Definition definition{};
-    bool mapped = state::build_data::find_item_definition_hash(kLegArmorReferenceHash, definition);
+    bool mapped =
+        state::build_data::find_item_definition_hash(kArrivalsLegReferenceHash, definition);
     if (mapped) {
         referenceIndex = definition.definitionIndex;
     }
@@ -842,7 +904,7 @@ void apply_socket_menu_routing() noexcept {
         return;
     }
     if (descriptors_current()) {
-        apply_pending_categories();
+        apply_categories();
         ReleaseSRWLockExclusive(&g_lock);
         return;
     }
@@ -914,24 +976,21 @@ void apply_socket_menu_routing() noexcept {
     g_categorySource = located.source;
     g_categoryRoutes = routeIndices;
     g_categoryReference = referenceIndex;
-    g_categoryAttempts = kCategoryAttemptLimit;
-    g_categoryNext = 0;
-    g_categoryDeadline = GetTickCount64() + kCategoryRetryWindowMs;
-    apply_pending_categories();
-    g_armed.store(false, std::memory_order_release);
+    apply_categories();
     std::array<char, core::log::kLineCapacity> line{};
     const int written = std::snprintf(
         line.data(),
         line.size(),
         "ev=investment stage=arrivals_leg_sets result=applied source_count=%llu "
         "leg_count=%llu source=0x%llX legs=0x%llX general_data=0x%llX leg_data=0x%llX "
-        "validation=deep_copy_v3 rows_verified=71 order=empty_then_artifact",
+        "rows=%zu order=empty_then_artifact",
         static_cast<unsigned long long>(kGeneralMemberCount - routeIndices.size()),
         static_cast<unsigned long long>(kLegMemberCount + routeIndices.size()),
         static_cast<unsigned long long>(located.general.descriptor),
         static_cast<unsigned long long>(located.legs.descriptor),
         static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(g_allocations[0].base)),
-        static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(g_allocations[1].base)));
+        static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(g_allocations[1].base)),
+        g_expectedCounts[0] + g_expectedCounts[1]);
     if (written > 0) {
         core::log::write(
             core::log::Channel::client,
@@ -944,7 +1003,7 @@ void apply_socket_menu_routing() noexcept {
 void restore_socket_menu_routing() noexcept {
     AcquireSRWLockExclusive(&g_lock);
     restore_applied();
-    g_armed.store(false, std::memory_order_release);
+    g_categorySource = {};
     g_lastFailure = Failure::none;
     ReleaseSRWLockExclusive(&g_lock);
 }

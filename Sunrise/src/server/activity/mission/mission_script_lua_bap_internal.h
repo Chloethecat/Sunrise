@@ -7,6 +7,7 @@
 
 namespace sunrise::server::activity::mission::lua_vm::detail {
 
+// Metatable names that lock the BAP service userdata shapes a program may hold.
 inline constexpr char kBapServiceCollectionMetatable[] = "sunrise.sdk.bap_services";
 inline constexpr char kBapServiceMetatable[] = "sunrise.sdk.bap_service";
 

@@ -1,7 +1,5 @@
 #include "retail_log_enqueue_observer.h"
 
-#include <intrin.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -9,9 +7,8 @@
 #include <string_view>
 
 #include "../../../core/logging/log.h"
-#include "../bootflow/bootflow_hook_lifecycle.h"
-#include "../network/investment/internal.h"
 #include "../../targets/game.h"
+#include "../network/investment/internal.h"
 
 namespace sunrise::client::hooks::retail_log {
 namespace {
@@ -39,6 +36,31 @@ constexpr std::string_view kContentTablePatchingComplete =
 thread_local bool g_inObserver{};
 /** Tick at which the next re-assert is due. Zero makes the first call assert. */
 volatile LONG64 g_nextAssertTick{};
+
+/**
+ * Reports whether the native text carries the content-table patch-completion boundary.
+ * @param text Borrowed native buffer, not guaranteed readable.
+ * @return True when the boundary line is present.
+ */
+[[nodiscard]] bool marks_patch_completion(const char* text) {
+    // Last offset in the native buffer that can still hold the whole boundary line.
+    constexpr std::size_t kLastStart = kNativeTextSize - kContentTablePatchingComplete.size();
+    __try {
+        for (std::size_t start = 0; start <= kLastStart && text[start] != '\0'; ++start) {
+            std::size_t match = 0;
+            while (match < kContentTablePatchingComplete.size()
+                   && text[start + match] == kContentTablePatchingComplete[match]) {
+                ++match;
+            }
+            if (match == kContentTablePatchingComplete.size()) {
+                return true;
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return false;
+}
 
 /**
  * Copies the native text into fixed storage as one printable line.
@@ -69,19 +91,11 @@ volatile LONG64 g_nextAssertTick{};
  * @param text Borrowed native buffer.
  */
 void capture_line(std::int32_t siteId, const char* text) noexcept {
-    std::array<char, kNativeTextSize> sanitized{};
-    const std::size_t textLength = sanitize(text, sanitized);
-    const std::string_view message{sanitized.data(), textLength};
-    if (message.find(kContentTablePatchingComplete) != std::string_view::npos) {
-        network::investment::arm_socket_menu_routing();
-        // This must happen before the native logger returns to investment initialization. A later
-        // callback tick races the socket-menu caches that consume these descriptors.
-        network::investment::apply_socket_menu_routing();
-        network::investment::apply_lore_visibility();
-    }
     if (!core::log::accepts(core::log::Channel::client, core::log::Level::info)) {
         return;
     }
+    std::array<char, kNativeTextSize> sanitized{};
+    const std::size_t textLength = sanitize(text, sanitized);
     std::array<char, kEventCapacity> line{};
     const int written = std::snprintf(line.data(),
                                       line.size(),
@@ -96,53 +110,6 @@ void capture_line(std::int32_t siteId, const char* text) noexcept {
                             ? static_cast<std::size_t>(written)
                             : line.size() - 1;
     core::log::write(core::log::Channel::client, core::log::Level::info, {line.data(), length});
-}
-
-/** Text whose emitting call site is worth locating in the image. */
-constexpr std::string_view kTracedText = "failed to create";
-/** Call sites named per run, so a repeating line cannot flood the sink. */
-constexpr std::size_t kMaxCallSiteReports = 64;
-
-/** Reports already spent. */
-volatile LONG g_callSiteReports{};
-
-/**
- * Names the image offset of the code that emitted one line.
- * The packed executable cannot be disassembled on disk, so a dump of the mapped image is the only
- * readable copy, and an offset from the load base is what addresses it. The retail text itself
- * carries no address, and the site id is assigned by the game's own registration rather than by
- * position, so nothing else here says which function produced a line. `_ReturnAddress` inside the
- * funnel is the emitting call site, which is exactly the function to disassemble.
- * @param returnAddress Return address captured in the funnel.
- * @param text Already-formatted native line.
- */
-void report_call_site(const void* returnAddress, const char* text) noexcept {
-    if (returnAddress == nullptr
-        || !core::log::accepts(core::log::Channel::client, core::log::Level::debug)) {
-        return;
-    }
-    const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
-    const auto site = reinterpret_cast<std::uintptr_t>(returnAddress);
-    if (base == 0 || site < base) {
-        return;
-    }
-    if (InterlockedIncrement(&g_callSiteReports) > static_cast<LONG>(kMaxCallSiteReports)) {
-        return;
-    }
-    std::array<char, kEventCapacity> line{};
-    const int written = std::snprintf(line.data(),
-                                      line.size(),
-                                      "ev=retail_site stage=caller rva=0x%llX va=0x%llX text=%s",
-                                      static_cast<unsigned long long>(site - base),
-                                      static_cast<unsigned long long>(site),
-                                      text);
-    if (written > 0) {
-        const auto length = static_cast<std::size_t>(written) < line.size()
-                                ? static_cast<std::size_t>(written)
-                                : line.size() - 1;
-        core::log::write(core::log::Channel::client, core::log::Level::debug,
-                         {line.data(), length});
-    }
 }
 
 /**
@@ -160,11 +127,13 @@ __declspec(noinline) void __fastcall enqueue_body(std::int32_t siteId, const cha
     }
     if (outer) {
         if (siteId != kUnregisteredSite && text != nullptr) {
-            capture_line(siteId, text);
-            // Cheap guard first: the search only runs on the handful of lines that match.
-            if (std::string_view(text).find(kTracedText) != std::string_view::npos) {
-                report_call_site(_ReturnAddress(), text);
+            if (marks_patch_completion(text)) {
+                // Both must run before the native logger returns to investment initialization; a
+                // later tick races the caches that consume these descriptors.
+                network::investment::apply_socket_menu_routing();
+                network::investment::apply_lore_visibility();
             }
+            capture_line(siteId, text);
         }
         assert_verbosity();
         g_inObserver = false;

@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <span>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 #include "layout.h"
@@ -34,6 +33,33 @@ struct PackageLocation {
     std::uint32_t patchIndex{};
     bool found{};
 };
+
+/** Ends a bucket chain and names no slot. */
+inline constexpr std::size_t kNoSlot = static_cast<std::size_t>(-1);
+
+/**
+ * Key to slot index for one rotating cache.
+ * A slot holds one key at a time, so its chain link lives in its own row and a lookup never scans.
+ */
+struct SlotIndex {
+    /** First slot of each bucket, or kNoSlot. The row count is always a power of two. */
+    std::vector<std::size_t> buckets{};
+    /** Next slot sharing the same bucket, one row per cache slot. */
+    std::vector<std::size_t> links{};
+};
+
+/** One resolved package held by a reader, keyed by the package id the tag handle names. */
+struct PackageLocationSlot {
+    PackageLocation location{};
+    std::uint16_t packageId{};
+    bool held{};
+};
+
+/**
+ * Package locations one reader holds. 528 packages are installed.
+ * Lookup probes forward from the id, so the table must stay well above the installed count.
+ */
+inline constexpr std::size_t kPackageLocationSlots = 2048;
 
 /** Oodle writes past the requested size, so every destination carries slack. */
 inline constexpr std::size_t kBlockSlack = 64;
@@ -114,7 +140,7 @@ struct Scratch {
      */
     std::vector<BlockSlot> blocks{};
     /** Slot of each cached block key, so a large cache costs no scan. */
-    std::unordered_map<std::uint64_t, std::size_t> blockIndex{};
+    SlotIndex blockIndex{};
     /** Next slot to replace once the cache is full. */
     std::size_t blockCursor{};
     std::array<HeaderSlot, kHeaderCacheSlots> headers{};
@@ -125,11 +151,11 @@ struct Scratch {
      */
     std::vector<TableSlot> tables{};
     /** Slot of each held package, keyed by package and patch so no path is compared. */
-    std::unordered_map<std::uint64_t, std::size_t> tableIndex{};
+    SlotIndex tableIndex{};
     /** Next table slot to replace once every slot is held. */
     std::size_t tableCursor{};
     /** Package locations resolved for this reader's current source directory. */
-    std::unordered_map<std::uint16_t, PackageLocation> packageLocations{};
+    std::vector<PackageLocationSlot> packageLocations{};
     /** Owned copy of the source directory; changing Source clears the locations above. */
     Path packageDirectory{};
     /** Characters held in packageDirectory. Zero when the directory did not fit. */

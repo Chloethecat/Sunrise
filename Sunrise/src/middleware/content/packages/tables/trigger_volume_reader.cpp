@@ -10,6 +10,7 @@
 namespace sunrise::middleware::content::packages::tables {
 namespace {
 
+/** Field offsets of the installed trigger-volume component, root and row layouts. */
 constexpr std::size_t kComponentHeaderOwnTagOffset = 0;
 constexpr std::size_t kComponentHeaderClassOffset = 4;
 constexpr std::size_t kComponentHeaderRootOffset = 8;
@@ -30,10 +31,13 @@ constexpr std::size_t kRowVertexDescriptor = 0xD0;
 constexpr std::size_t kRowTriangleDescriptor = 0xE0;
 constexpr std::size_t kRowExtrusionOffset = 0xF0;
 constexpr std::size_t kRowActiveOffset = 0x11C;
+/** An array header sits before its data, with the marker four bytes back. */
 constexpr std::size_t kArrayMarkerBack = 4;
 constexpr std::size_t kArrayClassOffset = 8;
 constexpr std::size_t kArrayDataOffset = 0x10;
+/** Auxiliary links a walk follows before it treats the chain as a loop. */
 constexpr std::size_t kAuxiliaryChainCapacity = 32;
+/** Field offsets of the installed shape-reference layout. */
 constexpr std::size_t kShapeResourceOffset = 0x10;
 constexpr std::size_t kShapeReferenceWordOffset = 0x14;
 constexpr std::size_t kShapeIndexOffset = 0x18;
@@ -57,6 +61,7 @@ constexpr std::size_t kShapeIdentityOffset = 0x20;
 /** Adds one signed self-relative offset without overflowing host size arithmetic. */
 [[nodiscard]] bool
 relative_offset(std::size_t base, std::int64_t relative, std::size_t& output) noexcept {
+    /** Signed range the addition must stay inside. */
     constexpr std::int64_t kMaximum = (std::numeric_limits<std::int64_t>::max)();
     constexpr std::int64_t kMinimum = (std::numeric_limits<std::int64_t>::min)();
     if (base > static_cast<std::size_t>(kMaximum)) {
@@ -133,9 +138,10 @@ relative_offset(std::size_t base, std::int64_t relative, std::size_t& output) no
     std::array<std::size_t, kAuxiliaryChainCapacity> visited{};
     std::size_t visitedCount = 0;
     while (visitedCount < visited.size()) {
+        const auto scanned = static_cast<std::ptrdiff_t>(visitedCount);
         if (payload < kArrayMarkerBack
-            || std::find(visited.begin(), visited.begin() + visitedCount, payload)
-                   != visited.begin() + visitedCount) {
+            || std::find(visited.begin(), visited.begin() + scanned, payload)
+                   != visited.begin() + scanned) {
             return false;
         }
         visited[visitedCount++] = payload;

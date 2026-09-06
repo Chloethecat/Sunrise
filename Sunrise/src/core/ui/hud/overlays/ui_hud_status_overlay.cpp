@@ -189,8 +189,8 @@ void build_spawn(std::string_view stem, Value& output) noexcept {
     // region are also committed in Activity State, so use the newest session that has actually
     // reported a region when no connection-scoped link survives the handoff.
     if (!hasLink) {
-        const std::uint64_t sessionId = activity::membership::live_region_session(
-            activity::kAbsentSessionId);
+        const std::uint64_t sessionId =
+            activity::membership::live_region_session(activity::kAbsentSessionId);
         activity::SessionBinding binding{};
         if (sessionId != activity::kAbsentSessionId
             && activity::snapshot_binding(sessionId, binding)) {
@@ -205,30 +205,31 @@ void build_spawn(std::string_view stem, Value& output) noexcept {
     static std::size_t lastActive = static_cast<std::size_t>(-1);
     static std::size_t lastMatching = static_cast<std::size_t>(-1);
     static bool lastHasLink = false;
-    const std::int32_t diagnosticSlice = localSliceSet.present
-                                             ? localSliceSet.index
-                                             : localSliceSet.available ? -1 : -2;
+    const std::int32_t diagnosticSlice = localSliceSet.present     ? localSliceSet.index
+                                         : localSliceSet.available ? -1
+                                                                   : -2;
     if (diagnosticSlice != lastSlice || link.activeLinks != lastActive
         || link.matchingRegions != lastMatching || hasLink != lastHasLink) {
         std::array<char, core::log::kLineCapacity> line{};
-        const int written = std::snprintf(line.data(),
-                                          line.size(),
-                                          "ev=hud stage=activity_link result=%s slice=%d active=%zu "
-                                          "matching=%zu selected=%d public=%u package=%.*s",
-                                          hasLink ? "ok" : "missing",
-                                          diagnosticSlice,
-                                          link.activeLinks,
-                                          link.matchingRegions,
-                                          link.effectiveRegion,
-                                          link.publicTarget ? 1U : 0U,
-                                          static_cast<int>(link.binding.destination.packageNameLength),
-                                          reinterpret_cast<const char*>(
-                                              link.binding.destination.packageName.data()));
+        const int written = std::snprintf(
+            line.data(),
+            line.size(),
+            "ev=hud stage=activity_link result=%s slice=%d "
+            "active=%zu matching=%zu selected=%d public=%u "
+            "package=%.*s",
+            hasLink ? "ok" : "missing",
+            diagnosticSlice,
+            link.activeLinks,
+            link.matchingRegions,
+            link.effectiveRegion,
+            link.publicTarget ? 1U : 0U,
+            static_cast<int>(link.binding.destination.packageNameLength),
+            reinterpret_cast<const char*>(link.binding.destination.packageName.data()));
         if (written > 0) {
-            core::log::write(core::log::Channel::client,
-                             core::log::Level::info,
-                             {line.data(),
-                              (std::min)(static_cast<std::size_t>(written), line.size() - 1U)});
+            core::log::write(
+                core::log::Channel::client,
+                core::log::Level::info,
+                {line.data(), (std::min)(static_cast<std::size_t>(written), line.size() - 1U)});
         }
         lastSlice = diagnosticSlice;
         lastActive = link.activeLinks;

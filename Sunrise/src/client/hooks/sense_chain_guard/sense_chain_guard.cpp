@@ -34,6 +34,7 @@ using patterns::signature_length;
 /** The per-list sense-state extract. Its second argument holds the chain head at `+4`. */
 constexpr std::string_view kExtractText =
     "48 8B C4 53 48 83 EC 70 8B 5A 04 83 FB FF 0F 84 ? ? ? ? 48 8B 15 ? ? ? ? 48 89 68 08";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kExtract = signature<signature_length(kExtractText)>(kExtractText);
 
 /** Handle-table storage operand inside the extract, and the next instruction. */
@@ -55,6 +56,12 @@ constexpr std::size_t kRecordTypeOffset = 8;
 constexpr std::size_t kRecordChangedOffset = 111;
 constexpr std::size_t kRecordExtractedOffset = 112;
 constexpr std::size_t kRecordNextOffset = 120;
+/** Sub-table fields the extract reads: row array pointer, row stride, row tag mask. */
+constexpr std::uint64_t kSubRowArrayOffset = 8;
+constexpr std::uint64_t kSubRowStrideOffset = 48;
+constexpr std::uint64_t kSubRowTagMaskOffset = 52;
+/** Tag qword inside a row; the masked part is subtracted to reach the record start. */
+constexpr std::uint64_t kRowTagOffset = 8;
 /** The no-record handle value ending a sane chain. */
 constexpr std::uint32_t kNoRecord = 0xFFFFFFFFU;
 /** The accessor is a 32-byte stack object in the original; this over-allocates it. */
@@ -120,22 +127,37 @@ RecordPayload g_payload{};
 std::atomic<std::uint64_t> g_nextReportTick{0};
 std::atomic<unsigned> g_reports{0};
 
+/** Rebuilds a pointer from an address without an implementation-defined integer conversion. */
+[[nodiscard]] std::byte* address_pointer(std::uint64_t address) noexcept {
+    std::byte* pointer = nullptr;
+    static_assert(sizeof pointer == sizeof address);
+    std::memcpy(&pointer, &address, sizeof pointer);
+    return pointer;
+}
+
+/** @return The value the game stores at one address. */
+template <typename Value> [[nodiscard]] Value read_field(std::uint64_t address) noexcept {
+    Value value{};
+    std::memcpy(&value, address_pointer(address), sizeof value);
+    return value;
+}
+
 /** @return The record a handle names, with the extract's own resolution. */
 [[nodiscard]] std::byte* resolve_record(std::uint64_t tables, std::uint32_t handle) noexcept {
     const std::uint32_t high = static_cast<std::uint32_t>(static_cast<std::int32_t>(handle) >> 13);
     // The argument is the table object; the sub-table array pointer is its first qword.
-    const std::uint64_t sub = *reinterpret_cast<const std::uint64_t*>(tables)
+    const std::uint64_t sub = read_field<std::uint64_t>(tables)
                               + (static_cast<std::uint64_t>(static_cast<std::uint16_t>(high)
                                                             & ((high | 0xFFC0000U) >> 18))
                                  << 6);
     const std::uint64_t row =
-        *reinterpret_cast<const std::uint64_t*>(sub + 8)
+        read_field<std::uint64_t>(sub + kSubRowArrayOffset)
         + static_cast<std::uint32_t>((handle & 0x1FFFU)
-                                     * *reinterpret_cast<const std::uint32_t*>(sub + 48));
-    return reinterpret_cast<std::byte*>(
+                                     * read_field<std::uint32_t>(sub + kSubRowStrideOffset));
+    return address_pointer(
         row
-        - (*reinterpret_cast<const std::uint64_t*>(row + 8)
-           & static_cast<std::int64_t>(*reinterpret_cast<const std::int32_t*>(sub + 52))));
+        - (read_field<std::uint64_t>(row + kRowTagOffset)
+           & static_cast<std::int64_t>(read_field<std::int32_t>(sub + kSubRowTagMaskOffset))));
 }
 
 /** Extracts one record exactly as the replaced walk body does. POD frame only, for __try. */

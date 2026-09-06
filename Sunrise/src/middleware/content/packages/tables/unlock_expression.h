@@ -10,16 +10,9 @@
 namespace sunrise::middleware::content::packages::tables {
 
 /**
- * Reading unlock expressions out of definition rows.
- *
- * A row field holds a count and, eight bytes on, a self-relative offset to a run of instructions.
- * Each instruction is an opcode then an operand. Which field a row uses varies, and so does what it
- * carries: the same field holds a value read on one row and a flag test on another, so both readers
- * are tried against the same fields rather than each field being treated as fixed-purpose.
- */
-
-/**
  * Reads the first operand of a given opcode out of one expression field.
+ * The same field holds a value read on one row and a flag test on another, so the opcode is asked
+ * for rather than assumed from the field.
  * @param table Blob the row sits in.
  * @param rowAt Byte offset of the row.
  * @param field Byte offset of the expression field within the row.
@@ -34,19 +27,20 @@ namespace sunrise::middleware::content::packages::tables {
                                              std::int16_t& slot) noexcept {
     std::int64_t count = 0;
     std::int64_t relative = 0;
-    if (rowAt + field + 16 > table.size()) {
+    if (rowAt + field + kUnlockExpressionFieldSize > table.size()) {
         return false;
     }
+    const std::size_t pointerAt = rowAt + field + kUnlockExpressionPointerOffset;
     std::memcpy(&count, table.data() + rowAt + field, sizeof count);
-    std::memcpy(&relative, table.data() + rowAt + field + 8, sizeof relative);
+    std::memcpy(&relative, table.data() + pointerAt, sizeof relative);
     if (count < 1 || count > kNodeExpressionCapacity) {
         return false;
     }
-    const std::size_t pointerAt = rowAt + field + 8;
-    const std::int64_t target = static_cast<std::int64_t>(pointerAt) + relative
-                                + static_cast<std::int64_t>(kHeaderSkip);
+    const std::int64_t target =
+        static_cast<std::int64_t>(pointerAt) + relative + static_cast<std::int64_t>(kHeaderSkip);
     if (target < 0
-        || static_cast<std::size_t>(target) + static_cast<std::size_t>(count) * kUnlockInstructionStride
+        || static_cast<std::size_t>(target)
+                   + static_cast<std::size_t>(count) * kUnlockInstructionStride
                > table.size()) {
         return false;
     }
@@ -56,7 +50,7 @@ namespace sunrise::middleware::content::packages::tables {
         std::uint32_t operand = 0;
         const std::size_t at = base + static_cast<std::size_t>(index) * kUnlockInstructionStride;
         std::memcpy(&instruction, table.data() + at, sizeof instruction);
-        std::memcpy(&operand, table.data() + at + 4, sizeof operand);
+        std::memcpy(&operand, table.data() + at + kUnlockInstructionOperandOffset, sizeof operand);
         if (instruction > kUnlockOpcodeCeiling) {
             return false;
         }

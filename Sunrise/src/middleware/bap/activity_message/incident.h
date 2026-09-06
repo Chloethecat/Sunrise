@@ -12,20 +12,25 @@ namespace sunrise::middleware::bap::activity_message::incident {
 /** Activity message type 19 carries one incident. Both sides can send it. */
 inline constexpr std::uint32_t kMessageType = 19;
 
+/** Every target index is 13 bits on the wire. */
 inline constexpr std::uint8_t kTargetWidth = 13;
 /** The highest valid target index. Above it the Client indexes handler tables unbounded. */
 inline constexpr std::uint32_t kTargetMaximum = 7'762;
 /** These three rows carry type code -1 and are a crash risk, so they never pass. */
 inline constexpr std::array<std::uint32_t, 3> kPoisonTargets{795, 4'690, 5'375};
 
+/** Extra targets follow a 5-bit count and stop at 25 entries. */
 inline constexpr std::uint8_t kExtraCountWidth = 5;
 inline constexpr std::uint32_t kExtraTargetMaximum = 25;
+/** The selector is a presence bit, a 9-bit byte length, then at most 260 bytes. */
 inline constexpr std::uint8_t kSelectorPresenceWidth = 1;
 inline constexpr std::uint8_t kSelectorLengthWidth = 9;
 inline constexpr std::uint32_t kSelectorMaximum = 260;
+/** The optional field is a presence bit then 64 bits, sent as two 32-bit words. */
 inline constexpr std::uint8_t kOptionalPresenceWidth = 1;
 inline constexpr std::uint8_t kOptionalFieldWidth = 64;
 inline constexpr std::uint8_t kOptionalWordWidth = 32;
+/** The payload is a 9-bit byte length then at most 500 bytes. */
 inline constexpr std::uint8_t kPayloadLengthWidth = 9;
 inline constexpr std::uint32_t kPayloadMaximum = 500;
 /** The smallest body is the five fixed fields with every count zero. */
@@ -51,7 +56,10 @@ enum class Verdict : std::uint8_t {
     selectorTooLong,
 };
 
-/** One outer-valid incident, framed to the end of its payload. */
+/**
+ * One outer-valid incident, framed to the end of its payload.
+ * The parser fills the outer fields only; the byte arrays and optional words are encoder inputs.
+ */
 struct Incident {
     std::array<std::byte, kSelectorMaximum> selector{};
     std::array<std::byte, kPayloadMaximum> payload{};
@@ -67,7 +75,6 @@ struct Incident {
     bool hasCompressedSelector{};
     /** Set when the two optional words are present. */
     bool hasOptionalBlock{};
-    bool hasPayload{};
 };
 
 /** @return A short stable name for one verdict, for the log line. */

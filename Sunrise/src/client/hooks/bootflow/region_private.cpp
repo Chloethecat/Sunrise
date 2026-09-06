@@ -15,6 +15,8 @@
 namespace sunrise::client::hooks::bootflow {
 namespace {
 
+using core::log::kLineCapacity;
+
 /**
  * The bubble public-flag reader. The pattern is its whole body: a call to the state-byte getter,
  * then a cmovnz that turns the byte into a bool.
@@ -27,8 +29,8 @@ constexpr auto kReaderSignature =
     signature<signature_length(kReaderSignatureText)>(kReaderSignatureText);
 
 /**
- * The region transition starter. Anchored on its stack-cookie prologue and the read of the
- * manager's phase byte, which no other function pairs this way.
+ * The region transition starter, anchored on its stack-cookie prologue and the manager's
+ * phase-byte read, which no other function pairs this way.
  */
 constexpr std::string_view kStarterSignatureText =
     "44 89 44 24 18 55 53 56 57 41 54 41 56 41 57 48 8D AC 24 ? ? ? ? 48 81 EC ? ? ? ? 48 8B 05 "
@@ -44,15 +46,13 @@ constexpr std::size_t kCallOperandOffset = 1;
 /** A near call is its opcode plus a signed 32-bit displacement. */
 constexpr std::size_t kCallLength = kCallOperandOffset + 4;
 /**
- * Bytes of the starter searched for that call. The body is shorter than this, and the search
- * needs one match, so a second hit fails the install instead of picking one.
+ * Bytes of the starter searched for that call; its body is shorter than this.
+ * The search needs exactly one match, so a second hit fails the install instead of picking one.
  */
 constexpr std::size_t kStarterSearchBytes = 0x600;
 
 /** Lines allowed per run. Region transitions are rare, so this shows every one a boot makes. */
 constexpr unsigned kMaxReports = 8;
-/** Size of one line, set by its stage and slice-set fields. */
-constexpr std::size_t kLineCapacity = 96;
 
 using Reader = bool(__fastcall*)(std::uint32_t);
 

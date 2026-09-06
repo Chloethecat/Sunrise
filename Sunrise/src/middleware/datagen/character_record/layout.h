@@ -199,6 +199,7 @@ inline constexpr std::size_t kSummarySize = 32;
 inline constexpr std::size_t kPeriodicResetSize = 56;
 /** Both reset stamps are placed by the native block layout, not by C++ packing. */
 struct PeriodicResetOffsets {
+    /** Byte offsets from the start of the periodic-reset block. */
     static constexpr std::size_t lastDailyResetSeconds = 16;
     static constexpr std::size_t lastWeeklyResetSeconds = 24;
 };

@@ -66,8 +66,6 @@ struct RosterStorage {
     std::uint32_t destinationTag{};
     /**
      * Why the descriptor walk of the object being resolved fell short, counted per exit.
-     * A group is refused when its found slots miss its declared ones, and the summary says only
-     * how many were refused. These say which step lost them, which is what picks the fix.
      * Cleared with the slot list, so every count belongs to one object.
      */
     struct WalkExits {
@@ -96,8 +94,7 @@ inline constexpr std::size_t kRosterReadBudget = 150;
 inline constexpr std::size_t kLiveTagCapacity = 1'024;
 /**
  * How long the collection keeps retrying the destinations that have not read yet.
- * Packages register during the boot, so an early attempt reads fewer of them. One run latched at
- * 417 of 466 and the destination it dropped was the Tower.
+ * Packages register during the boot, so an early attempt reads fewer of them.
  */
 inline constexpr std::uint64_t kResolveWindowMs = 15'000;
 /** Tag reads one collection call may spend, for the same reason the roster walk is bounded. */

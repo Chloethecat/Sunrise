@@ -12,7 +12,9 @@ struct Association final {
 
     /** Accepts only the direct iterator call made by the native rebind pass. */
     bool visit(std::uintptr_t caller, std::uintptr_t expected, std::uintptr_t value) noexcept {
-        if (!active || caller != expected || (iterator != 0 && iterator != value)) return false;
+        if (!active || caller != expected || (iterator != 0 && iterator != value)) {
+            return false;
+        }
         iterator = value;
         actor = owner = 0xFFFFFFFFU;
         return true;

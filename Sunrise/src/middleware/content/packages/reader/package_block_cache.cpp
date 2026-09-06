@@ -4,6 +4,96 @@
 
 #include "block_cache.h"
 
+namespace sunrise::middleware::content::packages::reader {
+namespace {
+
+/** Buckets per cache slot, so an index stays under a one-in-two load. */
+constexpr std::size_t kBucketsPerSlot = 2;
+/** MurmurHash3 finalizer multiplier, so buckets spread when only the high key bits differ. */
+constexpr std::uint64_t kKeyMixMultiplier = 0xFF51AFD7ED558CCDULL;
+/** MurmurHash3 finalizer shift that folds the high bits down before each multiply. */
+constexpr std::uint8_t kKeyMixShift = 33;
+
+/** @param key Cache key. @return The key spread across all 64 bits. */
+[[nodiscard]] std::uint64_t mix_key(std::uint64_t key) noexcept {
+    key ^= key >> kKeyMixShift;
+    key *= kKeyMixMultiplier;
+    key ^= key >> kKeyMixShift;
+    return key;
+}
+
+/** @param index Sized index. @param key Cache key. @return Its bucket row. */
+[[nodiscard]] std::size_t bucket_of(const SlotIndex& index, std::uint64_t key) noexcept {
+    return static_cast<std::size_t>(mix_key(key)) & (index.buckets.size() - 1U);
+}
+
+} // namespace
+
+/** Sizes one key-to-slot index and drops every chain it held. */
+bool prepare_slot_index(SlotIndex& index, std::size_t slots) noexcept {
+    std::size_t buckets = 1;
+    while (buckets < slots * kBucketsPerSlot) {
+        buckets <<= 1U;
+    }
+    try {
+        index.buckets.assign(buckets, kNoSlot);
+        index.links.assign(slots, kNoSlot);
+    } catch (...) {
+        index.buckets.clear();
+        index.links.clear();
+        return false;
+    }
+    return true;
+}
+
+/** Drops every chain of one index without releasing its storage. */
+void clear_slot_index(SlotIndex& index) noexcept {
+    std::fill(index.buckets.begin(), index.buckets.end(), kNoSlot);
+    std::fill(index.links.begin(), index.links.end(), kNoSlot);
+}
+
+/** @return First slot chained under one key, or kNoSlot. */
+std::size_t slot_index_first(const SlotIndex& index, std::uint64_t key) noexcept {
+    return index.buckets.empty() ? kNoSlot : index.buckets[bucket_of(index, key)];
+}
+
+/** @return Next slot sharing one slot's bucket, or kNoSlot. */
+std::size_t slot_index_next(const SlotIndex& index, std::size_t slot) noexcept {
+    return slot < index.links.size() ? index.links[slot] : kNoSlot;
+}
+
+/** Chains one slot under a key. The slot must hold no key. */
+void slot_index_insert(SlotIndex& index, std::uint64_t key, std::size_t slot) noexcept {
+    if (index.buckets.empty() || slot >= index.links.size()) {
+        return;
+    }
+    const std::size_t bucket = bucket_of(index, key);
+    index.links[slot] = index.buckets[bucket];
+    index.buckets[bucket] = slot;
+}
+
+/** Unchains one slot from the key it was chained under. */
+void slot_index_erase(SlotIndex& index, std::uint64_t key, std::size_t slot) noexcept {
+    if (index.buckets.empty() || slot >= index.links.size()) {
+        return;
+    }
+    const std::size_t bucket = bucket_of(index, key);
+    if (index.buckets[bucket] == slot) {
+        index.buckets[bucket] = index.links[slot];
+        index.links[slot] = kNoSlot;
+        return;
+    }
+    for (std::size_t held = index.buckets[bucket]; held != kNoSlot; held = index.links[held]) {
+        if (index.links[held] == slot) {
+            index.links[held] = index.links[slot];
+            index.links[slot] = kNoSlot;
+            return;
+        }
+    }
+}
+
+} // namespace sunrise::middleware::content::packages::reader
+
 namespace sunrise::middleware::content::packages::reader::block_cache {
 namespace {
 
@@ -83,9 +173,9 @@ std::uint64_t key_of(std::uint16_t packageId, const layout::BlockRecord& record)
  * @return True when the block is cached.
  */
 bool find(Scratch& scratch, std::uint64_t key, std::span<const std::byte>& plaintext) noexcept {
-    const auto found = scratch.blockIndex.find(key);
-    if (found != scratch.blockIndex.end() && found->second < scratch.blocks.size()) {
-        BlockSlot& slot = scratch.blocks[found->second];
+    for (std::size_t held = slot_index_first(scratch.blockIndex, key); held != kNoSlot;
+         held = slot_index_next(scratch.blockIndex, held)) {
+        BlockSlot& slot = scratch.blocks[held];
         if (slot.valid && slot.key == key) {
             plaintext = std::span<const std::byte>(slot.bytes.data(), slot.size);
             ++scratch.blockHits;
@@ -121,22 +211,14 @@ void store(Scratch& scratch,
         return;
     }
     if (target.valid) {
-        const auto prior = scratch.blockIndex.find(target.key);
-        if (prior != scratch.blockIndex.end() && prior->second == scratch.blockCursor) {
-            scratch.blockIndex.erase(prior);
-        }
+        slot_index_erase(scratch.blockIndex, target.key, scratch.blockCursor);
     }
     std::copy(decoded.begin(), decoded.end(), target.bytes.begin());
     target.size = decoded.size();
     target.key = key;
     target.used = ++scratch.useCounter;
     target.valid = true;
-    try {
-        scratch.blockIndex[key] = scratch.blockCursor;
-    } catch (...) {
-        target.valid = false;
-        return;
-    }
+    slot_index_insert(scratch.blockIndex, key, scratch.blockCursor);
     ++scratch.blockCursor;
     plaintext = std::span<const std::byte>(target.bytes.data(), target.size);
 }
@@ -190,35 +272,35 @@ namespace sunrise::middleware::content::packages::reader {
 /** Sizes one reader's block cache and drops whatever it held. */
 bool prepare_blocks(Scratch& scratch, std::size_t slots) noexcept {
     const std::size_t wanted = slots == 0 ? kBlockCacheSlots : slots;
+    scratch.blockCursor = 0;
+    if (!prepare_slot_index(scratch.blockIndex, wanted)) {
+        return false;
+    }
     try {
         scratch.blocks.clear();
         scratch.blocks.shrink_to_fit();
-        scratch.blockIndex.clear();
         scratch.blocks.resize(wanted);
-        scratch.blockIndex.reserve(wanted);
     } catch (...) {
         scratch.blocks.clear();
-        scratch.blockIndex.clear();
         return false;
     }
-    scratch.blockCursor = 0;
     return true;
 }
 /** Sizes one reader's package-table cache and drops whatever it held. */
 bool prepare_tables(Scratch& scratch, std::size_t slots) noexcept {
     const std::size_t wanted = slots == 0 ? kTableSlots : slots;
+    scratch.tableCursor = 0;
+    if (!prepare_slot_index(scratch.tableIndex, wanted)) {
+        return false;
+    }
     try {
         scratch.tables.clear();
         scratch.tables.shrink_to_fit();
-        scratch.tableIndex.clear();
         scratch.tables.resize(wanted);
-        scratch.tableIndex.reserve(wanted);
     } catch (...) {
         scratch.tables.clear();
-        scratch.tableIndex.clear();
         return false;
     }
-    scratch.tableCursor = 0;
     return true;
 }
 } // namespace sunrise::middleware::content::packages::reader

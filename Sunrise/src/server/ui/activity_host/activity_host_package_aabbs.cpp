@@ -23,6 +23,7 @@ namespace catalog = state::build_data::scriptables;
 namespace marker = client::ui::activity::authored_placement_marker;
 namespace tag_names = server::ui::activity_host::package_tag_names;
 
+/** One shared table style, so every table on this page reads the same. */
 constexpr ImGuiTableFlags kTableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
                                         | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX
                                         | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit;

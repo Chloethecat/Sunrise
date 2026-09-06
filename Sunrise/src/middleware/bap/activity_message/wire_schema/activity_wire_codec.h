@@ -19,6 +19,7 @@ inline constexpr std::size_t kRuntimeValueCapacity = 1024;
 
 namespace runtime {
 
+/** Row index meaning "no row"; the SDK never numbers a real row this high. */
 inline constexpr std::uint32_t kAbsentRuntimeRow = 0xFFFFFFFFU;
 
 /** One runtime schema row supplied by the generated Activity SDK. */

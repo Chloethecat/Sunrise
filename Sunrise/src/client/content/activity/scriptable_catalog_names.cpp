@@ -297,16 +297,16 @@ bool resolve_names(catalog::Snapshot& output,
         definitions.resize(definitionCount);
         std::sort(definitions.begin(),
                   definitions.end(),
-                  [](const state::content::Definition& left,
-                     const state::content::Definition& right) noexcept {
-                      if (left.tag != right.tag) {
-                          return left.tag < right.tag;
+                  [](const state::content::Definition& first,
+                     const state::content::Definition& second) noexcept {
+                      if (first.tag != second.tag) {
+                          return first.tag < second.tag;
                       }
-                      if (left.classId != right.classId) {
-                          return left.classId < right.classId;
+                      if (first.classId != second.classId) {
+                          return first.classId < second.classId;
                       }
-                      return std::string_view(left.name.data(), left.nameLength)
-                             < std::string_view(right.name.data(), right.nameLength);
+                      return std::string_view(first.name.data(), first.nameLength)
+                             < std::string_view(second.name.data(), second.nameLength);
                   });
         if (cancelled(cancel)) {
             return false;
@@ -322,21 +322,23 @@ bool resolve_names(catalog::Snapshot& output,
         std::sort(
             hashDefinitions.begin(),
             hashDefinitions.end(),
-            [&definitions](const HashDefinition& left, const HashDefinition& right) noexcept {
-                if (left.hash != right.hash) {
-                    return left.hash < right.hash;
+            [&definitions](const HashDefinition& first, const HashDefinition& second) noexcept {
+                if (first.hash != second.hash) {
+                    return first.hash < second.hash;
                 }
-                const state::content::Definition& leftDefinition = definitions[left.definitionRow];
-                const state::content::Definition& rightDefinition =
-                    definitions[right.definitionRow];
-                if (leftDefinition.tag != rightDefinition.tag) {
-                    return leftDefinition.tag < rightDefinition.tag;
+                const state::content::Definition& firstDefinition =
+                    definitions[first.definitionRow];
+                const state::content::Definition& secondDefinition =
+                    definitions[second.definitionRow];
+                if (firstDefinition.tag != secondDefinition.tag) {
+                    return firstDefinition.tag < secondDefinition.tag;
                 }
-                if (leftDefinition.classId != rightDefinition.classId) {
-                    return leftDefinition.classId < rightDefinition.classId;
+                if (firstDefinition.classId != secondDefinition.classId) {
+                    return firstDefinition.classId < secondDefinition.classId;
                 }
-                return std::string_view(leftDefinition.name.data(), leftDefinition.nameLength)
-                       < std::string_view(rightDefinition.name.data(), rightDefinition.nameLength);
+                return std::string_view(firstDefinition.name.data(), firstDefinition.nameLength)
+                       < std::string_view(secondDefinition.name.data(),
+                                          secondDefinition.nameLength);
             });
         if (cancelled(cancel)) {
             return false;

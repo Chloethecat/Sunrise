@@ -1,6 +1,7 @@
-#include <Windows.h>
+﻿#include <Windows.h>
 
 #include <algorithm>
+#include <limits>
 
 #include "../../../../core/logging/log.h"
 #include "../../../../middleware/secure_channel/runtime.h"
@@ -8,7 +9,6 @@
 #include "../../../../state/activity/destination/definition.h"
 #include "../../../../state/activity/runtime.h"
 #include "../../../../state/runtime/runtime.h"
-#include "../../../../state/progression/seasonal_experience.h"
 #include "../internal.h"
 #include "../push/activity/activity_keepalive_push.h"
 #include "queuez_state_validation.h"
@@ -16,8 +16,7 @@
 namespace sunrise::server::bap::encrypted {
 namespace {
 
-constexpr std::uint8_t kSeasonalExperiencePresentationFailureLimit = 8;
-
+/** @return The peer's retained row overlay, or empty once its presentation hold has passed. */
 [[nodiscard]] std::span<const queuez::AcquisitionPresentationRow>
 active_acquisition_presentation_rows(const Session& session) noexcept {
     if (GetTickCount64() >= session.acquisitionPresentationUntilTick
@@ -28,20 +27,17 @@ active_acquisition_presentation_rows(const Session& session) noexcept {
         .first(session.acquisitionPresentationRowCount);
 }
 
-/** Drops only the visual XP notification after repeated failures; the XP is already durable. */
-void fail_seasonal_experience_presentation(Session& session) noexcept {
-    if (++session.pendingSeasonalExperienceFailures < kSeasonalExperiencePresentationFailureLimit) {
-        return;
-    }
+/** Drops the visual XP notification and republishes the account, which already holds the XP. */
+void drop_seasonal_experience_presentation(Session& session) noexcept {
     session.pendingSeasonalExperienceAmount = 0;
     session.pendingSeasonalExperienceMutationSerial = 0;
-    session.pendingSeasonalExperienceFailures = 0;
     bap::arm_account_resync_everywhere();
     core::log::write(core::log::Channel::server,
                      core::log::Level::warn,
-                     "ev=season_xp stage=deferred_presentation result=drop reason=retry_limit");
+                     "ev=season_xp stage=deferred_presentation result=drop");
 }
 
+/** @return The picked character, or null when the account is invalid or nothing is picked. */
 [[nodiscard]] const state::CharacterState*
 selected_character(const state::AccountState& account) noexcept {
     if (!state::account::valid(account)) {
@@ -67,7 +63,7 @@ selected_character(const state::AccountState& account) noexcept {
         core::log::write(core::log::Channel::server,
                          core::log::Level::warn,
                          "ev=queuez stage=world_acquisition result=fail reason=prepare");
-        bap::fail_world_reward_attempt();
+        bap::settle_world_reward();
         return false;
     }
     touchesScratch = true;
@@ -81,7 +77,7 @@ selected_character(const state::AccountState& account) noexcept {
         core::log::write(core::log::Channel::server,
                          core::log::Level::warn,
                          "ev=queuez stage=world_acquisition result=fail reason=stage");
-        bap::fail_world_reward_attempt();
+        bap::settle_world_reward();
         return false;
     }
     auto nextSendNonce = session.sendNonce;
@@ -89,7 +85,6 @@ selected_character(const state::AccountState& account) noexcept {
     if (!push::append_item_acquisition_notification(scratch,
                                                     acquisition,
                                                     pending,
-                                                    std::nullopt,
                                                     active_acquisition_presentation_rows(session),
                                                     session.sessionKey,
                                                     nextSendNonce,
@@ -99,14 +94,14 @@ selected_character(const state::AccountState& account) noexcept {
         core::log::write(core::log::Channel::server,
                          core::log::Level::warn,
                          "ev=queuez stage=world_acquisition result=fail reason=encode");
-        bap::fail_world_reward_attempt();
+        bap::settle_world_reward();
         return false;
     }
     if (!state::commit_item_acquisition(pending)) {
         core::log::write(core::log::Channel::server,
                          core::log::Level::warn,
                          "ev=queuez stage=world_acquisition result=fail reason=commit");
-        bap::fail_world_reward_attempt();
+        bap::settle_world_reward();
         return false;
     }
     std::copy_n(scratch.framed.begin(), framedSize, response.begin());
@@ -133,7 +128,7 @@ selected_character(const state::AccountState& account) noexcept {
         core::log::write(core::log::Channel::server,
                          core::log::Level::warn,
                          "ev=queuez stage=world_profile_acquisition result=fail reason=prepare");
-        bap::fail_world_reward_attempt();
+        bap::settle_world_reward();
         return false;
     }
     touchesScratch = true;
@@ -147,7 +142,7 @@ selected_character(const state::AccountState& account) noexcept {
         core::log::write(core::log::Channel::server,
                          core::log::Level::warn,
                          "ev=queuez stage=world_profile_acquisition result=fail reason=stage");
-        bap::fail_world_reward_attempt();
+        bap::settle_world_reward();
         return false;
     }
     auto nextSendNonce = session.sendNonce;
@@ -155,7 +150,6 @@ selected_character(const state::AccountState& account) noexcept {
     if (!push::append_profile_item_acquisition_notification(scratch,
                                                             acquisition,
                                                             pending,
-                                                            std::nullopt,
                                                             session.sessionKey,
                                                             nextSendNonce,
                                                             scratch.framed,
@@ -164,14 +158,14 @@ selected_character(const state::AccountState& account) noexcept {
         core::log::write(core::log::Channel::server,
                          core::log::Level::warn,
                          "ev=queuez stage=world_profile_acquisition result=fail reason=encode");
-        bap::fail_world_reward_attempt();
+        bap::settle_world_reward();
         return false;
     }
     if (!state::commit_profile_item_acquisition(pending)) {
         core::log::write(core::log::Channel::server,
                          core::log::Level::warn,
                          "ev=queuez stage=world_profile_acquisition result=fail reason=commit");
-        bap::fail_world_reward_attempt();
+        bap::settle_world_reward();
         return false;
     }
     std::copy_n(scratch.framed.begin(), framedSize, response.begin());
@@ -194,19 +188,16 @@ selected_character(const state::AccountState& account) noexcept {
     if (session.pendingSeasonalExperienceAmount <= 0) {
         return false;
     }
-    touchesScratch = true;
     if (session.pendingSeasonalExperienceMutationSerial == 0) {
         std::int32_t mutationSerial = 0;
+        // The row belongs to the picked character, so the gain waits for a pick.
         if (!state::reserve_selected_character_inventory_serial(mutationSerial)) {
-            core::log::write(core::log::Channel::server,
-                             core::log::Level::warn,
-                             "ev=season_xp stage=deferred_presentation result=fail reason=serial");
-            fail_seasonal_experience_presentation(session);
             return false;
         }
         session.pendingSeasonalExperienceMutationSerial =
             static_cast<std::uint32_t>(mutationSerial) + 1U;
     }
+    touchesScratch = true;
     auto nextSendNonce = session.sendNonce;
     std::size_t framedSize = 0;
     queuez::SessionState after{};
@@ -222,10 +213,7 @@ selected_character(const state::AccountState& account) noexcept {
             framedSize,
             after)
         || framedSize == 0 || framedSize > response.size()) {
-        core::log::write(core::log::Channel::server,
-                         core::log::Level::warn,
-                         "ev=season_xp stage=deferred_presentation result=fail");
-        fail_seasonal_experience_presentation(session);
+        drop_seasonal_experience_presentation(session);
         return false;
     }
     std::copy_n(scratch.framed.begin(), framedSize, response.begin());
@@ -235,7 +223,6 @@ selected_character(const state::AccountState& account) noexcept {
     session.queuez = after;
     session.pendingSeasonalExperienceAmount = 0;
     session.pendingSeasonalExperienceMutationSerial = 0;
-    session.pendingSeasonalExperienceFailures = 0;
     bap::arm_account_resync_elsewhere(session);
     return true;
 }
@@ -313,9 +300,8 @@ selected_character(const state::AccountState& account) noexcept {
     session.queuez = currentQueuez;
     session.accountResyncArmed = false;
     if (auxiliaryRefreshFailed) {
-        // Family 4 is the authoritative account update and has already produced a complete frame.
-        // Appearance/roster are independent derived views: retry them through their own deferred
-        // lane instead of withholding claims, lore, rewards, and objective progress behind them.
+        // Family 4 already produced a complete frame. Appearance and roster are derived views,
+        // so they retry in their own deferred lane rather than holding the account update.
         session.abilityRefreshDueTick = GetTickCount64();
         session.abilityRefreshArmed = true;
     }
@@ -376,18 +362,9 @@ selected_character(const state::AccountState& account) noexcept {
 }
 
 /**
- * Sends the owed family-two re-push once its delay has passed.
- *
- * The family-two snapshot is built when the peer subscribes, so the emblem it carries is only
- * correct as of that moment. An equip into the emblem slot leaves it stale, and the Client
- * resolves that account-keyed object as *the* account emblem -- so the display stays pinned to
- * whatever was worn at subscribe time while the equip itself keeps succeeding. This republishes
- * the live value against the root the subscribe was answered with.
- *
- * **One attempt, spent whether or not it lands.** The arm is cleared before the frame is built, so
- * a refusal cannot leave this re-arming every tick; this file records that a boot-shaped replay
- * repeated after the ladder has moved took the connection down.
- *
+ * Sends the family-two re-push the equip that moved the member record owes.
+ * An emblem equip leaves the subscribe-time snapshot stale, so the body is rebuilt against the
+ * root the subscribe was answered with. One attempt: the arm is spent before the frame is built.
  * @param session Auth, nonce and queuez state owned by the connection.
  * @param scratch Transform buffers owned by the lock.
  * @param response Whole-frame storage owned by the caller.
@@ -400,8 +377,7 @@ selected_character(const state::AccountState& account) noexcept {
                                                 std::span<std::byte> response,
                                                 std::size_t& written,
                                                 bool& touchesScratch) noexcept {
-    if (!session.socialRosterRepushArmed || session.socialRosterRepushRoot == 0
-        || GetTickCount64() < session.socialRosterRepushDueTick) {
+    if (!session.socialRosterRepushArmed || session.socialRosterRepushRoot == 0) {
         return false;
     }
     // Spent up front, so no path below can leave it owed.
@@ -504,6 +480,53 @@ selected_character(const state::AccountState& account) noexcept {
     return true;
 }
 
+/**
+ * Publishes the account unlock overrides an artifact purchase or reset changed.
+ * The arm is spent before the frame is built, so one committed change owes exactly one frame.
+ * @param session Auth, nonce and queuez state owned by the connection.
+ * @param scratch Transform buffers owned by the lock.
+ * @param response Whole-frame storage owned by the caller.
+ * @param written Gets the encoded notification size in bytes.
+ * @param touchesScratch Set before any scratch buffer is used.
+ * @return True when the family-five snapshot is published.
+ */
+[[nodiscard]] bool consume_artifact_family5_refresh(Session& session,
+                                                    Scratch& scratch,
+                                                    std::span<std::byte> response,
+                                                    std::size_t& written,
+                                                    bool& touchesScratch) noexcept {
+    if (!session.artifactRefreshArmed) {
+        return false;
+    }
+    session.artifactRefreshArmed = false;
+    if (session.queuez.family5Version == (std::numeric_limits<std::int32_t>::max)()) {
+        core::log::write(core::log::Channel::server,
+                         core::log::Level::warn,
+                         "ev=queuez stage=family5_refresh result=fail reason=version");
+        return false;
+    }
+    touchesScratch = true;
+    const std::int32_t version = session.queuez.family5Version + 1;
+    auto nextSendNonce = session.sendNonce;
+    std::size_t framedSize = 0;
+    if (!push::append_family5_override_notification(
+            scratch, version, session.sessionKey, nextSendNonce, scratch.framed, framedSize)
+        || framedSize == 0 || framedSize > response.size()) {
+        core::log::write(core::log::Channel::server,
+                         core::log::Level::warn,
+                         "ev=queuez stage=family5_refresh result=fail reason=frame");
+        return false;
+    }
+    std::copy_n(scratch.framed.begin(), framedSize, response.begin());
+    written = framedSize;
+    middleware::secure_channel::advance_nonce(nextSendNonce);
+    session.sendNonce = nextSendNonce;
+    session.queuez.family5Version = version;
+    // The Client rebuilds its evaluated unlock state only on the next armed freshness verdict.
+    bap::notify_investment_publication();
+    return true;
+}
+
 /** Re-publishes only the selected character after an artifact purchase. */
 [[nodiscard]] bool consume_artifact_family4_refresh(Session& session,
                                                     Scratch& scratch,
@@ -523,7 +546,7 @@ selected_character(const state::AccountState& account) noexcept {
     refresh.accountSoid = account.primarySoid;
     refresh.characterSoid = selected->soid;
     refresh.characterIndex = static_cast<std::size_t>(selected - account.characters.data());
-    refresh.beforeMask = state::progression::seasonal_experience::artifact_mod_mask();
+    refresh.beforeMask = state::artifact_mod_mask();
     refresh.afterMask = refresh.beforeMask;
     refresh.prepared = true;
 
@@ -531,11 +554,12 @@ selected_character(const state::AccountState& account) noexcept {
     auto nextSendNonce = session.sendNonce;
     std::size_t framedSize = 0;
     touchesScratch = true;
+    const auto presentationRows = active_acquisition_presentation_rows(session);
     if (!queuez::stage_equipment_swap(session.queuez, refresh.characterSoid, update)
         || !push::append_artifact_purchase_notification(scratch,
                                                         update,
                                                         refresh,
-                                                        active_acquisition_presentation_rows(session),
+                                                        presentationRows,
                                                         session.sessionKey,
                                                         nextSendNonce,
                                                         scratch.framed,
@@ -618,6 +642,11 @@ bool consume_deferred(Session& session,
     written = 0;
     if (!session.authenticated) {
         return false;
+    }
+    // The overrides go first: they are what the purchased mod unlocks, and the Family-4 companion
+    // waits on its own delay.
+    if (consume_artifact_family5_refresh(session, scratch, response, written, touchesScratch)) {
+        return true;
     }
     if (consume_artifact_family4_refresh(session, scratch, response, written, touchesScratch)) {
         return true;

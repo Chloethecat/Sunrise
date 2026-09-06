@@ -9,7 +9,6 @@ namespace sunrise::server::activity::mission::lua_vm::detail {
 
 // One locked view per peer read. A handle addresses a row of the peer set the host last published
 // and copies nothing, so every member read re-resolves that row before it answers.
-
 inline constexpr char kPeerCollectionMetatable[] = "sunrise.mission.peers";
 inline constexpr char kPeerViewMetatable[] = "sunrise.mission.peer_view";
 

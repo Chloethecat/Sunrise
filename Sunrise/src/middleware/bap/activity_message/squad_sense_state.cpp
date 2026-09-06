@@ -59,8 +59,9 @@ public:
                              std::uint8_t width,
                              bool optional = false) noexcept {
         if (values_.empty()
-            || !matches(values_.front(), schema, ordinal, occurrence, kind, width, optional))
+            || !matches(values_.front(), schema, ordinal, occurrence, kind, width, optional)) {
             return nullptr;
+        }
         const auto* value = &values_.front();
         values_ = values_.subspan(1);
         bits += (optional ? 1U : 0U) + value->width;
@@ -89,9 +90,15 @@ bool merge_scalars(Cursor& cursor, State& next) noexcept {
     for (std::uint16_t index = 0; index < kScalarCount; ++index) {
         const auto kind = index == kRealField ? ValueKind::real32 : ValueKind::signedInteger;
         const auto* value = cursor.take(kSchema, index, 0, kind, kScalarWidths[index], true);
-        if (value == nullptr) return false;
-        if (!value->present) continue;
-        if (value->unsignedValue >= (std::uint64_t{1} << kScalarWidths[index])) return false;
+        if (value == nullptr) {
+            return false;
+        }
+        if (!value->present) {
+            continue;
+        }
+        if (value->unsignedValue >= (std::uint64_t{1} << kScalarWidths[index])) {
+            return false;
+        }
         next.scalars[index] = {static_cast<std::uint32_t>(value->unsignedValue), true};
     }
     return true;
@@ -110,12 +117,14 @@ bool merge_required(Cursor& cursor, State& next) noexcept {
     const auto* field9 = cursor.take(kSchema, kField9, 0, ValueKind::boolean, 1);
     const auto* initialized = cursor.take(kSchema, kInitializedField, 0, ValueKind::boolean, 1);
     if (field6 == nullptr || field7 == nullptr || field8 == nullptr || field9 == nullptr
-        || initialized == nullptr)
+        || initialized == nullptr) {
         return false;
+    }
     if (field6->signedValue < -1 || field6->signedValue > 2 || field7->signedValue < -1
         || field7->signedValue > 6 || field8->unsignedValue > 1 || field9->unsignedValue > 1
-        || initialized->unsignedValue > 1)
+        || initialized->unsignedValue > 1) {
         return false;
+    }
     next.field6 = static_cast<std::int8_t>(field6->signedValue);
     next.field7 = static_cast<std::int8_t>(field7->signedValue);
     next.field8 = field8->unsignedValue != 0;
@@ -133,7 +142,9 @@ bool merge_required(Cursor& cursor, State& next) noexcept {
 bool merge_nested(Cursor& cursor, State& next) noexcept {
     if (cursor.next_schema(kListSchema)) {
         const auto* count = cursor.take(kListSchema, 0, 0, ValueKind::unsignedInteger, kCountWidth);
-        if (count == nullptr || count->unsignedValue > kCountCapacity) return false;
+        if (count == nullptr || count->unsignedValue > kCountCapacity) {
+            return false;
+        }
         next.count = static_cast<std::uint8_t>(count->unsignedValue);
         next.countsPresent = true;
         next.counts.fill(0);
@@ -141,8 +152,9 @@ bool merge_nested(Cursor& cursor, State& next) noexcept {
             const auto* value =
                 cursor.take(kCountSchema, 0, index, ValueKind::signedInteger, kSignedWidth);
             if (value == nullptr || value->signedValue < (std::numeric_limits<std::int32_t>::min)()
-                || value->signedValue > (std::numeric_limits<std::int32_t>::max)())
+                || value->signedValue > (std::numeric_limits<std::int32_t>::max)()) {
                 return false;
+            }
             next.counts[index] = static_cast<std::int32_t>(value->signedValue);
         }
     }
@@ -151,9 +163,15 @@ bool merge_nested(Cursor& cursor, State& next) noexcept {
         for (std::uint32_t index = 0; index < kRealCount; ++index) {
             const auto* value =
                 cursor.take(kRealSchema, 0, index, ValueKind::real32, kRealWidth, true);
-            if (value == nullptr) return false;
-            if (!value->present) continue;
-            if (value->unsignedValue >= (std::uint64_t{1} << kRealWidth)) return false;
+            if (value == nullptr) {
+                return false;
+            }
+            if (!value->present) {
+                continue;
+            }
+            if (value->unsignedValue >= (std::uint64_t{1} << kRealWidth)) {
+                return false;
+            }
             next.reals[index] = {static_cast<std::uint32_t>(value->unsignedValue), true};
         }
     }
@@ -173,8 +191,9 @@ bool merge(State& state,
            std::span<const DecodedValue> values) noexcept {
     if (object.status != sense_update::ObjectStatus::decoded || object.senseSchema != kSchema
         || !object.hasGeneration || object.firstValue > values.size()
-        || object.valueCount > values.size() - object.firstValue)
+        || object.valueCount > values.size() - object.firstValue) {
         return false;
+    }
     if (object.deltaBits == 1 && object.valueCount == 0) {
         state.counter = object.generationPlusOne;
         return true;
@@ -182,12 +201,14 @@ bool merge(State& state,
     Cursor cursor(values.subspan(object.firstValue, object.valueCount));
     State next = state;
     if (!merge_scalars(cursor, next) || !merge_required(cursor, next) || !merge_nested(cursor, next)
-        || cursor.bits != object.deltaBits)
+        || cursor.bits != object.deltaBits) {
         return false;
-    if (!next.initialized)
+    }
+    if (!next.initialized) {
         next = {};
-    else
+    } else {
         next.valid = true;
+    }
     next.counter = object.generationPlusOne;
     state = next;
     return true;
@@ -208,41 +229,59 @@ bool encode(const State& state,
     bytes = 0;
     bits = 0;
     if (!state.valid || !state.initialized || state.count > kCountCapacity || state.field6 < -1
-        || state.field6 > 2 || state.field7 < -1 || state.field7 > 6)
+        || state.field6 > 2 || state.field7 < -1 || state.field7 > 6) {
         return false;
+    }
     middleware::encoding::bits::Writer writer(output);
-    if (!writer.write(1, 1)) return false;
+    if (!writer.write(1, 1)) {
+        return false;
+    }
     for (std::size_t index = 0; index < kScalarCount; ++index) {
         const auto& value = state.scalars[index];
-        if (!writer.write(value.present, 1)) return false;
+        if (!writer.write(value.present, 1)) {
+            return false;
+        }
         if (value.present
             && (value.raw >= (std::uint64_t{1} << kScalarWidths[index])
-                || !writer.write(value.raw, kScalarWidths[index])))
+                || !writer.write(value.raw, kScalarWidths[index]))) {
             return false;
+        }
     }
     if (!writer.write(static_cast<std::uint32_t>(state.field6) + kByteBias, 2)
         || !writer.write(static_cast<std::uint32_t>(state.field7) + kByteBias, 3)
         || !writer.write(state.field8, 1) || !writer.write(state.field9, 1)
-        || !writer.write(state.initialized, 1) || !writer.write(state.countsPresent, 1))
+        || !writer.write(state.initialized, 1) || !writer.write(state.countsPresent, 1)) {
         return false;
-    if (state.countsPresent) {
-        if (!writer.write(state.count, kCountWidth)) return false;
-        for (std::size_t index = 0; index < state.count; ++index)
-            if (!writer.write(static_cast<std::uint32_t>(state.counts[index]) + kCountBias,
-                              kSignedWidth))
-                return false;
     }
-    if (!writer.write(state.realsPresent, 1)) return false;
-    if (state.realsPresent) {
-        for (const auto& value : state.reals) {
-            if (!writer.write(value.present, 1)) return false;
-            if (value.present
-                && (value.raw >= (std::uint64_t{1} << kRealWidth)
-                    || !writer.write(value.raw, kRealWidth)))
+    if (state.countsPresent) {
+        if (!writer.write(state.count, kCountWidth)) {
+            return false;
+        }
+        for (std::size_t index = 0; index < state.count; ++index) {
+            if (!writer.write(static_cast<std::uint32_t>(state.counts[index]) + kCountBias,
+                              kSignedWidth)) {
                 return false;
+            }
         }
     }
-    if (!writer.finish(bytes)) return false;
+    if (!writer.write(state.realsPresent, 1)) {
+        return false;
+    }
+    if (state.realsPresent) {
+        for (const auto& value : state.reals) {
+            if (!writer.write(value.present, 1)) {
+                return false;
+            }
+            if (value.present
+                && (value.raw >= (std::uint64_t{1} << kRealWidth)
+                    || !writer.write(value.raw, kRealWidth))) {
+                return false;
+            }
+        }
+    }
+    if (!writer.finish(bytes)) {
+        return false;
+    }
     bits = writer.bit_count();
     return true;
 }

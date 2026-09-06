@@ -10,6 +10,7 @@
 
 namespace sunrise::server::activity::mission::lua_vm::detail::world_api {
 
+// Metatable names that lock the generated-world userdata shapes a program may hold.
 inline constexpr char kWorldMetatable[] = "sunrise.sdk.world";
 inline constexpr char kWorldCollectionMetatable[] = "sunrise.sdk.world_collection";
 inline constexpr char kSquadAnchorCollectionMetatable[] = "sunrise.sdk.squad_anchors_owned";
@@ -78,7 +79,7 @@ struct WorldCoverageHandle final {
     std::uint32_t localRow{};
 };
 
-[[nodiscard]] bool current(const Impl& impl, const WorldGenerationIdentity& generation) noexcept;
+[[nodiscard]] bool current(const Impl& owner, const WorldGenerationIdentity& generation) noexcept;
 void push_vector(lua_State* state, std::span<const float> value);
 void push_world_id(lua_State* state,
                    const WorldGenerationIdentity& generation,

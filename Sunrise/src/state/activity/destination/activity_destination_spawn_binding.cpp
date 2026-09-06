@@ -71,8 +71,7 @@ void report_dropped(std::string_view name, std::uint32_t hash) noexcept {
 
 /**
  * Tests whether one bubble of a destination is named by a spawn row's bubble mask.
- * The mask is keyed by map-global bubble index, so the destination's own ordinal has to be
- * translated through its map-index table first.
+ * The mask is keyed by map-global bubble index, so translate through the map-index table first.
  * @param layout Destination row carrying the map-index table.
  * @param row Spawn-set row carrying the mask.
  * @param bubble Destination bubble ordinal.

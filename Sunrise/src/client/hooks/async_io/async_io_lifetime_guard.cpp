@@ -28,6 +28,7 @@ constexpr std::string_view kTailText =
     "48 8B 1D E6 3C 30 02 48 8B CB E8 66 89 00 00 48 8B 05 D7 3C 30 02 "
     "80 B8 62 6C 04 00 00 74 15 "
     "8B 08 33 D2 C6 80 62 6C 04 00 00";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kTail = signature<signature_length(kTailText)>(kTailText);
 
 /** The post-pump global reload begins after MOV RBX, MOV RCX, and CALL. */
@@ -40,8 +41,10 @@ constexpr std::array<std::byte, 7> kCachedOwner{std::byte{0x48},
                                                 std::byte{0x1F},
                                                 std::byte{0x40},
                                                 std::byte{0x00}};
+/** `mov rax, [rip+disp32]`, the first three bytes of the untouched native reload. */
 constexpr std::array<std::byte, 3> kNativeReloadPrefix{
     std::byte{0x48}, std::byte{0x8B}, std::byte{0x05}};
+/** Freeze retries before the patch is abandoned; a thread inside the bytes blocks the write. */
 constexpr std::size_t kHoldAttempts = 8;
 
 std::byte* g_reload{};

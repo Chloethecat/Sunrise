@@ -9,6 +9,8 @@
 namespace sunrise::server::activity::mission::lua_vm::detail {
 namespace {
 
+// Every payload Lua allocates must satisfy the widest fundamental alignment, and each block
+// carries its header directly in front of that payload.
 constexpr std::size_t kAlignment = alignof(std::max_align_t);
 constexpr std::size_t kHeaderSize = sizeof(ArenaBlock);
 
@@ -45,6 +47,7 @@ static_assert(kHeaderSize % kAlignment == 0);
            && block.size <= static_cast<std::size_t>(arena_end(arena) - begin - kHeaderSize);
 }
 
+/** @return The header of the block owning this payload, or null when the arena does not own it. */
 [[nodiscard]] ArenaBlock* block_for_pointer(Arena& arena, void* pointer) noexcept {
     if (pointer == nullptr) {
         return nullptr;

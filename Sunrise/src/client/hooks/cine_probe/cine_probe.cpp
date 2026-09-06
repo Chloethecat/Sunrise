@@ -33,63 +33,74 @@ using patterns::signature_length;
 constexpr std::string_view kTaskText =
     "48 89 5C 24 ? 48 89 7C 24 ? 55 48 8D AC 24 ? ? ? ? 48 81 EC ? ? ? ? 48 8B 05 ? ? ? ? 48 33 "
     "C4 48 89 85 ? ? ? ? 48 8D 79 30 83";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kTask = signature<signature_length(kTaskText)>(kTaskText);
 
 /** The start-latch read, `return cine[0x269]`. Its argument is the cinematic block. */
 constexpr std::string_view kStartedText = "0F B6 81 69 02 00 00 C3";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kStarted = signature<signature_length(kStartedText)>(kStartedText);
 
 /** The no-argument component-present check on the active cinematic object at manager `+512`. */
 constexpr std::string_view kComponentText =
     "48 83 EC ? E8 ? ? ? ? 48 8D 54 24 ? 48 8D 88 00 02 00 00 E8 ? ? ? ? 8B 44 24 ? 83 F8 FF 74 "
     "? 48 8B 15";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kComponent = signature<signature_length(kComponentText)>(kComponentText);
 
 /** The final readiness predicate: component, then each participant, then the nested tag. */
 constexpr std::string_view kFinalText =
     "40 55 56 41 56 48 8D 6C 24 ? 48 81 EC ? ? ? ? 4C 8B F2 48 8B F1 E8 ? ? ? ? 48 8D 55 ? 48 8D "
     "88 00 02 00 00 E8";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kFinal = signature<signature_length(kFinalText)>(kFinalText);
 
 /** The per-participant readiness test, called with the participant kind and the asked tag. */
 constexpr std::string_view kParticipantText =
     "48 89 5C 24 ? 55 48 8B EC 48 81 EC ? ? ? ? 0F 10 01 49 8B D8 44 8B C2 0F 10 49 10";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kParticipant = signature<signature_length(kParticipantText)>(kParticipantText);
 
 /** The tag test, a virtual at interface `+0xD8`. Both readiness predicates end in it. */
 constexpr std::string_view kTagTestText =
     "48 83 EC 28 4C 8B 01 48 8B 49 08 49 8B 40 18 4D 8B 8C 00 D8 00 00 00 8B 02 48 8D 54 24 30 "
     "89 44 24 30 41 FF D1 48 83 C4 28 C3";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kTagTest = signature<signature_length(kTagTestText)>(kTagTestText);
 
 /** The current-state getter, a virtual at interface `+0xC0`. Called directly, never detoured. */
 constexpr std::string_view kStateGetterText =
     "40 53 48 83 EC 20 C7 02 C5 9D 1C 81 48 8B DA 4C 8B 01 48 8D 54 24 ? 48 8B 49 08 49 8B 40 18 "
     "4D 8B 8C 00 C0 00 00 00 41 FF D1";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kStateGetter = signature<signature_length(kStateGetterText)>(kStateGetterText);
 
 /** The sequence-state request. It refuses without any log when no definition is bound. */
 constexpr std::string_view kSeqRequestText =
     "4C 8B DC 56 41 56 41 57 48 81 EC ? ? ? ? 48 8B 05 ? ? ? ? 48 33 C4 48 89 44 24 ? 4D 8B F0 "
     "4D 8B F9 44 8B 41 10 48 8B F1 41 83 F8 FF";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kSeqRequest = signature<signature_length(kSeqRequestText)>(kSeqRequestText);
 
 /** The cine-block mode-advance tick, dispatched once per frame by the object-message system. */
 constexpr std::string_view kTickText =
     "48 89 5C 24 ? 48 89 6C 24 ? 56 57 41 54 41 56 41 57 48 83 EC 20 44 8B 01 48 8B F1 41 8B C0 "
     "41 81 E0 FF 1F 00 00 C1 F8 0D 8B D0 4C 8B 76 08";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kTick = signature<signature_length(kTickText)>(kTickText);
 
 /** The time-gated variant pick, arm 2 of the mode-advance gate. Its second argument is the mode. */
 constexpr std::string_view kPickText =
     "48 8B C4 41 54 41 55 41 57 48 81 EC ? ? ? ? 4C 63 E2 45 32 ED 4C 8B F9 41 83 FC FF 0F 84 ? "
     "? ? ? 48 89 58 08";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kPick = signature<signature_length(kPickText)>(kPickText);
 
 /** The sequence-object alive test, arm 1 of the mode-advance gate. */
 constexpr std::string_view kAliveText =
     "83 B9 E0 00 00 00 00 7F 09 83 B9 F8 00 00 00 00 7E 0C F6 81 46 02 00 00 10 75 03 B0 01 C3 "
     "32 C0 C3";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kAlive = signature<signature_length(kAliveText)>(kAliveText);
 
 /** The playback-clock read the variant pick compares against the duration. */
@@ -98,6 +109,7 @@ constexpr std::string_view kClockText =
     "FC 0F 0F B7 C0 48 C1 EA 12 48 23 D0 48 8B 05 ? ? ? ? 48 C1 E2 06 48 03 10 44 0F AF 42 30 48 "
     "63 4A 34 41 8B C0 48 03 42 08 49 8B 51 08 48 23 48 08 48 2B C1 44 0F B6 84 10 D0 02 00 00 "
     "41 80 F8 FF 0F 84 ? ? ? ? 45 84 C0";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kClock = signature<signature_length(kClockText)>(kClockText);
 
 /** The duration read. Same body as the clock read until the final branch, so the tail decides. */
@@ -106,30 +118,35 @@ constexpr std::string_view kDurationText =
     "C0 48 C1 EA 12 48 23 D0 48 8B 05 ? ? ? ? 48 C1 E2 06 48 03 10 44 0F AF 42 30 48 63 4A 34 41 "
     "8B C0 48 03 42 08 49 8B 51 08 48 23 48 08 48 2B C1 44 0F B6 84 10 D0 02 00 00 41 80 F8 FF "
     "74 ? 45 84 C0 75";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kDuration = signature<signature_length(kDurationText)>(kDurationText);
 
 /** The mode-start heal: re-creates every entry of the mode whose instance no longer resolves. */
 constexpr std::string_view kHealText =
     "40 57 41 54 41 56 41 57 48 83 EC 38 44 8B 11 4C 8B F9 48 8B 49 08 45 8B C2 48 8B 05 ? ? ? "
     "? 41 81 E2 FF 1F 00 00 41 C1 F8 0D";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kHeal = signature<signature_length(kHealText)>(kHealText);
 
 /** The rig bind at attach. Writes both player handles; a false return is permanent. */
 constexpr std::string_view kBindText =
     "48 89 5C 24 ? 48 89 74 24 ? 48 89 7C 24 ? 41 56 48 83 EC 20 41 8B D9 41 8B F0 8B FA 4C 8B "
     "F1 E8 ? ? ? ? 8B 44 24 ? 41 89 86 A0 00 00 00 41 89 76 14 41 89 5E 04";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kBind = signature<signature_length(kBindText)>(kBindText);
 
 /** The sticky wipe on a failed state bind: target and current state both go to -1. */
 constexpr std::string_view kResetText =
     "40 53 48 83 EC 20 48 C7 81 A4 00 00 00 FF FF FF FF 48 8B D9 48 C7 81 AC 00 00 00 FF FF FF "
     "FF C7 81 B4 00 00 00 FF FF FF FF C7 81 B8 00 00 00 C5 9D 1C 81";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kReset = signature<signature_length(kResetText)>(kResetText);
 
 /** The fresh-instance create the heal calls once per entry it re-creates. */
 constexpr std::string_view kCreateText =
     "48 89 6C 24 ? 56 57 41 54 41 56 41 57 48 81 EC E0 02 00 00 48 8B 05 ? ? ? ? 48 33 C4 48 89 "
     "84 24 ? ? ? ? 44 8B 01 4C 8B F1 41 8B C0";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kCreate = signature<signature_length(kCreateText)>(kCreateText);
 
 /** Primary local-player object slot in the cinematic block. */

@@ -32,13 +32,18 @@ volatile LONG g_lane0DecodeFailures{};
 [[nodiscard]] bool load_entity_plans() noexcept {
     namespace plans = state::gameplay::rsat_decode_plans;
     try {
-        if (g_entitySessions.catalog == nullptr) return false;
+        if (g_entitySessions.catalog == nullptr) {
+            return false;
+        }
         plans::Digest sdk{};
         const auto identity = g_entitySessions.catalog->sdk_build_sha256();
-        if (identity.size() != sdk.size()) return false;
-        std::copy(identity.begin(), identity.end(), sdk.begin());
-        if (!g_entityPlans.load_installed(g_entitySessions.catalog->artifact_directory(), sdk))
+        if (identity.size() != sdk.size()) {
             return false;
+        }
+        std::copy(identity.begin(), identity.end(), sdk.begin());
+        if (!g_entityPlans.load_installed(g_entitySessions.catalog->artifact_directory(), sdk)) {
+            return false;
+        }
         g_entitySessions.resolvePlan = plans::resolve_plan;
         g_entitySessions.resolveSchemaLayout = plans::resolve_schema_layout;
         g_entitySessions.resolveFieldLayout = plans::resolve_field_layout;
@@ -219,7 +224,9 @@ void reset_lane0_adapter(const void*, std::uint64_t groupSessionId) noexcept {
                                           bool hasSequence,
                                           std::uint64_t ordinal,
                                           external::EntityBaselineMutation& mutation) noexcept {
-    if (context == nullptr) return false;
+    if (context == nullptr) {
+        return false;
+    }
     auto& store = *const_cast<external::CompositeEntitySessionStore*>(
         static_cast<const external::CompositeEntitySessionStore*>(context));
     AcquireSRWLockExclusive(&g_transportLock);
@@ -234,7 +241,9 @@ void reset_lane0_adapter(const void*, std::uint64_t groupSessionId) noexcept {
 commit_entity_adapter(const void* context,
                       const state::gameplay::entity_identity::Source& source,
                       const external::EntityBaselineMutation& mutation) noexcept {
-    if (context == nullptr) return false;
+    if (context == nullptr) {
+        return false;
+    }
     auto& store = *const_cast<external::CompositeEntitySessionStore*>(
         static_cast<const external::CompositeEntitySessionStore*>(context));
     AcquireSRWLockExclusive(&g_transportLock);
@@ -251,7 +260,9 @@ void observed_entity_adapter(const void* context,
                              bool hasPacketSequence,
                              std::uint64_t ordinal,
                              std::uint64_t tick) noexcept {
-    if (context == nullptr) return;
+    if (context == nullptr) {
+        return;
+    }
     AcquireSRWLockShared(&g_transportLock);
     const auto catalog =
         static_cast<const external::CompositeEntitySessionStore*>(context)->catalog;
@@ -270,14 +281,20 @@ void observed_entity_adapter(const void* context,
     std::unique_ptr<external::EntityBatch> filtered;
     if (batch.ignoredRecordMask != 0) {
         filtered.reset(new (std::nothrow) external::EntityBatch{});
-        if (!filtered) return;
+        if (!filtered) {
+            return;
+        }
         *filtered = batch;
         std::size_t count = 0;
-        for (std::size_t index = 0; index < external::entity_record_count(batch); ++index)
-            if ((batch.ignoredRecordMask & (1U << index)) == 0)
+        for (std::size_t index = 0; index < external::entity_record_count(batch); ++index) {
+            if ((batch.ignoredRecordMask & (1U << index)) == 0) {
                 external::entity_record_at(*filtered, count++) =
                     external::entity_record_at(batch, index);
-        if (count == 0) return;
+            }
+        }
+        if (count == 0) {
+            return;
+        }
         filtered->recordPresent = true;
         filtered->additionalRecordCount = static_cast<std::uint8_t>(count - 1);
         filtered->ignoredRecordMask = 0;
@@ -295,15 +312,18 @@ void advance_entity_epoch_adapter(const void* context,
                                   std::uint8_t expected,
                                   std::uint8_t next,
                                   std::uint64_t domain) noexcept {
-    if (context == nullptr) return;
+    if (context == nullptr) {
+        return;
+    }
     auto& store = *const_cast<external::CompositeEntitySessionStore*>(
         static_cast<const external::CompositeEntitySessionStore*>(context));
     AcquireSRWLockExclusive(&g_transportLock);
     const bool advanced =
         external::advance_scoped_entity_epoch(store, source, expected, next, domain);
     ReleaseSRWLockExclusive(&g_transportLock);
-    if (!advanced)
+    if (!advanced) {
         report(core::log::Level::debug, "ev=entity_identity stage=allocation_epoch result=stale");
+    }
 }
 
 /** Delivered retirements cannot erase a replacement that reused the same network slot. */
@@ -311,7 +331,9 @@ std::size_t retire_entity_adapter(
     const void* context,
     const state::gameplay::entity_identity::Source& source,
     std::span<const state::gameplay::entity_identity::RetiredLifetime> lifetimes) noexcept {
-    if (context == nullptr) return 0;
+    if (context == nullptr) {
+        return 0;
+    }
     auto& store = *const_cast<external::CompositeEntitySessionStore*>(
         static_cast<const external::CompositeEntitySessionStore*>(context));
     AcquireSRWLockExclusive(&g_transportLock);

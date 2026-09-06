@@ -49,9 +49,15 @@ static const EntityRecord* preceding_create(const BatchCodecContext& context,
                                             const EntityToken& token) noexcept {
     for (std::size_t index = context.prefixCount; index != 0; --index) {
         const auto& record = entity_record_at(*context.batch, index - 1);
-        if (record.token.slot != token.slot) continue;
-        if (record.token.incarnation != token.incarnation) return nullptr;
-        if ((record.flags & entityCreate) != 0) return &record;
+        if (record.token.slot != token.slot) {
+            continue;
+        }
+        if (record.token.incarnation != token.incarnation) {
+            return nullptr;
+        }
+        if ((record.flags & entityCreate) != 0) {
+            return &record;
+        }
     }
     return nullptr;
 }
@@ -73,7 +79,9 @@ static const TypePayload* batch_baseline(const BatchCodecContext& context,
                                          TypePayloadPart part,
                                          const TypePayload* baseline) noexcept {
     if (baseline == nullptr && part == TypePayloadPart::update) {
-        if (const auto* created = preceding_create(context, token)) return &created->baseline;
+        if (const auto* created = preceding_create(context, token)) {
+            return &created->baseline;
+        }
     }
     return baseline;
 }
@@ -379,8 +387,9 @@ prepare_batch(const TypePayloadCodec& codec, const EntityBatch& batch, BatchPlan
         }
     }
     if (batch.additionalRecordCount >= kEntityBatchCapacity
-        || (!batch.recordPresent && batch.additionalRecordCount != 0))
+        || (!batch.recordPresent && batch.additionalRecordCount != 0)) {
         return false;
+    }
     std::array<EntityToken, kEntityBatchCapacity> anchorTokens{};
     std::size_t anchorCount = 0, anchorIndex = 0;
     BatchCodecContext context{&codec, &batch};
@@ -388,29 +397,37 @@ prepare_batch(const TypePayloadCodec& codec, const EntityBatch& batch, BatchPlan
     for (std::size_t index = 0; index < entity_record_count(batch); ++index) {
         context.prefixCount = index;
         const auto& record = entity_record_at(batch, index);
-        if (!valid_record(record)) return false;
+        if (!valid_record(record)) {
+            return false;
+        }
         if (record.implicitToken) {
             if (record.anchorGroupStart) {
                 if (anchorIndex != anchorCount || codec.resolveAnchorGroup == nullptr
                     || !codec.resolveAnchorGroup(
                         codec.context, record.streamAnchor, anchorTokens, anchorCount)
-                    || anchorCount == 0 || anchorCount > anchorTokens.size())
+                    || anchorCount == 0 || anchorCount > anchorTokens.size()) {
                     return false;
+                }
                 anchorIndex = 0;
             }
             if (anchorIndex >= anchorCount || anchorTokens[anchorIndex].slot != record.token.slot
-                || anchorTokens[anchorIndex].incarnation != record.token.incarnation)
+                || anchorTokens[anchorIndex].incarnation != record.token.incarnation) {
                 return false;
+            }
             ++anchorIndex;
-        } else if (record.anchorGroupStart || anchorIndex != anchorCount)
+        } else if (record.anchorGroupStart || anchorIndex != anchorCount) {
             return false;
+        }
         if ((record.flags & entityCreate) != 0
             && !measure_payload(
-                effective, record, TypePayloadPart::baseline, plan[index].baselineBits))
+                effective, record, TypePayloadPart::baseline, plan[index].baselineBits)) {
             return false;
+        }
         if ((record.flags & entityUpdate) != 0
-            && !measure_payload(effective, record, TypePayloadPart::update, plan[index].updateBits))
+            && !measure_payload(
+                effective, record, TypePayloadPart::update, plan[index].updateBits)) {
             return false;
+        }
     }
     return anchorIndex == anchorCount;
 }
@@ -601,7 +618,9 @@ prepare_batch(const TypePayloadCodec& codec, const EntityBatch& batch, BatchPlan
     if ((candidate.flags & entityRemove) != 0 && !read_flag(reader, candidate.trailingState)) {
         return false;
     }
-    if (boundedTerminal && bodyRemaining - reader.remaining_bits() != bitLength) return false;
+    if (boundedTerminal && bodyRemaining - reader.remaining_bits() != bitLength) {
+        return false;
+    }
     if (!valid_record(candidate)) {
         return false;
     }
@@ -634,10 +653,14 @@ prepare_batch(const TypePayloadCodec& codec, const EntityBatch& batch, BatchPlan
         const auto& record = entity_record_at(batch, index);
         if (!record.implicitToken || record.anchorGroupStart) {
             if (!write_flag(writer, false) || !write_flag(writer, !record.implicitToken)
-                || !write_token(writer, record.implicitToken ? record.streamAnchor : record.token))
+                || !write_token(writer,
+                                record.implicitToken ? record.streamAnchor : record.token)) {
                 return false;
+            }
         }
-        if (!write_record(writer, effective, record, batch.currentCell, plan[index])) return false;
+        if (!write_record(writer, effective, record, batch.currentCell, plan[index])) {
+            return false;
+        }
     }
     return write_flag(writer, true);
 }
@@ -674,28 +697,41 @@ prepare_batch(const TypePayloadCodec& codec, const EntityBatch& batch, BatchPlan
     const auto effective = batch_codec(context);
     for (;;) {
         bool laneEnded = false;
-        if (!read_flag(reader, laneEnded)) return false;
-        if (laneEnded) break;
+        if (!read_flag(reader, laneEnded)) {
+            return false;
+        }
+        if (laneEnded) {
+            break;
+        }
         bool directToken = false;
         EntityToken selected{};
-        if (!read_flag(reader, directToken) || !read_token(reader, selected)) return false;
+        if (!read_flag(reader, directToken) || !read_token(reader, selected)) {
+            return false;
+        }
         std::array<EntityToken, kEntityBatchCapacity> tokens{};
         std::size_t count = 1;
         tokens[0] = selected;
         if (!directToken
             && (codec.resolveAnchorGroup == nullptr
                 || !codec.resolveAnchorGroup(codec.context, selected, tokens, count) || count == 0
-                || count > tokens.size()))
+                || count > tokens.size())) {
             return false;
-        if (count > kEntityBatchCapacity - recordCount) return false;
+        }
+        if (count > kEntityBatchCapacity - recordCount) {
+            return false;
+        }
         for (std::size_t index = 0; index < count; ++index) {
             context.prefixCount = recordCount;
             auto& record = entity_record_at(candidate, recordCount++);
             record.token = tokens[index];
-            if (!read_record(reader, effective, candidate.currentCell, record)) return false;
+            if (!read_record(reader, effective, candidate.currentCell, record)) {
+                return false;
+            }
             record.implicitToken = !directToken;
             record.anchorGroupStart = !directToken && index == 0;
-            if (record.anchorGroupStart) record.streamAnchor = selected;
+            if (record.anchorGroupStart) {
+                record.streamAnchor = selected;
+            }
         }
     }
     candidate.recordPresent = recordCount != 0;

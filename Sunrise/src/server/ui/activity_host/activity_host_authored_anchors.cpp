@@ -30,6 +30,7 @@ namespace tag_names = server::ui::activity_host::package_tag_names;
 namespace tables = middleware::content::packages::tables;
 namespace teleport = client::hooks::teleport;
 
+/** One shared table style, so every table on this page reads the same. */
 constexpr ImGuiTableFlags kTableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
                                         | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX
                                         | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit;
@@ -102,6 +103,7 @@ void draw_name(const catalog::Snapshot& snapshot, std::uint32_t row) noexcept {
 }
 
 [[nodiscard]] bool scope_matches(const catalog::Object& object, int scope) noexcept {
+    // Registry descriptor values the scope combo selects, in its entry order.
     constexpr std::array<std::uint16_t, 4> descriptors{0, 8, 24, 40};
     return scope <= 0 || scope >= static_cast<int>(descriptors.size())
            || object.registryDescriptor == descriptors[static_cast<std::size_t>(scope)];
@@ -615,6 +617,7 @@ void draw_table(const catalog::Snapshot& snapshot,
 void draw_positions(const catalog::Snapshot& snapshot,
                     const server::activity::host::InstanceSnapshot& instance,
                     const Filters& filters) noexcept {
+    // Combo entries in package-position source order; the index is the stored filter value.
     constexpr std::array<const char*, 3> sources{
         "All package positions", "Scenario-authored", "Container placements"};
     ImGui::SetNextItemWidth(180.0F);

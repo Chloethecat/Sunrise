@@ -98,10 +98,11 @@ struct InlineValue final {
     for (const std::string& value : source.accumulator.inlineNames) {
         values.push_back({content_hash(value), &value});
     }
-    std::sort(values.begin(), values.end(), [](const InlineValue& left, const InlineValue& right) {
-        return left.hash != right.hash ? left.hash < right.hash
-                                       : byte_less(*left.value, *right.value);
-    });
+    std::sort(
+        values.begin(), values.end(), [](const InlineValue& first, const InlineValue& second) {
+            return first.hash != second.hash ? first.hash < second.hash
+                                             : byte_less(*first.value, *second.value);
+        });
     rows.clear();
     bytes.clear();
     rows.reserve(values.size());
@@ -206,22 +207,22 @@ struct InlineValue final {
 }
 
 /** Orders occurrences exactly as the v9 builder does after global indices are linked. */
-[[nodiscard]] bool occurrence_less(const Occurrence& left, const Occurrence& right) noexcept {
-    if (left.scenarioIndex != right.scenarioIndex) {
-        return left.scenarioIndex < right.scenarioIndex;
+[[nodiscard]] bool occurrence_less(const Occurrence& first, const Occurrence& second) noexcept {
+    if (first.scenarioIndex != second.scenarioIndex) {
+        return first.scenarioIndex < second.scenarioIndex;
     }
-    if (left.bubbleIndex != right.bubbleIndex) {
-        return left.bubbleIndex < right.bubbleIndex;
+    if (first.bubbleIndex != second.bubbleIndex) {
+        return first.bubbleIndex < second.bubbleIndex;
     }
-    if (left.stateIndex != right.stateIndex) {
-        return left.stateIndex < right.stateIndex;
+    if (first.stateIndex != second.stateIndex) {
+        return first.stateIndex < second.stateIndex;
     }
-    std::string_view leftId{};
-    std::string_view rightId{};
-    if (!text_view(left.id, leftId) || !text_view(right.id, rightId)) {
+    std::string_view firstId{};
+    std::string_view secondId{};
+    if (!text_view(first.id, firstId) || !text_view(second.id, secondId)) {
         return false;
     }
-    return byte_less(leftId, rightId);
+    return byte_less(firstId, secondId);
 }
 
 /** Appends observed values for one hash without publishing v9 aliases. */
@@ -334,9 +335,10 @@ struct InlineValue final {
             return false;
         }
     }
-    std::sort(output.begin(), output.end(), [](const std::string& left, const std::string& right) {
-        return byte_less(left, right);
-    });
+    std::sort(
+        output.begin(), output.end(), [](const std::string& first, const std::string& second) {
+            return byte_less(first, second);
+        });
     output.erase(std::unique(output.begin(), output.end()), output.end());
     if (output.size() >= format::kAbsentIndex) {
         return false;
@@ -372,8 +374,8 @@ bool finish(Snapshot& output) noexcept {
     }
     try {
         std::vector<Object> objects = output.objects;
-        std::sort(objects.begin(), objects.end(), [](const Object& left, const Object& right) {
-            return left.objectTag < right.objectTag;
+        std::sort(objects.begin(), objects.end(), [](const Object& first, const Object& second) {
+            return first.objectTag < second.objectTag;
         });
         if (!valid_objects(objects)) {
             return false;

@@ -101,6 +101,11 @@ template <typename... Values>
     return true;
 }
 
+/**
+ * Appends one unsigned value in little-endian order.
+ * @tparam Value Unsigned type whose whole width is appended.
+ * @return False when the buffer cannot grow.
+ */
 template <typename Value>
 [[nodiscard]] bool append_little(std::vector<std::byte>& output, Value value) {
     static_assert(std::is_unsigned_v<Value>);
@@ -113,6 +118,7 @@ template <typename Value>
     return true;
 }
 
+/** Appends one length-prefixed hash input part. @return False when the buffer cannot grow. */
 [[nodiscard]] bool append_hash_part(std::vector<std::byte>& output, std::string_view value) {
     if (!append_little(output, static_cast<std::uint64_t>(value.size()))
         || value.size() > (std::numeric_limits<std::size_t>::max)() - output.size()) {
@@ -125,6 +131,7 @@ template <typename Value>
     return true;
 }
 
+/** Hashes one domain and its parts to lowercase hex. @return False when hashing fails. */
 [[nodiscard]] bool
 domain_hash(std::string_view domain, std::span<const std::string_view> parts, std::string& output) {
     output.clear();
@@ -145,6 +152,7 @@ domain_hash(std::string_view domain, std::span<const std::string_view> parts, st
     if (!crypto::hash(input, digest)) {
         return false;
     }
+    // Edge ids are published in lowercase hex.
     static constexpr std::array<char, 16> kHex{
         '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
     output.resize(digest.size() * 2U);
@@ -156,6 +164,7 @@ domain_hash(std::string_view domain, std::span<const std::string_view> parts, st
     return true;
 }
 
+/** Decodes one packed object reference; the result is invalid when any field is out of range. */
 [[nodiscard]] ObjectReference decode_reference(std::uint64_t raw) noexcept {
     ObjectReference output{};
     output.objectKey = static_cast<std::uint32_t>(raw);
@@ -477,8 +486,8 @@ template <typename Index> void canonicalize_scenarios(Index& index) {
             edge.targetDescriptors = target.descriptors;
             std::sort(edge.targetDescriptors.begin(),
                       edge.targetDescriptors.end(),
-                      [&graph](std::uint32_t left, std::uint32_t right) {
-                          return graph.descriptors[left].id < graph.descriptors[right].id;
+                      [&graph](std::uint32_t first, std::uint32_t second) {
+                          return graph.descriptors[first].id < graph.descriptors[second].id;
                       });
             edge.associationExact = associationExact;
             if (!edge_identity(topology,
@@ -510,13 +519,14 @@ template <typename Index> void canonicalize_scenarios(Index& index) {
             output.push_back(std::move(edge));
         }
     }
-    std::sort(output.begin(), output.end(), [](const PendingEdge& left, const PendingEdge& right) {
-        return left.id < right.id;
-    });
+    std::sort(
+        output.begin(), output.end(), [](const PendingEdge& first, const PendingEdge& second) {
+            return first.id < second.id;
+        });
     return std::adjacent_find(output.begin(),
                               output.end(),
-                              [](const PendingEdge& left, const PendingEdge& right) {
-                                  return left.id == right.id;
+                              [](const PendingEdge& first, const PendingEdge& second) {
+                                  return first.id == second.id;
                               })
            == output.end();
 }

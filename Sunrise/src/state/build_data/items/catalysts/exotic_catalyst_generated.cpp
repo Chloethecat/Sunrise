@@ -9,10 +9,9 @@ namespace {
 constexpr std::uint32_t kImageTimestamp = 0x5F43138BU;
 constexpr std::uint32_t kImageSize = 0x08A5EA00U;
 /**
- * Released Season 11 weapon hashes, in definition-hash order.
- * The installed build stages later catalyst sockets with the same item, socket, and visibility
- * fields as released catalysts. Runtime extraction can recover every relation except release date.
- * Default and completed plugs come from each exact socket pool, so they are not pinned here.
+ * Released weapon hashes, in definition-hash order. Later catalysts are staged in the same
+ * shape, so only this list separates a released catalyst from a staged one.
+ * TODO: extract release state from the packages and delete this table.
  */
 constexpr std::array<std::uint32_t, 45> kReleasedWeaponHashes{
     0x012248BAU, 0x14B465B2U, 0x17D8FEABU, 0x2E43BDEEU, 0x3092080DU, 0x4F5CCF1DU, 0x50384F32U,

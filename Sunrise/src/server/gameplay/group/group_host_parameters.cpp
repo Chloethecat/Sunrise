@@ -33,12 +33,13 @@ constexpr bool kHostMemberSelected = true;
     return std::uint64_t{1} << static_cast<std::uint8_t>(parameter);
 }
 
-constexpr std::uint64_t kActiveJoinControlsMask =
-    parameter_mask(wire::Parameter::activeJoinControls);
+/** The parameter bits this host carries in every group snapshot it publishes. */
 constexpr std::uint64_t kHostSelectedMask = parameter_mask(wire::Parameter::hostSelected);
 constexpr std::uint64_t kActivityHostMask = parameter_mask(wire::Parameter::activityHost);
 constexpr std::uint64_t kCurrentActivityMask = parameter_mask(wire::Parameter::currentActivity);
 constexpr std::uint64_t kPreviousActivityMask = parameter_mask(wire::Parameter::previousActivity);
+constexpr std::uint64_t kActiveJoinControlsMask =
+    parameter_mask(wire::Parameter::activeJoinControls);
 
 /** Resolves one session's exact descriptor nonce, falling back only when none was captured. */
 [[nodiscard]] bool selection_nonce(const state::activity::SessionBinding& session,

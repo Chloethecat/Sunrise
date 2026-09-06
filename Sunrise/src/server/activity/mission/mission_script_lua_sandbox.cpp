@@ -27,6 +27,7 @@ namespace {
         return 1;
     }
     luaL_checktype(state, 2, LUA_TTABLE);
+    // A metatable a script installs may not run code or weaken a reference at collection.
     constexpr std::array<const char*, 3> refused{"__gc", "__mode", "__close"};
     for (const char* const key : refused) {
         lua_pushstring(state, key);
@@ -145,6 +146,8 @@ void configure_generated_require(lua_State* state, const ProgramIdentity& identi
     lua_pop(state, 1);
     configure_generated_require(state, impl->identity);
 
+    // Globals a sandboxed program may not reach: host IO, collection control, and any
+    // iteration or protected call whose cost the instruction budget cannot charge.
     constexpr std::array<const char*, 13> removedGlobals{
         "collectgarbage",
         "dofile",
@@ -169,6 +172,7 @@ void configure_generated_require(lua_State* state, const ProgramIdentity& identi
     lua_setglobal(state, "pcall");
 
     lua_getglobal(state, LUA_STRLIBNAME);
+    // String functions whose pattern matching has no instruction bound.
     constexpr std::array<const char*, 5> removedStringFunctions{
         "dump", "find", "match", "gmatch", "gsub"};
     for (const char* const name : removedStringFunctions) {

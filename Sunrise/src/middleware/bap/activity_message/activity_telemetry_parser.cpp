@@ -73,7 +73,8 @@ constexpr std::uint8_t kWideWidth = 64;
     if (!read_peer_key(reader, record.machineKey) || !reader.read(kMemberIndexWidth, raw)) {
         return false;
     }
-    record.memberIndex = static_cast<std::int32_t>(raw) - kMemberIndexBias;
+    record.memberIndex =
+        static_cast<std::int32_t>(raw) - static_cast<std::int32_t>(kMemberIndexBias);
     if (!read_biased_i32(reader, record.field2) || !read_peer_key(reader, record.playerKey)
         || !reader.read(kWideWidth, account) || !reader.read(kWideWidth, character)
         || !reader.read(kWideWidth, record.groupMemberQword)) {

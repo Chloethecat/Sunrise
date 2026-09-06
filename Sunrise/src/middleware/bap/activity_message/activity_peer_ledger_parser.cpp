@@ -111,7 +111,8 @@ bool parse_connectivity_failure(std::span<const std::byte> input,
     if (!read_peer_key(reader, parsed.peerKey) || !reader.read(kFailureReasonWidth, reason)) {
         return false;
     }
-    parsed.failureReason = static_cast<std::int8_t>(reason) - kFailureReasonBias;
+    parsed.failureReason =
+        static_cast<std::int8_t>(static_cast<std::int8_t>(reason) - kFailureReasonBias);
     std::uint64_t padding = 0;
     if (!reader.read(static_cast<std::uint8_t>(reader.remaining_bits()), padding) || padding != 0
         || reader.remaining_bits() != 0) {

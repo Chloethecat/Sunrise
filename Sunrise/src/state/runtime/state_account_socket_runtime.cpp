@@ -163,9 +163,8 @@ void report_socket_plug(std::string_view stage,
         return fail("catalyst_lane_requires_atomic_change");
     }
 
-    // Ownership only matters where the plug is a finite supply the account draws down. A shader is
-    // one: pulled from Collections into a profile stack and spent on apply. An ornament is a
-    // permanent unlock, so requiring a stack for one would refuse a plug the account already has.
+    // Ownership matters only for a plug the account draws down, such as a shader stack. An
+    // ornament is a permanent unlock, so demanding a stack for one would refuse a held plug.
     const bool consumesStack =
         build_data::is_profile_action_source(plugDefinitionIndex, plugDefinition.bucketId)
         && build_data::is_consumed_on_apply(plugDefinitionIndex, plugDefinition.bucketId)
@@ -186,9 +185,8 @@ void report_socket_plug(std::string_view stage,
         return fail("materials");
     }
 
-    // Applying spends the stack the plug came from; the insertion cost above is a separate charge.
-    // The authored-cost path refuses any row carrying an instance key, and an action source always
-    // has one, so the row keeps its identity until the last unit goes and is released with it.
+    // Applying spends the plug's own stack; the insertion cost above is a separate charge. The
+    // row keeps its instance key until its last unit goes, and the key is released with it.
     if (consumesStack && !spend_plug_source(chargedAccount, plugDefinition.definitionHash)) {
         return fail("plug_stack");
     }
@@ -212,9 +210,8 @@ void report_socket_plug(std::string_view stage,
         return fail("already_applied");
     }
 
-    // A rolled socket's apply or re-roll plug is an action, not a plug: the service answered it
-    // by socketing a result plug from the socket's roll set. The requested plug still decides the
-    // pool check and the material charge above; only the plug that lands in the lane changes.
+    // A rolled socket's apply or re-roll plug is an action: the lane receives a result plug from
+    // the roll set. The requested plug still decides the pool check and the material charge.
     build_data::items::Definition grantedDefinition = plugDefinition;
     if (classify_rolled_plug(plugDefinition, targetDefinition, socketLane)
         == RolledPlugAction::roll) {
@@ -245,9 +242,8 @@ void report_socket_plug(std::string_view stage,
             || grantedDefinition.definitionHash != rolled.plugHash) {
             return fail("rolled_plug_roll");
         }
-        // A result that stands for another plug re-rolls that plug's lane as well: the service
-        // swapped the piece's stat perk to the one the result names, which is what moves the
-        // stats.
+        // A result standing for another plug re-rolls that plug's lane too, which is what moves
+        // the piece's stats.
         if (rolled.linkedPerkHash != 0) {
             build_data::items::Definition linkedDefinition{};
             if (rolled.linkedLane == socketLane || rolled.linkedLane >= detail.ordinarySocketCount

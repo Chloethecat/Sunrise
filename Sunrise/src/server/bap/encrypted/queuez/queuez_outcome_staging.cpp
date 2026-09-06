@@ -2,11 +2,11 @@
 
 #include <algorithm>
 #include <limits>
-#include <optional>
 
 #include "../../../../core/logging/log.h"
 #include "../../../../middleware/datagen/family4/loadout/loadout_resolver.h"
 #include "../../../../middleware/secure_channel/runtime.h"
+#include "queuez_reward_staging.h"
 #include "queuez_state_validation.h"
 
 namespace sunrise::server::bap::encrypted::queuez {
@@ -69,134 +69,10 @@ namespace {
     return true;
 }
 
-/** Stages the character upsert and appended resident an item acquisition promised. */
-[[nodiscard]] bool
-stage_item_acquisition_push(Scratch& scratch,
-                            const SessionState& before,
-                            const ItemAcquisition& acquisition,
-                            const state::PendingItemAcquisition& pending,
-                            std::optional<std::uint16_t> pendingSeasonReward,
-                            std::span<const AcquisitionPresentationRow> presentationRows,
-                            std::span<const std::byte, state::kAesKeySize> key,
-                            std::array<std::byte, state::kBapNonceSize>& nonce,
-                            std::span<std::byte> response,
-                            std::size_t& written,
-                            SessionState& after) noexcept {
-    const std::size_t appendedIndex = before.family4ResidentCount;
-    bool preservedManifest = acquisition.after.family4ResidentCount == appendedIndex + 1U;
-    for (std::size_t index = 0; preservedManifest && index < appendedIndex; ++index) {
-        preservedManifest = acquisition.after.family4Residents[index].objectSoid
-                                == before.family4Residents[index].objectSoid
-                            && acquisition.after.family4Residents[index].definitionId
-                                   == before.family4Residents[index].definitionId;
-    }
-    if (!valid(acquisition.after) || !preservedManifest
-        || acquisition.accountSoid != pending.accountSoid
-        || acquisition.characterSoid != pending.characterSoid
-        || acquisition.acquiredInstanceSoid != pending.acquiredInstanceSoid
-        || acquisition.updatesAccount != (pending.profileChanged || pendingSeasonReward.has_value())
-        || acquisition.accountSoid != before.family4RootSoid
-        || acquisition.after.family4RootSoid != before.family4RootSoid
-        || before.family4ResidentCount >= before.family4Residents.size()
-        || before.family4Version == (std::numeric_limits<std::int32_t>::max)()
-        || acquisition.after.family4Version != before.family4Version + 1
-        || acquisition.after.family4Residents[appendedIndex].objectSoid
-               != acquisition.acquiredInstanceSoid
-        || acquisition.after.family4Residents[appendedIndex].definitionId
-               != acquisition.itemInstanceDefinitionId
-        || !push::append_item_acquisition_notification(scratch,
-                                                       acquisition,
-                                                       pending,
-                                                       pendingSeasonReward,
-                                                       presentationRows,
-                                                       key,
-                                                       nonce,
-                                                       response,
-                                                       written)) {
-        return false;
-    }
-    middleware::secure_channel::advance_nonce(nonce);
-    after = acquisition.after;
-    return true;
-}
-
-/** Stages the account upsert and optional manifest append a profile acquisition promised. */
-[[nodiscard]] bool
-stage_profile_item_acquisition_push(Scratch& scratch,
-                                    const SessionState& before,
-                                    const ProfileItemAcquisition& acquisition,
-                                    const state::PendingProfileItemAcquisition& pending,
-                                    std::optional<std::uint16_t> pendingSeasonReward,
-                                    std::span<const std::byte, state::kAesKeySize> key,
-                                    std::array<std::byte, state::kBapNonceSize>& nonce,
-                                    std::span<std::byte> response,
-                                    std::size_t& written,
-                                    SessionState& after) noexcept {
-    const std::size_t priorResidentCount = before.family4ResidentCount;
-    const std::size_t expectedResidentCount =
-        priorResidentCount + static_cast<std::size_t>(acquisition.appendedResident);
-    bool validManifest = expectedResidentCount <= acquisition.after.family4Residents.size()
-                         && acquisition.after.family4ResidentCount == expectedResidentCount;
-    for (std::size_t index = 0; validManifest && index < priorResidentCount; ++index) {
-        validManifest = acquisition.after.family4Residents[index].objectSoid
-                            == before.family4Residents[index].objectSoid
-                        && acquisition.after.family4Residents[index].definitionId
-                               == before.family4Residents[index].definitionId;
-    }
-    std::size_t priorProfileResidentMatches = 0;
-    for (std::size_t index = 0; index < priorResidentCount; ++index) {
-        const ResidentObject& resident = before.family4Residents[index];
-        priorProfileResidentMatches += static_cast<std::size_t>(
-            acquisition.acquiredInstanceSoid != 0
-            && resident.objectSoid == acquisition.acquiredInstanceSoid
-            && resident.definitionId == acquisition.itemInstanceDefinitionId);
-    }
-    const bool appendedResidentValid =
-        !acquisition.appendedResident
-        || (priorResidentCount < acquisition.after.family4Residents.size()
-            && acquisition.after.family4Residents[priorResidentCount].objectSoid
-                   == acquisition.acquiredInstanceSoid
-            && acquisition.after.family4Residents[priorResidentCount].definitionId
-                   == acquisition.itemInstanceDefinitionId
-            && priorProfileResidentMatches == 0);
-    const bool sourceIdentityValid =
-        acquisition.actionSource == (acquisition.acquiredInstanceSoid != 0)
-        && (acquisition.actionSource
-                ? acquisition.itemInstanceDefinitionId != 0 && appendedResidentValid
-                      && (acquisition.appendedResident || priorProfileResidentMatches == 1)
-                : acquisition.itemInstanceDefinitionId == 0 && !acquisition.appendedResident
-                      && priorProfileResidentMatches == 0);
-    if (!valid(acquisition.after) || !validManifest || !sourceIdentityValid
-        || acquisition.accountSoid != pending.accountSoid
-        || acquisition.acquiredInstanceSoid != pending.acquiredInstanceSoid
-        || acquisition.actionSource != pending.actionSource
-        || acquisition.appendedResident != (pending.appended && pending.actionSource)
-        || acquisition.accountSoid != before.family4RootSoid || before.family4ResidentCount == 0
-        || acquisition.accountDefinitionId != before.family4Residents.front().definitionId
-        || acquisition.after.family4RootSoid != before.family4RootSoid
-        || before.family4Version == (std::numeric_limits<std::int32_t>::max)()
-        || acquisition.after.family4Version != before.family4Version + 1
-        || !push::append_profile_item_acquisition_notification(
-            scratch, acquisition, pending, pendingSeasonReward, key, nonce, response, written)) {
-        return false;
-    }
-    middleware::secure_channel::advance_nonce(nonce);
-    after = acquisition.after;
-    return true;
-}
-
 /**
  * Says whether equipping into one slot changes what the family-two member record publishes.
- *
- * That record carries two fields fed by different slots. The emblem comes from the emblem slot,
- * and the light is the mean of the eight gear slots -- the three weapons and the five armour
- * pieces -- so an armour swap moves the record just as surely as an emblem swap does. Gating on
- * the emblem alone would leave the roster row holding a stale light until the next subscribe.
- *
- * Everything else is excluded because it moves neither field: a ghost, sparrow, ship, subclass,
- * clan banner, emote or finisher carries no Power in this season and is not the emblem, so a
- * swap there would spend a re-push republishing an unchanged object.
- *
+ * The record carries the emblem and the mean light of the eight gear slots, so those nine slots
+ * move it and no other slot does.
  * @param equipmentSlotIndex Authored semantic slot the equip targeted.
  * @return True when the slot feeds the emblem or the light the member record carries.
  */
@@ -234,11 +110,7 @@ bool stage_service_outcome(Scratch& scratch,
     const auto* currentActivity = transaction_if<CurrentActivityTransaction>(outcome);
     const auto* artifactPurchase = transaction_if<ArtifactPurchaseTransaction>(outcome);
     const auto* socket = transaction_if<SocketPlugTransaction>(outcome);
-    const auto* itemAcquisition = transaction_if<ItemAcquisitionTransaction>(outcome);
-    const auto* profileAcquisition = transaction_if<ProfileItemAcquisitionTransaction>(outcome);
     const auto* itemDismantle = transaction_if<ItemDismantleTransaction>(outcome);
-    const auto* recordRewardGrant = transaction_if<RecordRewardGrantTransaction>(outcome);
-    const auto* seasonPassReward = transaction_if<SeasonPassRewardTransaction>(outcome);
     const auto presentationRows = preserveAcquisitionPresentation
                                       ? acquisitionPresentationRows
                                       : std::span<const AcquisitionPresentationRow>{};
@@ -376,16 +248,7 @@ bool stage_service_outcome(Scratch& scratch,
         }
         const auto& pending = *artifactPurchase->pending;
         const EquipmentSwap& update = artifactPurchase->update;
-        bool preservedManifest = update.after.family4ResidentCount == before.family4ResidentCount;
-        for (std::size_t index = 0; preservedManifest && index < before.family4ResidentCount;
-             ++index) {
-            preservedManifest = update.after.family4Residents[index].objectSoid
-                                    == before.family4Residents[index].objectSoid
-                                && update.after.family4Residents[index].definitionId
-                                       == before.family4Residents[index].definitionId;
-        }
-        if (!valid(update.after) || !preservedManifest
-            || update.characterSoid != pending.characterSoid
+        if (!valid(update.after) || update.characterSoid != pending.characterSoid
             || update.after.family4RootSoid != before.family4RootSoid
             || before.family4Version == (std::numeric_limits<std::int32_t>::max)()
             || update.after.family4Version != before.family4Version + 1
@@ -406,16 +269,7 @@ bool stage_service_outcome(Scratch& scratch,
         }
         const auto& pending = *itemState->pending;
         const EquipmentSwap& update = itemState->update;
-        bool preservedManifest = update.after.family4ResidentCount == before.family4ResidentCount;
-        for (std::size_t index = 0; preservedManifest && index < before.family4ResidentCount;
-             ++index) {
-            preservedManifest = update.after.family4Residents[index].objectSoid
-                                    == before.family4Residents[index].objectSoid
-                                && update.after.family4Residents[index].definitionId
-                                       == before.family4Residents[index].definitionId;
-        }
-        if (!valid(update.after) || !preservedManifest
-            || update.characterSoid != pending.characterSoid
+        if (!valid(update.after) || update.characterSoid != pending.characterSoid
             || update.after.family4RootSoid != before.family4RootSoid
             || before.family4Version == (std::numeric_limits<std::int32_t>::max)()
             || update.after.family4Version != before.family4Version + 1
@@ -432,16 +286,7 @@ bool stage_service_outcome(Scratch& scratch,
         // Only the selected character's own body changes. The reply is the client's task
         // completion and this upsert rides behind it in the same write.
         const EquipmentSwap& update = currentActivity->update;
-        bool preservedManifest = update.after.family4ResidentCount == before.family4ResidentCount;
-        for (std::size_t index = 0; preservedManifest && index < before.family4ResidentCount;
-             ++index) {
-            preservedManifest = update.after.family4Residents[index].objectSoid
-                                    == before.family4Residents[index].objectSoid
-                                && update.after.family4Residents[index].definitionId
-                                       == before.family4Residents[index].definitionId;
-        }
-        if (!valid(update.after) || !preservedManifest
-            || update.characterSoid != currentActivity->pending.characterSoid
+        if (!valid(update.after) || update.characterSoid != currentActivity->pending.characterSoid
             || update.after.family4RootSoid != before.family4RootSoid
             || before.family4Version == (std::numeric_limits<std::int32_t>::max)()
             || update.after.family4Version != before.family4Version + 1
@@ -463,20 +308,14 @@ bool stage_service_outcome(Scratch& scratch,
         }
         const auto& pending = *subclassSelection->pending;
         const SubclassSelection& selection = subclassSelection->update;
-        bool preservedManifest =
-            selection.after.family4ResidentCount == before.family4ResidentCount;
         std::size_t targetMatches = 0;
-        for (std::size_t index = 0; preservedManifest && index < before.family4ResidentCount;
-             ++index) {
+        for (std::size_t index = 0; index < before.family4ResidentCount; ++index) {
             const ResidentObject& resident = before.family4Residents[index];
-            const ResidentObject& staged = selection.after.family4Residents[index];
-            preservedManifest = staged.objectSoid == resident.objectSoid
-                                && staged.definitionId == resident.definitionId;
             targetMatches += static_cast<std::size_t>(
                 resident.objectSoid == selection.subclassInstanceSoid
                 && resident.definitionId == selection.itemInstanceDefinitionId);
         }
-        if (!valid(selection.after) || !preservedManifest || targetMatches != 1
+        if (!valid(selection.after) || targetMatches != 1
             || selection.accountSoid != pending.accountSoid
             || selection.characterSoid != pending.characterSoid
             || selection.subclassInstanceSoid != pending.subclassInstanceSoid
@@ -504,16 +343,10 @@ bool stage_service_outcome(Scratch& scratch,
         }
         const auto& pending = *socket->pending;
         const SocketPlug& socketPlug = socket->update;
-        bool preservedManifest =
-            socketPlug.after.family4ResidentCount == before.family4ResidentCount;
         std::size_t accountMatches = 0;
         std::size_t targetMatches = 0;
-        for (std::size_t index = 0; preservedManifest && index < before.family4ResidentCount;
-             ++index) {
+        for (std::size_t index = 0; index < before.family4ResidentCount; ++index) {
             const ResidentObject& resident = before.family4Residents[index];
-            const ResidentObject& staged = socketPlug.after.family4Residents[index];
-            preservedManifest = staged.objectSoid == resident.objectSoid
-                                && staged.definitionId == resident.definitionId;
             targetMatches += static_cast<std::size_t>(
                 resident.objectSoid == socketPlug.targetInstanceSoid
                 && resident.definitionId == socketPlug.itemInstanceDefinitionId);
@@ -521,8 +354,8 @@ bool stage_service_outcome(Scratch& scratch,
                                                        && resident.definitionId
                                                               == socketPlug.accountDefinitionId);
         }
-        if (!valid(socketPlug.after) || !preservedManifest || accountMatches != 1
-            || targetMatches != 1 || socketPlug.accountSoid != pending.accountSoid
+        if (!valid(socketPlug.after) || accountMatches != 1 || targetMatches != 1
+            || socketPlug.accountSoid != pending.accountSoid
             || socketPlug.characterSoid != pending.characterSoid
             || socketPlug.targetInstanceSoid != pending.targetInstanceSoid
             || socketPlug.updatesAccount != pending.profileChanged
@@ -543,141 +376,9 @@ bool stage_service_outcome(Scratch& scratch,
         if (pending.targetEquipped) {
             armsAbilityRefresh = true;
         }
-    } else if (itemAcquisition != nullptr) {
-        // Body processing staged this exact manifest append before encoding the response version.
-        // The character and new item objects must both fit or the State insertion is not committed.
-        if (itemAcquisition->pending == nullptr
-            || !stage_item_acquisition_push(scratch,
-                                            before,
-                                            itemAcquisition->update,
-                                            *itemAcquisition->pending,
-                                            std::nullopt,
-                                            presentationRows,
-                                            key,
-                                            nonce,
-                                            response,
-                                            written,
-                                            after)) {
-            core::log::write(core::log::Channel::server,
-                             core::log::Level::warn,
-                             "ev=queuez stage=acquire result=fail");
-            return false;
-        }
-    } else if (profileAcquisition != nullptr) {
-        // A source-backed profile append creates one dependency before the account starts naming
-        // it. Existing stacks and non-actionable currency rows preserve the complete manifest.
-        if (profileAcquisition->pending == nullptr
-            || !stage_profile_item_acquisition_push(scratch,
-                                                    before,
-                                                    profileAcquisition->update,
-                                                    *profileAcquisition->pending,
-                                                    std::nullopt,
-                                                    key,
-                                                    nonce,
-                                                    response,
-                                                    written,
-                                                    after)) {
-            core::log::write(core::log::Channel::server,
-                             core::log::Level::warn,
-                             "ev=queuez stage=profile_acquire result=fail");
-            return false;
-        }
-    } else if (recordRewardGrant != nullptr) {
-        if (recordRewardGrant->pending == nullptr) {
-            return false;
-        }
-        if (!push::append_record_reward_notification(scratch,
-                                                     before,
-                                                     recordRewardGrant->update,
-                                                     *recordRewardGrant->pending,
-                                                     std::nullopt,
-                                                     presentationRows,
-                                                     key,
-                                                     nonce,
-                                                     response,
-                                                     written)) {
-            core::log::write(core::log::Channel::server,
-                             core::log::Level::warn,
-                             "ev=queuez stage=record_reward result=fail");
-            return false;
-        }
-        middleware::secure_channel::advance_nonce(nonce);
-        after = recordRewardGrant->update.after;
-    } else if (seasonPassReward != nullptr) {
-        if (seasonPassReward->pending == nullptr) {
-            return false;
-        }
-        const auto& pending = *seasonPassReward->pending;
-        bool staged = false;
-        if (const auto* itemUpdate = std::get_if<ItemAcquisition>(&seasonPassReward->update)) {
-            if (const auto* itemPending =
-                    std::get_if<state::PendingItemAcquisition>(&pending.grant)) {
-                staged = stage_item_acquisition_push(scratch,
-                                                     before,
-                                                     *itemUpdate,
-                                                     *itemPending,
-                                                     pending.rewardIndex,
-                                                     presentationRows,
-                                                     key,
-                                                     nonce,
-                                                     response,
-                                                     written,
-                                                     after);
-            }
-        } else if (const auto* profileUpdate =
-                       std::get_if<ProfileItemAcquisition>(&seasonPassReward->update)) {
-            if (const auto* profilePending =
-                    std::get_if<state::PendingProfileItemAcquisition>(&pending.grant)) {
-                staged = stage_profile_item_acquisition_push(scratch,
-                                                             before,
-                                                             *profileUpdate,
-                                                             *profilePending,
-                                                             pending.rewardIndex,
-                                                             key,
-                                                             nonce,
-                                                             response,
-                                                             written,
-                                                             after);
-            }
-        } else if (const auto* bundle =
-                       std::get_if<state::PendingDirectItemBundle>(&pending.grant)) {
-            staged = push::append_season_pass_package_notification(scratch,
-                                                                   before,
-                                                                   *bundle,
-                                                                   pending.rewardIndex,
-                                                                   presentationRows,
-                                                                   key,
-                                                                   nonce,
-                                                                   response,
-                                                                   written,
-                                                                   after);
-            if (staged) {
-                middleware::secure_channel::advance_nonce(nonce);
-            }
-        } else if (const auto* resourceUpdate =
-                       std::get_if<RecordRewardGrant>(&seasonPassReward->update)) {
-            if (const auto* resources =
-                    std::get_if<state::PendingRecordRewardGrant>(&pending.grant)) {
-                staged = push::append_record_reward_notification(scratch,
-                                                                 before,
-                                                                 *resourceUpdate,
-                                                                 *resources,
-                                                                 pending.rewardIndex,
-                                                                 presentationRows,
-                                                                 key,
-                                                                 nonce,
-                                                                 response,
-                                                                 written);
-                if (staged) {
-                    middleware::secure_channel::advance_nonce(nonce);
-                    after = resourceUpdate->after;
-                }
-            }
-        }
-        if (!staged) {
-            core::log::write(core::log::Channel::server,
-                             core::log::Level::warn,
-                             "ev=ws2400 stage=queuez_reward result=fail");
+    } else if (owns_reward_outcome(outcome)) {
+        if (!stage_reward_outcome(
+                scratch, before, outcome, presentationRows, key, nonce, response, written, after)) {
             return false;
         }
     } else if (outcome.hasArtifactReset) {
@@ -711,40 +412,19 @@ bool stage_service_outcome(Scratch& scratch,
             return true;
         }
     } else if (itemDismantle != nullptr) {
-        // A dismantle removes exactly one resident while preserving the relative order of every
-        // survivor. The character after-image and empty release descriptor must fit together or
-        // the State removal is not committed.
+        // The character after-image and the empty release descriptor must fit together or the
+        // State removal is not committed.
         if (itemDismantle->pending == nullptr) {
             return false;
         }
         const auto& pending = *itemDismantle->pending;
         const ItemDismantle& dismantle = itemDismantle->update;
-        bool compactedManifest =
-            before.family4ResidentCount != 0
-            && dismantle.after.family4ResidentCount + 1U == before.family4ResidentCount;
-        std::size_t afterIndex = 0;
         std::size_t removedCount = 0;
-        for (std::size_t beforeIndex = 0;
-             compactedManifest && beforeIndex < before.family4ResidentCount;
-             ++beforeIndex) {
-            const ResidentObject& resident = before.family4Residents[beforeIndex];
-            if (resident.objectSoid == dismantle.dismantledInstanceSoid) {
-                compactedManifest = resident.definitionId == dismantle.itemInstanceDefinitionId;
-                ++removedCount;
-                continue;
-            }
-            if (afterIndex >= dismantle.after.family4ResidentCount) {
-                compactedManifest = false;
-                break;
-            }
-            const ResidentObject& survivor = dismantle.after.family4Residents[afterIndex++];
-            compactedManifest = survivor.objectSoid == resident.objectSoid
-                                && survivor.definitionId == resident.definitionId;
+        for (std::size_t index = 0; index < before.family4ResidentCount; ++index) {
+            removedCount += static_cast<std::size_t>(before.family4Residents[index].objectSoid
+                                                     == dismantle.dismantledInstanceSoid);
         }
-        compactedManifest = compactedManifest && removedCount == 1U
-                            && afterIndex == dismantle.after.family4ResidentCount;
-
-        if (!valid(dismantle.after) || !compactedManifest
+        if (!valid(dismantle.after) || removedCount != 1U
             || dismantle.accountSoid != pending.accountSoid
             || dismantle.characterSoid != pending.characterSoid
             || dismantle.dismantledInstanceSoid != pending.dismantledInstanceSoid

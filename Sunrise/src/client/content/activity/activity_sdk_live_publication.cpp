@@ -14,11 +14,14 @@
 namespace sunrise::client::content::activity::sdk_generation::live_publication {
 namespace {
 
+/** Names of the staging, backup and marker paths; recovery scans for exactly these. */
 constexpr std::wstring_view kStageSuffix = L"\\.activity-sdk-stage.%08lX.%08lX.%08lX";
 constexpr std::wstring_view kBackupSuffix = L".activity-sdk-backup";
 constexpr std::wstring_view kPendingMarkerSuffix = L"\\.activity-sdk-publication.pending";
 constexpr std::wstring_view kCommittedMarkerSuffix = L"\\.activity-sdk-publication.committed";
+/** Distinct stage directories tried before giving up on a name collision. */
 constexpr std::size_t kAllocationAttempts = 16;
+/** Marker file magic, bytes "ASP1"; a file without it is not ours. */
 constexpr std::uint32_t kMarkerMagic = 0x31505341U;
 
 volatile LONG g_sequence{};
@@ -69,34 +72,45 @@ struct Marker final {
     }
 }
 
-/** Names the first drive-path component which is not an ordinary directory. */
-[[nodiscard]] const char* ordinary_ancestry_reason(const std::wstring& directory) noexcept {
-    if (directory.size() < 3U || directory[1] != L':' || directory[2] != L'\\') {
-        return "path_shape";
+/** Which drive-path component, if any, is not an ordinary directory. */
+enum class Ancestry : std::uint8_t {
+    ready,
+    pathShape,
+    driveRoot,
+    ancestor,
+};
+
+/** A drive path is at least a letter, a colon and a separator. */
+constexpr std::size_t kDrivePrefixLength = 3;
+
+/** Reports the first drive-path component which is not an ordinary directory. */
+[[nodiscard]] Ancestry ordinary_ancestry(const std::wstring& directory) noexcept {
+    if (directory.size() < kDrivePrefixLength || directory[1] != L':' || directory[2] != L'\\') {
+        return Ancestry::pathShape;
     }
-    const bool rootOrdinary = ordinary_directory(directory.substr(0, 3U).c_str());
-    std::size_t cursor = 3U;
+    const bool rootOrdinary = ordinary_directory(directory.substr(0, kDrivePrefixLength).c_str());
+    std::size_t cursor = kDrivePrefixLength;
     while (cursor < directory.size()) {
         const std::size_t separator = directory.find(L'\\', cursor);
         const std::size_t end = separator == std::wstring::npos ? directory.size() : separator;
         const std::wstring prefix = directory.substr(0, end);
         if (!ordinary_directory(prefix.c_str())) {
-            return "ancestor";
+            return Ancestry::ancestor;
         }
         if (separator == std::wstring::npos) {
             break;
         }
         cursor = separator + 1U;
     }
-    return rootOrdinary ? "ready" : "drive_root";
+    return rootOrdinary ? Ancestry::ready : Ancestry::driveRoot;
 }
 
-/** Wine maps its synthetic drive root as a reparse point; real path components remain checked. */
-[[nodiscard]] bool ordinary_ancestry_allowed(const char* reason) noexcept {
-    if (std::string_view(reason) == "ready") {
+/** Wine maps its synthetic drive root as a reparse point; real path components stay checked. */
+[[nodiscard]] bool ordinary_ancestry_allowed(Ancestry ancestry) noexcept {
+    if (ancestry == Ancestry::ready) {
         return true;
     }
-    if (std::string_view(reason) != "drive_root") {
+    if (ancestry != Ancestry::driveRoot) {
         return false;
     }
     const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
@@ -105,8 +119,7 @@ struct Marker final {
 
 /** Resolves one existing ordinary directory and rejects reparse points in every ancestor. */
 [[nodiscard]] bool canonical_directory(const wchar_t* input, std::wstring& output) noexcept {
-    return full_path(input, output)
-           && ordinary_ancestry_allowed(ordinary_ancestry_reason(output));
+    return full_path(input, output) && ordinary_ancestry_allowed(ordinary_ancestry(output));
 }
 
 /** Compares two complete Windows path components without locale-sensitive folding. */

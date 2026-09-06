@@ -60,6 +60,7 @@ static void log_observation(const identities::Source& source,
                             const identities::Observation& observation,
                             identities::Result result) noexcept {
     if (result != identities::Result::updated && result != identities::Result::unchanged) {
+        // One name per identities::Result, in declaration order.
         constexpr const char* resultNames[]{"created",
                                             "updated",
                                             "removed",
@@ -89,11 +90,12 @@ static void log_observation(const identities::Source& source,
             observation.metadata.rsatTag,
             static_cast<unsigned>(observation.metadata.hasRsat || observation.metadata.hasSquad
                                   || observation.metadata.hasPlayerBroadcast));
-        if (count > 0)
+        if (count > 0) {
             core::log::write(
                 core::log::Channel::server,
                 core::log::Level::debug,
                 {line.data(), std::min(static_cast<std::size_t>(count), line.size() - 1)});
+        }
     }
 }
 
@@ -110,13 +112,17 @@ void observe(const identities::Source& source,
              std::uint64_t allocationDomain) noexcept {
     namespace external = middleware::gameplay::external;
     const auto count = external::entity_record_count(batch);
-    if (count == 0 || count > identities::kObservationBatchCapacity) return;
+    if (count == 0 || count > identities::kObservationBatchCapacity) {
+        return;
+    }
     std::array<identities::Observation, identities::kObservationBatchCapacity> observations{};
     std::array<identities::Result, identities::kObservationBatchCapacity> results{};
     std::array<std::size_t, identities::kObservationBatchCapacity> retained{};
     std::size_t admitted = 0;
     for (std::size_t index = 0; index < count; ++index) {
-        if ((batch.ignoredRecordMask & (1U << index)) != 0) continue;
+        if ((batch.ignoredRecordMask & (1U << index)) != 0) {
+            continue;
+        }
         retained[admitted] = index;
         auto& observation = observations[admitted++];
         observation = make_observation(external::entity_record_at(batch, index),
@@ -130,15 +136,18 @@ void observe(const identities::Source& source,
         observation.hasAllocationEpoch = hasAllocationEpoch;
         observation.allocationDomain = allocationDomain;
     }
-    if (admitted == 0) return;
+    if (admitted == 0) {
+        return;
+    }
     AcquireSRWLockExclusive(&g_lock);
     const auto result = g_store.observe_batch(
         source, std::span(observations).first(admitted), std::span(results).first(admitted));
-    for (std::size_t index = 0; index < admitted; ++index)
+    for (std::size_t index = 0; index < admitted; ++index) {
         log_observation(source,
                         external::entity_record_at(batch, retained[index]),
                         observations[index],
                         result == identities::Result::updated ? results[index] : result);
+    }
     ReleaseSRWLockExclusive(&g_lock);
 }
 
@@ -214,7 +223,9 @@ std::size_t retire(const identities::Source& source,
     return result;
 }
 void PublicationLease::release() noexcept {
-    if (!held_) return;
+    if (!held_) {
+        return;
+    }
     held_ = false;
     ReleaseSRWLockShared(&g_lock);
 }
@@ -236,18 +247,22 @@ identities::Result begin_publication(const identities::Source& source,
     std::array<identities::Source, identities::kSourceCapacity> sources{};
     const auto count = g_store.sources(source.activitySessionId, source.activityRevision, sources);
     std::size_t matches = 0;
-    for (std::size_t index = 0; index < (std::min)(count, sources.size()); ++index)
-        if (sources[index].activityClientGeneration == source.activityClientGeneration) ++matches;
+    for (std::size_t index = 0; index < (std::min)(count, sources.size()); ++index) {
+        if (sources[index].activityClientGeneration == source.activityClientGeneration) {
+            ++matches;
+        }
+    }
     if (count > sources.size() || matches != 1) {
         output.clear();
         ReleaseSRWLockShared(&g_lock);
         return identities::Result::invalid;
     }
     const auto result = g_store.snapshot_source(source, output);
-    if (result == identities::Result::unchanged)
+    if (result == identities::Result::unchanged) {
         lease.held_ = true;
-    else
+    } else {
         ReleaseSRWLockShared(&g_lock);
+    }
     return result;
 }
 } // namespace sunrise::server::gameplay::entity_identities

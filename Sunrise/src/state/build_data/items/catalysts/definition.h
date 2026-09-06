@@ -26,6 +26,7 @@ struct CompletionValue {
     std::uint16_t index{};
     std::int32_t minimum{};
 
+    /** @return True when the index and the minimum both match. */
     [[nodiscard]] constexpr bool operator==(const CompletionValue& other) const noexcept = default;
 };
 
@@ -36,6 +37,7 @@ struct CompletionRequirements {
     std::uint8_t flagCount{};
     std::uint8_t valueCount{};
 
+    /** @return True when every stored flag and value matches. */
     [[nodiscard]] constexpr bool
     operator==(const CompletionRequirements& other) const noexcept = default;
 };
@@ -45,8 +47,9 @@ struct ObjectiveCompletion {
     std::uint16_t definitionIndex{kUnavailableObjectiveIndex};
     std::int32_t value{};
 
-    [[nodiscard]] constexpr bool operator==(const ObjectiveCompletion& other) const noexcept =
-        default;
+    /** @return True when the objective and its value both match. */
+    [[nodiscard]] constexpr bool
+    operator==(const ObjectiveCompletion& other) const noexcept = default;
 };
 
 /** Release status from the build-scoped Season 11 availability data. */

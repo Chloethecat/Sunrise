@@ -4,7 +4,6 @@
 #include <cstdio>
 
 #include "../../../core/logging/log.h"
-
 #include "../../../middleware/content/packages/tables/roster_intersection.h"
 #include "internal.h"
 
@@ -108,10 +107,7 @@ void publish_per_bubble(Walk& walk, layouts::Definition& row) noexcept {
 
 /**
  * Names every candidate and every intersection key one destination reached, and what became of it.
- * A candidate that is admitted by the slot filter and then lost in the split leaves no trace: the
- * row simply publishes fewer groups, which reads the same as a destination that never had them.
- * raid_beanstalk admits objects in bubbles 8 through 13 and 15 but publishes per-bubble groups for
- * only two of them, and nothing today says which step drops the rest.
+ * A candidate lost in the split leaves no other trace; the row just publishes fewer groups.
  * @param walk Accumulator for one destination, before the split consumes it.
  * @param row Destination row being published into.
  */
@@ -142,9 +138,7 @@ void report_publish(const Walk& walk, const layouts::Definition& row) noexcept {
     // top-level, a partial mask is per-bubble, and zero is dropped.
     for (std::size_t index = 0; index < seen.keyCount; ++index) {
         const std::uint64_t mask = seen.masks[index];
-        const char* fate = mask == 0                 ? "none"
-                           : mask == seen.observedSets ? "all"
-                                                       : "partial";
+        const char* fate = mask == 0 ? "none" : mask == seen.observedSets ? "all" : "partial";
         // A key with no candidate cannot publish: the split matches candidates against keys.
         bool paired = false;
         for (std::size_t candidate = 0; candidate < walk.candidateCount; ++candidate) {

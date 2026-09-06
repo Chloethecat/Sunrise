@@ -35,7 +35,7 @@ bool prepare_initial(
     const bool hasDefinition =
         middleware::datagen::object_id(subscription.familyType, slotIndex, objectId);
     bool success = false;
-    if (subscription.familyType == kSocialRosterFamilyType && hasDefinition) {
+    if (subscription.familyType == queuez::kSocialRosterFamilyType && hasDefinition) {
         success = prepare_social_roster(scratch, subscription, objectId, reservation, staged);
     } else if (subscription.familyType == kRosterFamilyType && hasDefinition) {
         success = prepare_roster(scratch, subscription, objectId, reservation, staged);

@@ -12,15 +12,21 @@
 namespace sunrise::client::hooks::graphics::renderer::world_lines {
 namespace {
 
+/** One frame's fixed vertex and primitive budget; the writer drops anything past it. */
 constexpr std::size_t kMaximumVertices = 32'768;
 constexpr std::size_t kMaximumPrimitiveInputs = 4'096;
+/** Segment range a sphere is drawn with, clamped so a caller cannot exhaust the budget. */
 constexpr std::uint16_t kMinimumSphereSegments = 8;
 constexpr std::uint16_t kMaximumSphereSegments = 64;
+/** A direction shorter than this has no usable normal, so the segment is skipped. */
 constexpr float kLengthEpsilon = 0.000001F;
+/** Pi at float precision, for the sphere and circle sweeps. */
 constexpr float kPi = 3.14159265358979323846F;
+/** Line width range in pixels; the geometry shader expands to this thickness. */
 constexpr float kMinimumLineWidth = 1.0F;
 constexpr float kMaximumLineWidth = 16.0F;
 
+/** Vertex stage: camera-relative expansion input for the line geometry stage. */
 constexpr char kVertexShader[] = R"(
 cbuffer CameraConstants : register(b0)
 {
@@ -57,6 +63,7 @@ VertexOutput main(VertexInput input)
 }
 )";
 
+/** Geometry stage: expands each line into a screen-facing quad of the requested width. */
 constexpr char kGeometryShader[] = R"(
 cbuffer CameraConstants : register(b0)
 {
@@ -123,6 +130,7 @@ void main(line VertexOutput input[2], inout TriangleStream<VertexOutput> output)
 }
 )";
 
+/** Pixel stage: writes the vertex colour with no lighting or depth test of its own. */
 constexpr char kPixelShader[] = R"(
 struct PixelInput
 {
@@ -352,6 +360,7 @@ void append_box(Writer& writer, const Box& box) noexcept {
         {box.maximum[0], box.maximum[1], box.maximum[2]},
         {box.minimum[0], box.maximum[1], box.maximum[2]},
     }};
+    // The twelve box edges as corner index pairs, in the corner order built above.
     constexpr std::array<std::array<std::size_t, 2>, 12> edges{{
         {0, 1},
         {1, 2},
@@ -546,6 +555,7 @@ void append_sphere(Writer& writer, const Sphere& sphere) noexcept {
                                            nullptr,
                                            &g_resources.pixelShader);
     }
+    // Input layout must match the Vertex struct: three floats, then a packed RGBA byte quad.
     constexpr std::array<D3D11_INPUT_ELEMENT_DESC, 2> layout{{
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -676,6 +686,7 @@ target_size(ID3D11RenderTargetView* target, float& width, float& height) noexcep
     context->Unmap(g_resources.constantBuffer, 0);
 
     const D3D11_VIEWPORT viewport{0.0F, 0.0F, width, height, 0.0F, 1.0F};
+    // Blend state uses no constant factor, and the one vertex stream starts at its first element.
     constexpr float blendFactor[4]{};
     constexpr UINT stride = sizeof(Vertex);
     constexpr UINT offset = 0;

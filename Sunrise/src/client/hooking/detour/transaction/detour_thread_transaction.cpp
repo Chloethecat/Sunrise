@@ -14,8 +14,7 @@ namespace {
 constexpr std::size_t kProtectedCodeLimit = 64;
 
 /** Access an enlisted thread is opened with. Detours reads and rewrites its context. */
-constexpr DWORD kEnlistAccess =
-    THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT;
+constexpr DWORD kEnlistAccess = THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT;
 /** Access the walk needs of a thread it only names. Asking for less refuses fewer threads. */
 constexpr DWORD kWalkAccess = THREAD_QUERY_LIMITED_INFORMATION;
 /** The walk is over. NtGetNextThread reports it as a failure status, so it is checked by value. */
@@ -32,25 +31,26 @@ using NextThread = LONG(NTAPI*)(HANDLE process,
                                 ULONG flags,
                                 HANDLE* next) noexcept;
 
+/** Resolved walk entry, or null once ntdll has been asked and did not export it. */
+NextThread g_nextThread{};
+/** Set after the one lookup, so a build without the export is not asked again. */
+bool g_nextThreadResolved{false};
+
 /**
  * Finds ntdll's own thread walk, once.
- * The documented walk is a Toolhelp snapshot, which enumerates every thread on the system to
- * reach this process's fifty: it costs about 25 ms a pass, twice a transaction, and a boot holds
- * one transaction per hook. This walk stays inside the process and costs about 0.08 ms. It is
- * not a documented export, so a build that does not have it keeps the snapshot instead.
+ * Never a function-local static: this runs with other threads suspended, so a guard would deadlock.
  * @return The entry point, or null when ntdll does not export it.
  */
 [[nodiscard]] NextThread next_thread_entry() noexcept {
-    static const NextThread entry = [] {
-        const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-        if (ntdll == nullptr) {
-            return static_cast<NextThread>(nullptr);
+    if (!g_nextThreadResolved) {
+        g_nextThreadResolved = true;
+        if (const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll"); ntdll != nullptr) {
+            // The cast is through a void function pointer because GetProcAddress returns FARPROC.
+            g_nextThread = reinterpret_cast<NextThread>(
+                reinterpret_cast<void*>(GetProcAddress(ntdll, "NtGetNextThread")));
         }
-        // The cast is through a void function pointer because GetProcAddress returns FARPROC.
-        return reinterpret_cast<NextThread>(
-            reinterpret_cast<void*>(GetProcAddress(ntdll, "NtGetNextThread")));
-    }();
-    return entry;
+    }
+    return g_nextThread;
 }
 
 /** Exact executable range described by one x64 unwind record. */
@@ -97,11 +97,8 @@ enum class PassResult {
 
 /**
  * Enlists one process thread by id, unless this transaction already holds it.
- * The handle comes from OpenThread rather than from whatever named the id. A thread Windows will
- * not open here is one the transaction must leave alone: handing Detours a thread it cannot
- * suspend sets a transaction-wide pending error that fails every later attach and that nothing
- * can clear. The set of enlisted threads therefore stays exactly what a snapshot pass would take,
- * whichever walk found them.
+ * A thread OpenThread refuses must be left alone: a thread Detours cannot suspend sets a
+ * transaction-wide pending error that fails every later attach and that nothing can clear.
  * @param threads Receives the handle, which stays suspended until the transaction ends.
  * @param threadId Candidate process thread id.
  * @param currentThreadId The calling thread, which the transaction enlists separately.
@@ -136,11 +133,8 @@ enum class PassResult {
 
 /**
  * Says whether a thread is still running.
- * The walk reaches threads that have already exited: their objects outlive them for as long as
- * something holds a handle, and the kernel thread list still carries them. A snapshot never
- * reports one. Detours suspends a thread the moment it is handed over, suspending an exited
- * thread fails, and that failure is a transaction-wide error that nothing can clear, so an exited
- * thread has to be dropped before it is offered.
+ * The walk still reaches exited threads and a snapshot does not. Detours suspends on handover,
+ * and suspending an exited thread spends the whole transaction, so drop it before offering it.
  * @param thread Handle opened with at least THREAD_QUERY_LIMITED_INFORMATION.
  * @return True only when the thread is confirmed running.
  */
@@ -222,8 +216,7 @@ enum class PassResult {
 
 /**
  * Enlists every unseen process thread in one pass, by whichever walk this build has.
- * A partly finished process walk leaves its handles enlisted and the snapshot completes the pass:
- * both dedupe on the thread id, so the fallback cannot enlist a thread twice.
+ * Both walks dedupe on the thread id, so the snapshot fallback cannot enlist a thread twice.
  * @param threads Receives handles that stay suspended until the transaction ends.
  * @param foundUnseen Receives true when this pass saw any new thread.
  * @return True when the pass completed without a hard failure.

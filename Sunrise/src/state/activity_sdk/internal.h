@@ -1,10 +1,27 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
+#include <span>
 
 #include "runtime.h"
 
 namespace sunrise::state::activity_sdk {
+
+/** @return True when one row reference belongs to the mapped section. */
+template <typename Value>
+[[nodiscard]] bool owns(std::span<const Value> values, const Value& value) noexcept {
+    if (values.empty()) {
+        return false;
+    }
+    const std::uintptr_t first = reinterpret_cast<std::uintptr_t>(values.data());
+    const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(&value);
+    if (address < first) {
+        return false;
+    }
+    const std::uintptr_t offset = address - first;
+    return offset < values.size_bytes() && offset % sizeof(Value) == 0;
+}
 
 /** Loads the fixed module-relative pack against one catalog-authorized identity. */
 [[nodiscard]] bool load(void* module,

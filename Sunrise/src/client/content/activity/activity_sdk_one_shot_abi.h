@@ -5,7 +5,9 @@
 
 namespace sunrise::client::content::activity::sdk_generation::one_shot::abi {
 
+// Progress and result records carry this ABI version.
 inline constexpr std::uint32_t kVersion = 1;
+// Digests are SHA-256, so 32 bytes.
 inline constexpr std::size_t kDigestSize = 32;
 
 struct Progress final {

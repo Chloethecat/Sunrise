@@ -482,13 +482,13 @@ bool write(const wchar_t* path,
     }
     std::sort(canonicalScenarios.begin(),
               canonicalScenarios.end(),
-              [](const ScenarioRecord& left, const ScenarioRecord& right) {
-                  return left.scenarioTag < right.scenarioTag;
+              [](const ScenarioRecord& row, const ScenarioRecord& other) {
+                  return row.scenarioTag < other.scenarioTag;
               });
     std::sort(canonicalRoots.begin(),
               canonicalRoots.end(),
-              [](const ActivityRootRecord& left, const ActivityRootRecord& right) {
-                  return left.activityRootTag < right.activityRootTag;
+              [](const ActivityRootRecord& row, const ActivityRootRecord& other) {
+                  return row.activityRootTag < other.activityRootTag;
               });
     std::sort(canonicalVariants.begin(), canonicalVariants.end(), variant_less);
 

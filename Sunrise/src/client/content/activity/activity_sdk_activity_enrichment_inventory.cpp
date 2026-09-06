@@ -232,7 +232,7 @@ bool build(const reader::Source& source,
             if (!copy_text(name, row.displayName)) {
                 return false;
             }
-            pending.rows.push_back(std::move(row));
+            pending.rows.push_back(row);
         }
         if (!validate(pending) || !validate_source(activities, pending)) {
             return false;
@@ -261,6 +261,7 @@ bool validate_source(const activity_inventory::Snapshot& source,
 
 /** Adds display names and the exact content-join flag to an otherwise closed native topology. */
 bool apply(const Snapshot& enrichment, topology_inventory::Snapshot& topology) noexcept {
+    // The exact-join bits a topology row must already carry before names are added.
     constexpr std::uint32_t beforeContent = format::kActivityRootExact
                                             | format::kActivityScenarioExact
                                             | format::kActivityExtractionPresent;

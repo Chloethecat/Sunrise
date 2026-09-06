@@ -37,6 +37,7 @@ constexpr float kLineThickness = 2.0F;
 
 /** Converts one selected source colour to ImGui's packed layout. */
 [[nodiscard]] ImU32 marker_color(MarkerColor channels) noexcept {
+    // Channels are held 0..1 and drawn as bytes.
     constexpr float scale = 255.0F;
     for (float& channel : channels) {
         channel = std::isfinite(channel) ? std::clamp(channel, 0.0F, 1.0F) : 1.0F;

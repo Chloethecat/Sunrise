@@ -22,17 +22,10 @@ constexpr std::array<std::uint32_t, 3> kTrackerPlugHashes{
     2'302'094'943U,
     38'912'240U,
 };
-/** Enhanced Sword Scavenger already carries the correct Arrivals leg-armour socket relation. */
-constexpr std::uint32_t kArrivalsLegReferenceHash = 3'213'968'579U;
-/** Plug category declared by Enhanced Sword Scavenger and required by leg-armour sockets. */
-constexpr std::uint32_t kArrivalsLegCategoryHash = 0x7DDE0206U;
-/** Arrivals artifact records whose leg-armour label conflicts with their shipped general pool. */
-constexpr std::array<std::uint32_t, 4> kArrivalsLegModHashes{
-    3'465'659'109U, // Flourishing Blade
-    3'465'659'111U, // Automatic Prize
-    3'465'659'104U, // Dimensional Tithes
-    3'465'659'105U, // Ascendant Bounty
-};
+using socket_plugs::kArrivalsLegCategoryHash;
+using socket_plugs::kArrivalsLegModHashes;
+using socket_plugs::kArrivalsLegReferenceHash;
+
 /** Native ordinary socket type whose choices are the synthetic tracker set. */
 constexpr std::uint16_t kTrackerSocketType = 518;
 /** FNV-1a constants make pool fingerprints stable and cheap. */
@@ -72,6 +65,12 @@ struct VisitorContext {
 
 } // namespace
 
+/**
+ * Reads one acquisition gate per native socket type from the socket-type table.
+ * @param blob Scratch storage for the socket-type table.
+ * @param output Receives one gate per socket type; cleared first.
+ * @return False when the table shape or a row extent is invalid.
+ */
 bool read_catalyst_acquisition_gates(const reader::Source& source,
                                      reader::Scratch& scratch,
                                      std::span<const std::byte> root,
@@ -123,6 +122,12 @@ bool read_catalyst_acquisition_gates(const reader::Source& source,
     return true;
 }
 
+/**
+ * Reads the build-defined completion value of every native objective.
+ * @param blob Scratch storage for the objective table.
+ * @param output Receives one value per objective index; cleared on failure.
+ * @return False when the table class, count or a row extent is invalid.
+ */
 bool read_catalyst_objective_values(const reader::Source& source,
                                     reader::Scratch& scratch,
                                     std::span<const std::byte> root,
@@ -220,11 +225,13 @@ bool SocketPlugBuild::prepare(
             }
         }
     }
+    // The correction needs the reference item and all four mods. A package without them keeps its
+    // own pools; the rest of the domain is unaffected.
     if (arrivalsLegReference_ == UINT16_MAX
         || std::find(arrivalsLegMembers_.begin(), arrivalsLegMembers_.end(), UINT16_MAX)
                != arrivalsLegMembers_.end()) {
-        release();
-        return false;
+        arrivalsLegReference_ = UINT16_MAX;
+        arrivalsLegMembers_.fill(UINT16_MAX);
     }
     return true;
 }
@@ -243,18 +250,18 @@ bool SocketPlugBuild::add(std::uint32_t itemDefinitionIndex,
 
 /** Mirrors Enhanced Sword Scavenger's exact lane admission onto the four reclassified mods. */
 bool SocketPlugBuild::route_arrivals_leg_mods() noexcept {
-    const bool legLane = std::find(candidates_.data(),
-                                   candidates_.data() + candidateCount_,
-                                   arrivalsLegReference_)
-                         != candidates_.data() + candidateCount_;
+    if (arrivalsLegReference_ == UINT16_MAX) {
+        return true;
+    }
+    const bool legLane =
+        std::find(candidates_.data(), candidates_.data() + candidateCount_, arrivalsLegReference_)
+        != candidates_.data() + candidateCount_;
     const auto isReclassified = [this](socket_plugs::Member member) noexcept {
         return std::find(arrivalsLegMembers_.begin(), arrivalsLegMembers_.end(), member)
                != arrivalsLegMembers_.end();
     };
     candidateCount_ = static_cast<std::size_t>(
-        std::remove_if(candidates_.data(),
-                       candidates_.data() + candidateCount_,
-                       isReclassified)
+        std::remove_if(candidates_.data(), candidates_.data() + candidateCount_, isReclassified)
         - candidates_.data());
     if (!legLane) {
         return true;
@@ -390,11 +397,15 @@ bool SocketPlugBuild::append(const tables::items::Row& item,
 
 /** Publishes the bounded relation and retains its rows for dependent package builders. */
 bool SocketPlugBuild::publish() noexcept {
-    return !rules_.empty() && !pools_.empty() && !members_.empty()
-           && state::build_data::publish_socket_plug_rules(
-               std::span(rules_.data(), ruleCount_),
-               std::span(pools_.data(), poolCount_),
-               std::span(members_.data(), memberCount_));
+    const bool published =
+        !rules_.empty() && !pools_.empty() && !members_.empty()
+        && state::build_data::publish_socket_plug_rules(std::span(rules_.data(), ruleCount_),
+                                                        std::span(pools_.data(), poolCount_),
+                                                        std::span(members_.data(), memberCount_));
+    // Interning is over, so the 8 MiB pool-fingerprint table goes back before the ability pass.
+    lookup_.clear();
+    lookup_.shrink_to_fit();
+    return published;
 }
 
 /** Reports how many lanes failed closed during extraction. */

@@ -133,7 +133,9 @@ bool encode(const ControlPacket& packet,
         return false;
     }
     // The trailer names the destination. It sits outside the bit padding.
-    std::copy(packet.trailer.begin(), packet.trailer.end(), output.begin() + bodySize);
+    std::copy(packet.trailer.begin(),
+              packet.trailer.end(),
+              output.begin() + static_cast<std::ptrdiff_t>(bodySize));
     written = bodySize + kTrailerSize;
     return true;
 }

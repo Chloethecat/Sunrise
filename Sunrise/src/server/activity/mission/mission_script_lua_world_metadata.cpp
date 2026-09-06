@@ -172,11 +172,11 @@ void push_coverage_collection(lua_State* state, const WorldGenerationIdentity& g
     }
     const std::string_view key = checked_key(state);
 #define WORLD_DIAGNOSTIC_U64(lua_key, member)                                                      \
-    if (key == lua_key) {                                                                          \
+    if (key == (lua_key)) {                                                                        \
         push_u64(state, row.member);                                                               \
     } else
 #define WORLD_DIAGNOSTIC_BOOL(lua_key, member)                                                     \
-    if (key == lua_key) {                                                                          \
+    if (key == (lua_key)) {                                                                        \
         lua_pushboolean(state, row.member ? 1 : 0);                                                \
     } else
     WORLD_DIAGNOSTIC_U64("revision", revision)

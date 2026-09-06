@@ -10,6 +10,7 @@ namespace {
 
 /** Fixed offsets in the exact service-7 response body. */
 struct ResponseLayout final {
+    /** Byte offsets from the start of the body. */
     static constexpr std::size_t discriminator = 0;
     static constexpr std::size_t sessionId = discriminator + sizeof(std::byte);
     static constexpr std::size_t activityData = sessionId + encoding::kU64Size;

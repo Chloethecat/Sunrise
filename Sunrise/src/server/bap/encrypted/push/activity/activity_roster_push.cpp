@@ -502,7 +502,9 @@ bool append_roster_notification(
                                                nonce,
                                                response,
                                                written);
-        if (encoded) middleware::secure_channel::advance_nonce(nonce);
+        if (encoded) {
+            middleware::secure_channel::advance_nonce(nonce);
+        }
     }
     encoded = encoded
               && append_notification_frame(scratch,
@@ -656,12 +658,13 @@ void commit_staged_roster(Session& session) noexcept {
                 session.activityRosterStaged.entityRetirement);
             const auto& staged = session.activityRosterStaged;
             session.activity.replicationEpoch = staged.retirementEpoch;
-            if (staged.retirementBaseEpoch != staged.retirementPriorEpoch)
+            if (staged.retirementBaseEpoch != staged.retirementPriorEpoch) {
                 static_cast<void>(server::gameplay::peer::commit_replication_epoch(
                     session.activity.session,
                     session.activity.bindingGeneration,
                     staged.retirementPriorEpoch,
                     staged.retirementBaseEpoch));
+            }
             static_cast<void>(
                 server::gameplay::peer::commit_replication_epoch(session.activity.session,
                                                                  session.activity.bindingGeneration,

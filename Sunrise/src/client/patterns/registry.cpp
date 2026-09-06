@@ -32,8 +32,7 @@ struct Fingerprint {
 
 /**
  * The byte histogram and the ranges it came from.
- * Building it costs one traversal of the image. Without this cache every pattern would pay that
- * traversal, which is the very cost the anchor choice exists to avoid.
+ * Building it costs one image traversal, so it is built once per range set, not once per pattern.
  */
 struct FrequencyCache {
     SRWLOCK lock{SRWLOCK_INIT};
@@ -43,7 +42,7 @@ struct FrequencyCache {
 
 FrequencyCache g_frequency;
 
-/** @return Fingerprint of one range set, invalid when it holds more ranges than one can describe. */
+/** @return Fingerprint of one range set, invalid when it holds more ranges than fit. */
 [[nodiscard]] Fingerprint fingerprint_of(std::span<const ImageRange> image) noexcept {
     Fingerprint print{};
     if (image.size() > kFingerprintCapacity) {
@@ -112,10 +111,7 @@ struct Anchor {
 
 /**
  * Picks the anchor byte for one pattern.
- * The candidate search keys on this byte, so the rarest exact byte is the one that lets memchr
- * skip the most. Taking the first exact byte instead lands on a REX prefix for most function
- * prologues, and those are among the most common bytes there are in compiled x64: the sweep then
- * stops to verify millions of times per pattern.
+ * The rarest exact byte, so memchr skips the most; the first exact byte is usually a REX prefix.
  * @param pattern Pattern name, bytes, and exact-byte mask.
  * @param counts How often each byte value occurs in the ranges about to be scanned.
  * @return A valid anchor when the pattern has a name, bytes, and at least one exact byte.
@@ -165,8 +161,7 @@ struct Anchor {
 
 /**
  * Finds the next offset at or after one start where the anchor byte lines up.
- * The bytes in between cannot begin a match, so memchr skips them at memory speed instead of the
- * sweep testing every one of them.
+ * The bytes in between cannot begin a match, so memchr skips them.
  * @param range One executable range.
  * @param patternSize Pattern length, which bounds the last offset that can hold a whole match.
  * @param anchor Valid anchor for that pattern.

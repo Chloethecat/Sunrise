@@ -274,6 +274,7 @@ template <typename Scalar, typename Value>
 /** @return True when every raw row has valid bool, enum, and bounded-string representations. */
 template <typename Value>
 [[nodiscard]] bool valid_rows(std::span<const std::byte> bytes, std::size_t count) noexcept {
+    // A raw byte bank is capped by the file size; every typed section is capped by its row count.
     constexpr std::size_t kMaximumCount = std::is_same_v<Value, std::byte>
                                               ? format::kMaximumInlineNameBankBytes
                                               : format::kMaximumRowsPerSection;
@@ -296,6 +297,7 @@ template <typename Value>
                                   format::Header& header,
                                   format::SectionIndex index,
                                   const std::vector<Value>& rows) {
+    // A raw byte bank is capped by the file size; every typed section is capped by its row count.
     constexpr std::size_t kMaximumCount = std::is_same_v<Value, std::byte>
                                               ? format::kMaximumInlineNameBankBytes
                                               : format::kMaximumRowsPerSection;
@@ -321,6 +323,7 @@ template <typename Value>
 template <typename Value>
 [[nodiscard]] bool add_section_size(const std::vector<Value>& rows,
                                     std::size_t& payloadSize) noexcept {
+    // A raw byte bank is capped by the file size; every typed section is capped by its row count.
     constexpr std::size_t kMaximumCount = std::is_same_v<Value, std::byte>
                                               ? format::kMaximumInlineNameBankBytes
                                               : format::kMaximumRowsPerSection;

@@ -166,15 +166,26 @@ struct DiskPackageLocator final {
 
 #pragma pack(pop)
 
-static_assert(sizeof(Prefix) == 12);
-static_assert(sizeof(LegacyHeader) == 100);
-static_assert(sizeof(Header) == 132);
-static_assert(sizeof(DiskGenerationIdentity) == 96);
-static_assert(sizeof(DiskBindingCompleteness) == 24);
-static_assert(sizeof(DiskScenarioRecord) == 104);
-static_assert(sizeof(DiskActivityRootRecord) == 144);
-static_assert(sizeof(DiskActivityVariantRecord) == 188);
-static_assert(sizeof(DiskPackageLocator) == 16);
+/** Fixed packed disk sizes make producer and consumer ABI drift fail at compile time. */
+inline constexpr std::size_t kPrefixSize = 12;
+inline constexpr std::size_t kLegacyHeaderSize = 100;
+inline constexpr std::size_t kHeaderSize = 132;
+inline constexpr std::size_t kDiskGenerationIdentitySize = 96;
+inline constexpr std::size_t kDiskBindingCompletenessSize = 24;
+inline constexpr std::size_t kDiskScenarioRecordSize = 104;
+inline constexpr std::size_t kDiskActivityRootRecordSize = 144;
+inline constexpr std::size_t kDiskActivityVariantRecordSize = 188;
+inline constexpr std::size_t kDiskPackageLocatorSize = 16;
+
+static_assert(sizeof(Prefix) == kPrefixSize);
+static_assert(sizeof(LegacyHeader) == kLegacyHeaderSize);
+static_assert(sizeof(Header) == kHeaderSize);
+static_assert(sizeof(DiskGenerationIdentity) == kDiskGenerationIdentitySize);
+static_assert(sizeof(DiskBindingCompleteness) == kDiskBindingCompletenessSize);
+static_assert(sizeof(DiskScenarioRecord) == kDiskScenarioRecordSize);
+static_assert(sizeof(DiskActivityRootRecord) == kDiskActivityRootRecordSize);
+static_assert(sizeof(DiskActivityVariantRecord) == kDiskActivityVariantRecordSize);
+static_assert(sizeof(DiskPackageLocator) == kDiskPackageLocatorSize);
 static_assert(build_data::scriptables::kScenarioNameCapacity == kDiskScenarioNameCapacity);
 static_assert(std::is_trivially_copyable_v<Prefix> && std::is_standard_layout_v<Prefix>);
 static_assert(std::is_trivially_copyable_v<LegacyHeader>

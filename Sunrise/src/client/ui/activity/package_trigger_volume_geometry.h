@@ -28,7 +28,7 @@ supported_transform(const state::build_data::scriptables::TriggerVolumeInstance&
  * Materializes the boundary of one package-authored +Z-extruded triangle mesh.
  * Stored vertices are already world coordinates and are never transformed here.
  */
-[[nodiscard]] Result build(const state::build_data::scriptables::Snapshot& catalog,
+[[nodiscard]] Result build(const state::build_data::scriptables::Snapshot& source,
                            std::uint32_t instanceRow,
                            hooks::graphics::renderer::world_lines::Color color,
                            std::span<hooks::graphics::renderer::world_lines::Edge> output) noexcept;

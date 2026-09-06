@@ -35,12 +35,8 @@ inline constexpr std::uint8_t kFlagSet = 2;
 
 /**
  * A clear acquired flag is stored as zero.
- *
- * The flag is a 2-bit field and encodes redeemed state only: all four values were measured (0 and
- * 1 show nothing, 2 -- kFlagSet -- shows claimed, 3 shows nothing) and none of them means
- * claimable. Claimable is carried by the objective bank instead: a record reads claimable when its
- * objective value equals its completionValue while this flag stays clear. The record-claim
- * account projection writes that objective state.
+ * The 2-bit field encodes redeemed state only; no value of it means claimable. Claimable is an
+ * objective value equal to its record's completionValue while this flag stays clear.
  */
 inline constexpr std::uint8_t kFlagClear = 0;
 

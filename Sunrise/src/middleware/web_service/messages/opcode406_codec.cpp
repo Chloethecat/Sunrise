@@ -9,6 +9,10 @@ namespace {
 
 /** The reflected item-state request occupies exactly 120 bits. */
 constexpr std::size_t kPayloadSize = 15;
+/** Each optional native field carries one presence bit before its value. */
+constexpr std::uint8_t kPresenceWidth = 1;
+/** Instance SOIDs fill one unsigned 64-bit field. */
+constexpr std::uint8_t kInstanceSoidWidth = 64;
 /** Signed native definition indices use one presence bit followed by fifteen value bits. */
 constexpr std::uint8_t kDefinitionIndexWidth = 15;
 /** The accumulated state value fills one signed 32-bit field. */
@@ -33,8 +37,10 @@ bool parse_request(const Message& message, Request& request) noexcept {
     std::uint64_t definitionIndex = 0;
     std::uint64_t encodedFlags = 0;
     std::uint64_t padding = 0;
-    const bool read = message.payload.size() == kPayloadSize && reader.read(1, instancePresent)
-                      && reader.read(64, instanceSoid) && reader.read(1, definitionPresent)
+    const bool read = message.payload.size() == kPayloadSize
+                      && reader.read(kPresenceWidth, instancePresent)
+                      && reader.read(kInstanceSoidWidth, instanceSoid)
+                      && reader.read(kPresenceWidth, definitionPresent)
                       && reader.read(kDefinitionIndexWidth, definitionIndex)
                       && reader.read(kValueWidth, encodedFlags)
                       && reader.read(kPaddingWidth, padding) && reader.remaining_bits() == 0;

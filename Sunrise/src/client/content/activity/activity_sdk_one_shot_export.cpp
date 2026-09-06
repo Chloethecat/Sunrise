@@ -55,6 +55,7 @@ void copy_result(Status status, const Result& source, public_abi::Result& output
     std::memcpy(output.payloadSha256, source.payloadSha256.data(), source.payloadSha256.size());
 }
 
+/** Copies one fingerprint. @return False when the size is wrong or every byte is zero. */
 [[nodiscard]] bool read_fingerprint(const std::uint8_t* bytes,
                                     std::uint32_t size,
                                     generated::Digest& output) noexcept {

@@ -26,7 +26,7 @@ struct Source final {
 
 /** Resolves one cinematic incident's embedded ClientRef against the authored catalog. */
 [[nodiscard]] ResolveStatus
-resolve(const state::build_data::scriptables::Snapshot& catalog,
+resolve(const state::build_data::scriptables::Snapshot& snapshot,
         const middleware::bap::activity_message::cinematic_incident::Payload& target,
         Source& output) noexcept;
 

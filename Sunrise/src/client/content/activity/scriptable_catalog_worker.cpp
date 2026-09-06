@@ -21,7 +21,6 @@
 #include "../../../middleware/content/packages/tables/scenario_reader.h"
 #include "../../../middleware/content/packages/tables/slot_descriptor_reader.h"
 #include "../../../middleware/content/packages/tables/type23_placement_identifier_reader.h"
-#include "../../../middleware/crypto/sha256.h"
 #include "../../../state/build_data/scenarios/definition.h"
 #include "../../../state/build_data/scriptables/coverage.h"
 #include "../../../state/build_data/scriptables/scriptable_catalog.h"
@@ -36,100 +35,29 @@
 #include "scriptable_catalog_spatial_graph.h"
 #include "scriptable_catalog_trigger_volumes.h"
 #include "scriptable_catalog_type23_placement_links.h"
+#include "scriptable_catalog_worker_internal.h"
 #include "source.h"
 
 namespace sunrise::client::content::activity::scriptables {
-namespace {
 
-namespace catalog = state::build_data::scriptables;
-namespace package_reader = middleware::content::packages::reader;
-namespace tables = middleware::content::packages::tables;
-namespace sha256 = middleware::crypto::sha256;
+using namespace worker_internal;
+
+namespace worker_internal {
+
+/** @return True when the caller asked this build to stop. */
+bool cancelled(internal::BuilderCancelCheck check) noexcept {
+    return check != nullptr && check();
+}
+
+} // namespace worker_internal
+
+namespace {
 
 /** Fixed package ids and bounds keep extraction inside validated layouts and owned storage. */
 constexpr std::size_t kObjectCapacity = 65'536;
-constexpr std::size_t kSlotCapacity = 262'144;
 constexpr std::size_t kDescriptorCapacity = 262'144;
 constexpr std::size_t kReferenceCapacity = 262'144;
 constexpr std::size_t kTriggerVolumeInputCapacity = 262'144;
-
-struct AnalysisSlot final {
-    std::uint32_t nameHash{};
-    std::uint16_t type{};
-};
-
-/** One validated descriptor plus its class-specific optional placement identifier. */
-struct AnalysisDescriptor final {
-    tables::SlotDescriptor descriptor{};
-    std::uint64_t placementIdentifier{};
-    bool placementIdentifierRead{};
-};
-
-/** One exact inline string found in a source tag used by an object analysis. */
-struct AnalysisInlineName final {
-    std::uint32_t hash{};
-    std::string value{};
-};
-
-/** Inline strings from one first-seen source tag, kept in package encounter order. */
-struct AnalysisTagEvidence final {
-    std::uint32_t tag{};
-    std::vector<AnalysisInlineName> names{};
-};
-
-/** Everything one scenario analysis produced, keyed and shared between build passes. */
-struct Analysis final {
-    std::vector<AnalysisSlot> slots{};
-    std::vector<AnalysisDescriptor> descriptors{};
-    std::vector<internal::RawReference> references{};
-    internal::AuthoredPlacementAnalysis authored{};
-    std::vector<std::uint32_t> observedConfigs{};
-    std::vector<std::uint32_t> resolvedConfigs{};
-    std::vector<catalog::PlacedSubblock> placedSubblocks{};
-    std::vector<catalog::PlacedLeaf> placedLeaves{};
-    std::vector<catalog::PlacedHop> placedHops{};
-    std::vector<catalog::PlacedConfigOccurrence> placedConfigOccurrences{};
-    std::vector<catalog::PlacedBareTarget> placedBareTargets{};
-    std::vector<AnalysisTagEvidence> tagEvidence{};
-    std::uint32_t configCount{};
-    /** Authored placements whose flags and class definition let the game replicate them. */
-    std::uint32_t replicatedPlacementCount{};
-    bool readComplete{true};
-};
-
-using AnalysisMap = std::unordered_map<std::uint64_t, std::shared_ptr<const Analysis>>;
-
-/** Inputs and owned scratch of one scenario build pass. */
-struct BuildContext final {
-    const package_reader::Source* source{};
-    internal::BuilderCancelCheck cancel{};
-    ScenarioSource scenarioSource{};
-    std::vector<std::byte> scenario{};
-    std::vector<std::byte> chain{};
-    std::vector<std::byte> classBytes{};
-    /** Replication bit per placed class definition, read once per tag. */
-    std::unordered_map<std::uint32_t, bool> classReplication{};
-    std::vector<internal::InlineName> inlineNames{};
-    std::vector<internal::TriggerVolumeInput> triggerVolumeInputs{};
-    AnalysisMap analyses{};
-    AnalysisMap* sharedAnalyses{};
-    Analysis* recordingAnalysis{};
-    std::unordered_set<std::uint32_t> recordedAnalysisTags{};
-    bool recordingCacheable{};
-    /** Tags whose inline strings were already banked, so no blob is scanned twice. */
-    std::unordered_set<std::uint32_t> scannedTags{};
-    /** Total tag reads this scenario asked for, including every revisit. */
-    std::size_t tagReads{};
-    std::size_t analysisHits{};
-    std::size_t analysisMisses{};
-    std::shared_ptr<catalog::Snapshot> output{};
-    tables::WalkResult walk{};
-    bool failed{};
-};
-
-[[nodiscard]] bool cancelled(internal::BuilderCancelCheck check) noexcept {
-    return check != nullptr && check();
-}
 
 /** @return True when this tag's inline strings have not been banked yet. */
 [[nodiscard]] bool inline_names_pending(BuildContext& context, std::uint32_t tag) noexcept {
@@ -199,6 +127,7 @@ capture_inline_name(void* opaque, std::uint32_t hash, std::span<const std::byte>
         return false;
     }
     catalog::Snapshot& output = *context.output;
+    // Snapshot rows are published as u32, so a bank stops at that maximum.
     constexpr std::size_t maximum = (std::numeric_limits<std::uint32_t>::max)();
     for (const AnalysisInlineName& candidate : evidence.names) {
         if (output.inlineNameCandidates.size() >= maximum || output.inlineNameBytes.size() > maximum
@@ -275,11 +204,15 @@ capture_inline_name(void* opaque, std::uint32_t hash, std::span<const std::byte>
     return true;
 }
 
+} // namespace
+
+namespace worker_internal {
+
 /** Reads one tag and offers its inline names to the current build. */
-[[nodiscard]] bool read_tag(BuildContext& context,
-                            std::uint32_t tag,
-                            std::vector<std::byte>& bytes,
-                            std::uint32_t& classId) noexcept {
+bool read_tag(BuildContext& context,
+              std::uint32_t tag,
+              std::vector<std::byte>& bytes,
+              std::uint32_t& classId) noexcept {
     ++context.tagReads;
     if (cancelled(context.cancel) || context.source == nullptr
         || !package_reader::read_tag(
@@ -296,6 +229,10 @@ capture_inline_name(void* opaque, std::uint32_t hash, std::span<const std::byte>
     }
     return true;
 }
+
+} // namespace worker_internal
+
+namespace {
 
 [[nodiscard]] bool read_exact(BuildContext& context,
                               std::uint32_t tag,
@@ -315,6 +252,7 @@ capture_inline_name(void* opaque, std::uint32_t hash, std::span<const std::byte>
     if (index >= context.scenarioSource.slots.size()) {
         return false;
     }
+    // Expected package class of each read slot, in ReadSlot order.
     constexpr std::array<std::uint32_t, static_cast<std::size_t>(tables::ReadSlot::count)> expected{
         tables::kSliceEntryClass, tables::kObjectRegistryClass, tables::kObjectClass};
     std::vector<std::byte>& bytes = context.scenarioSource.slots[index];
@@ -322,481 +260,6 @@ capture_inline_name(void* opaque, std::uint32_t hash, std::span<const std::byte>
         return false;
     }
     blob = bytes;
-    return true;
-}
-
-struct DescriptorContext final {
-    Analysis* analysis{};
-    const std::vector<AnalysisSlot>* slots{};
-    std::span<const std::byte> config{};
-};
-
-/** Per-chain state carried through one placed-object walk. */
-struct PlacedChainContext final {
-    BuildContext* build{};
-    Analysis* analysis{};
-    std::uint32_t registryKey{};
-    std::int32_t declaredBubbleIndex{};
-    std::uint32_t subblockRow{};
-    std::uint32_t leafRow{};
-    std::uint32_t subblockOrdinal{};
-    std::uint32_t leafOrdinal{};
-    bool leafComplete{true};
-    bool fatal{};
-};
-
-/** Retains descriptors that match the owning object's exact declared slot. */
-[[nodiscard]] bool collect_descriptor(void* opaque,
-                                      const tables::SlotDescriptor& descriptor) noexcept {
-    auto& context = *static_cast<DescriptorContext*>(opaque);
-    if (context.analysis == nullptr || context.slots == nullptr
-        || descriptor.slotIndex >= context.slots->size()
-        || (*context.slots)[descriptor.slotIndex].type != descriptor.slotType) {
-        return true;
-    }
-    try {
-        AnalysisDescriptor row{};
-        row.descriptor = descriptor;
-        row.placementIdentifierRead = tables::type23_placement_identifier(
-            context.config, descriptor, row.placementIdentifier);
-        context.analysis->descriptors.push_back(row);
-    } catch (...) {
-        return false;
-    }
-    return true;
-}
-
-/** Supplies one tag to the path-aware placed-chain observer. */
-[[nodiscard]] bool placed_chain_reader(void* opaque,
-                                       std::uint32_t tag,
-                                       std::span<const std::byte>& blob,
-                                       std::uint32_t& classId) noexcept {
-    if (opaque == nullptr) {
-        return false;
-    }
-    auto& context = *static_cast<PlacedChainContext*>(opaque);
-    if (context.build == nullptr || !read_tag(*context.build, tag, context.build->chain, classId)) {
-        blob = {};
-        return false;
-    }
-    blob = context.build->chain;
-    return true;
-}
-
-/** Retains one unique config and rolls back its rows when parsing fails. */
-[[nodiscard]] bool
-collect_placed_config(void* opaque, std::uint32_t tag, std::span<const std::byte> blob) noexcept {
-    if (opaque == nullptr) {
-        return false;
-    }
-    auto& context = *static_cast<PlacedChainContext*>(opaque);
-    if (context.analysis == nullptr) {
-        return false;
-    }
-    Analysis& analysis = *context.analysis;
-    try {
-        if (std::find(analysis.observedConfigs.begin(), analysis.observedConfigs.end(), tag)
-            == analysis.observedConfigs.end()) {
-            analysis.observedConfigs.push_back(tag);
-        }
-    } catch (...) {
-        return false;
-    }
-    if (std::find(analysis.resolvedConfigs.begin(), analysis.resolvedConfigs.end(), tag)
-        != analysis.resolvedConfigs.end()) {
-        return true;
-    }
-    const std::size_t firstDescriptor = analysis.descriptors.size();
-    const std::size_t firstReference = analysis.references.size();
-    DescriptorContext descriptorContext{&analysis, &analysis.slots, blob};
-    if (!tables::visit_slot_descriptors(
-            blob, tag, context.registryKey, &collect_descriptor, &descriptorContext)) {
-        analysis.descriptors.resize(firstDescriptor);
-        return false;
-    }
-    try {
-        internal::collect_typed_references(blob, tag, analysis.references);
-        analysis.resolvedConfigs.push_back(tag);
-        return true;
-    } catch (...) {
-        analysis.descriptors.resize(firstDescriptor);
-        analysis.references.resize(firstReference);
-        return false;
-    }
-}
-
-/** Converts one retained vector index to the SDK's exact u32 row domain. */
-[[nodiscard]] bool row_index(std::size_t value, std::uint32_t& output) noexcept {
-    if (value > (std::numeric_limits<std::uint32_t>::max)()) {
-        output = catalog::kNoRow;
-        return false;
-    }
-    output = static_cast<std::uint32_t>(value);
-    return true;
-}
-
-/** Maps the validated package-reader shape without assigning new semantics. */
-[[nodiscard]] constexpr catalog::PlacedHopShape
-placed_hop_shape(tables::PlacedChainShape value) noexcept {
-    switch (value) {
-    case tables::PlacedChainShape::config:
-        return catalog::PlacedHopShape::config;
-    case tables::PlacedChainShape::redirect:
-        return catalog::PlacedHopShape::redirect;
-    case tables::PlacedChainShape::descriptorRedirectArray:
-        return catalog::PlacedHopShape::descriptorRedirectArray;
-    case tables::PlacedChainShape::bareObjectList:
-        return catalog::PlacedHopShape::bareObjectList;
-    }
-    return catalog::PlacedHopShape::config;
-}
-
-/** Retains one exact path-specific hop and any terminal config or object-list edge. */
-[[nodiscard]] bool collect_placed_chain_record(void* opaque,
-                                               const tables::PlacedChainRecord& source,
-                                               std::span<const std::byte> blob) noexcept {
-    if (opaque == nullptr) {
-        return false;
-    }
-    auto& context = *static_cast<PlacedChainContext*>(opaque);
-    if (context.build == nullptr || context.analysis == nullptr
-        || context.subblockRow >= context.analysis->placedSubblocks.size()
-        || context.leafRow >= context.analysis->placedLeaves.size()
-        || source.branchPathCount > catalog::kPlacedBranchPathCapacity) {
-        context.fatal = true;
-        return false;
-    }
-    Analysis& analysis = *context.analysis;
-    std::uint32_t hopRow = 0;
-    if (!row_index(analysis.placedHops.size(), hopRow)) {
-        context.fatal = true;
-        return false;
-    }
-    catalog::PlacedHop hop{};
-    hop.subblockRow = context.subblockRow;
-    hop.leafRow = context.leafRow;
-    hop.subblockOrdinal = context.subblockOrdinal;
-    hop.leafOrdinal = context.leafOrdinal;
-    hop.declaredBubbleIndex = context.declaredBubbleIndex;
-    hop.tag = source.tag;
-    hop.classId = source.classId;
-    hop.branchPath = source.branchPath;
-    hop.childCount = source.childCount;
-    hop.directTargetTag = source.directTargetTag;
-    hop.branchPathCount = source.branchPathCount;
-    hop.depth = source.depth;
-    hop.shape = placed_hop_shape(source.shape);
-    hop.complete = true;
-    if (!sha256::hash(blob, hop.payloadSha256)) {
-        context.fatal = true;
-        return false;
-    }
-    try {
-        analysis.placedHops.push_back(hop);
-    } catch (...) {
-        context.fatal = true;
-        return false;
-    }
-
-    if (source.shape == tables::PlacedChainShape::config) {
-        std::uint32_t occurrenceRow = 0;
-        if (!row_index(analysis.placedConfigOccurrences.size(), occurrenceRow)) {
-            analysis.placedHops.pop_back();
-            context.fatal = true;
-            return false;
-        }
-        catalog::PlacedConfigOccurrence occurrence{};
-        occurrence.subblockRow = context.subblockRow;
-        occurrence.leafRow = context.leafRow;
-        occurrence.terminalHopRow = hopRow;
-        occurrence.configTag = source.tag;
-        occurrence.declaredBubbleIndex = context.declaredBubbleIndex;
-        occurrence.branchPath = source.branchPath;
-        occurrence.branchPathCount = source.branchPathCount;
-        occurrence.complete = true;
-        try {
-            analysis.placedConfigOccurrences.push_back(occurrence);
-        } catch (...) {
-            analysis.placedHops.pop_back();
-            context.fatal = true;
-            return false;
-        }
-        analysis.placedHops[hopRow].configOccurrenceRow = occurrenceRow;
-        if (!collect_placed_config(&context, source.tag, blob)) {
-            context.leafComplete = false;
-            return false;
-        }
-        return true;
-    }
-
-    if (source.shape != tables::PlacedChainShape::bareObjectList) {
-        return true;
-    }
-
-    std::uint32_t targetRow = 0;
-    if (!row_index(analysis.placedBareTargets.size(), targetRow)) {
-        analysis.placedHops.pop_back();
-        context.fatal = true;
-        return false;
-    }
-    catalog::PlacedBareTarget target{};
-    target.subblockRow = context.subblockRow;
-    target.leafRow = context.leafRow;
-    target.sourceHopRow = hopRow;
-    target.declaredBubbleIndex = context.declaredBubbleIndex;
-    target.targetTag = source.directTargetTag;
-    target.expectedTargetClass = tables::kAuthoredPlacementListClass;
-    std::uint32_t targetClass = 0;
-    if (!read_tag(*context.build, source.directTargetTag, context.build->chain, targetClass)) {
-        target.status = catalog::PlacedBareTargetStatus::unreadableTarget;
-        context.leafComplete = false;
-        analysis.readComplete = false;
-        if (context.build->failed || cancelled(context.build->cancel)) {
-            analysis.placedHops.pop_back();
-            context.fatal = true;
-            return false;
-        }
-    } else {
-        target.targetClass = targetClass;
-        target.targetLogicalSize = context.build->chain.size();
-        if (!sha256::hash(context.build->chain, target.targetPayloadSha256)) {
-            analysis.placedHops.pop_back();
-            context.fatal = true;
-            return false;
-        }
-        if (targetClass != tables::kAuthoredPlacementListClass) {
-            target.status = catalog::PlacedBareTargetStatus::targetClassMismatch;
-            context.leafComplete = false;
-            analysis.readComplete = false;
-        } else {
-            target.status = catalog::PlacedBareTargetStatus::completeStructuralEdge;
-            if (!internal::collect_authored_placements(analysis.authored,
-                                                       context.build->chain,
-                                                       source.directTargetTag,
-                                                       context.declaredBubbleIndex)) {
-                context.leafComplete = false;
-                analysis.readComplete = false;
-            }
-        }
-    }
-    try {
-        analysis.placedBareTargets.push_back(target);
-    } catch (...) {
-        analysis.placedHops.pop_back();
-        context.fatal = true;
-        return false;
-    }
-    analysis.placedHops[hopRow].bareTargetRow = targetRow;
-    return true;
-}
-
-/** Follows every authored branch and retains every exact path-specific row. */
-[[nodiscard]] bool follow_handle(BuildContext& context,
-                                 Analysis& analysis,
-                                 std::uint32_t handle,
-                                 std::uint32_t registryKey,
-                                 std::int32_t declaredBubbleIndex,
-                                 std::uint32_t subblockRow,
-                                 std::uint32_t leafRow,
-                                 std::uint32_t subblockOrdinal,
-                                 std::uint32_t leafOrdinal) noexcept {
-    if (leafRow >= analysis.placedLeaves.size()) {
-        return false;
-    }
-    PlacedChainContext walkContext{&context,
-                                   &analysis,
-                                   registryKey,
-                                   declaredBubbleIndex,
-                                   subblockRow,
-                                   leafRow,
-                                   subblockOrdinal,
-                                   leafOrdinal};
-    tables::PlacedChainObservation observation{};
-    const bool walked = tables::visit_placed_chain_records(handle,
-                                                           &placed_chain_reader,
-                                                           &walkContext,
-                                                           &collect_placed_chain_record,
-                                                           &walkContext,
-                                                           observation);
-    catalog::PlacedLeaf& leaf = analysis.placedLeaves[leafRow];
-    const std::size_t hopCount = analysis.placedHops.size() - leaf.firstHop;
-    const std::size_t configCount =
-        analysis.placedConfigOccurrences.size() - leaf.firstConfigOccurrence;
-    const std::size_t bareCount = analysis.placedBareTargets.size() - leaf.firstBareTarget;
-    if (!row_index(hopCount, leaf.hopCount) || !row_index(configCount, leaf.configOccurrenceCount)
-        || !row_index(bareCount, leaf.bareTargetCount) || walkContext.fatal) {
-        return false;
-    }
-    leaf.complete = walked && walkContext.leafComplete && observation.hopCount == leaf.hopCount
-                    && observation.bareTargetCount == leaf.bareTargetCount;
-    if (!leaf.complete) {
-        analysis.readComplete = false;
-    }
-    return true;
-}
-
-/** @return True when the placed class definition marks its objects as network replicated. */
-[[nodiscard]] bool class_replicates(BuildContext& context, std::uint32_t classTag) noexcept {
-    const auto cached = context.classReplication.find(classTag);
-    if (cached != context.classReplication.end()) {
-        return cached->second;
-    }
-    std::uint32_t classId = 0;
-    tables::PlacedClassDefinition definition{};
-    const bool replicated = read_tag(context, classTag, context.classBytes, classId)
-                            && classId == tables::kPlacedClassDefinitionClass
-                            && tables::placed_class_definition(context.classBytes, definition)
-                            && definition.networkReplicated;
-    try {
-        context.classReplication.emplace(classTag, replicated);
-    } catch (...) {
-        // A missed cache entry costs one more read, nothing else.
-    }
-    return replicated;
-}
-
-/** Counts the authored placements the game replicates: entry flag bit 0 clear, class bit set. */
-[[nodiscard]] std::uint32_t count_replicated_placements(BuildContext& context,
-                                                        const Analysis& analysis) noexcept {
-    std::uint32_t count = 0;
-    for (const internal::RawAuthoredPlacement& placement : analysis.authored.placements) {
-        if ((placement.placementFlagsRaw & tables::kAuthoredPlacementNoReplicationBit) == 0
-            && class_replicates(context, placement.classListTag)) {
-            ++count;
-        }
-    }
-    return count;
-}
-
-/** Reads one object layout and its reachable descriptor/config records. */
-[[nodiscard]] bool analyze_object(BuildContext& context,
-                                  const tables::Placement& placement,
-                                  Analysis& output) noexcept {
-    output = {};
-    tables::Array slots{};
-    if (!tables::object_slots(placement.objectBytes, slots) || slots.count > kSlotCapacity) {
-        return false;
-    }
-    try {
-        output.slots.reserve(static_cast<std::size_t>(slots.count));
-        for (std::uint64_t index = 0; index < slots.count; ++index) {
-            tables::Slot slot{};
-            if (!tables::object_slot_at(placement.objectBytes, slots, index, slot) || slot.type == 0
-                || slot.type > state::build_data::scenarios::kMaximumSlotType) {
-                return false;
-            }
-            output.slots.push_back({slot.nameHash, static_cast<std::uint16_t>(slot.type)});
-        }
-    } catch (...) {
-        return false;
-    }
-
-    tables::Array bubbles{};
-    if (!tables::object_bubbles(placement.objectBytes, bubbles)
-        || bubbles.count > (std::numeric_limits<std::uint32_t>::max)()) {
-        return false;
-    }
-    try {
-        output.placedSubblocks.reserve(static_cast<std::size_t>(bubbles.count));
-    } catch (...) {
-        return false;
-    }
-    for (std::uint64_t bubbleIndex = 0; bubbleIndex < bubbles.count; ++bubbleIndex) {
-        tables::ObjectBubble bubble{};
-        std::uint32_t subblockRow = 0;
-        std::uint32_t firstLeaf = 0;
-        if (!tables::object_bubble_at(placement.objectBytes, bubbles, bubbleIndex, bubble)
-            || bubbleIndex > (std::numeric_limits<std::uint32_t>::max)()
-            || !row_index(output.placedSubblocks.size(), subblockRow)
-            || !row_index(output.placedLeaves.size(), firstLeaf)) {
-            return false;
-        }
-        catalog::PlacedSubblock subblock{};
-        subblock.subblockOrdinal = static_cast<std::uint32_t>(bubbleIndex);
-        subblock.declaredBubbleIndex = bubble.bubbleIndex;
-        subblock.firstLeaf = firstLeaf;
-        subblock.sourceOffset = bubble.sourceOffset;
-        try {
-            output.placedSubblocks.push_back(subblock);
-            if (bubble.handleCount
-                > (std::numeric_limits<std::uint32_t>::max)() - output.placedLeaves.size()) {
-                return false;
-            }
-            output.placedLeaves.reserve(output.placedLeaves.size()
-                                        + static_cast<std::size_t>(bubble.handleCount));
-        } catch (...) {
-            return false;
-        }
-        bool subblockComplete = true;
-        for (std::uint64_t leafOrdinal = 0; leafOrdinal < bubble.handleCount; ++leafOrdinal) {
-            std::uint32_t handle = 0;
-            std::uint32_t leafRow = 0;
-            catalog::PlacedLeaf leaf{};
-            if (!tables::object_placed_handle_at(placement.objectBytes, bubble, leafOrdinal, handle)
-                || leafOrdinal > (std::numeric_limits<std::uint32_t>::max)()
-                || !row_index(output.placedLeaves.size(), leafRow)
-                || !row_index(output.placedHops.size(), leaf.firstHop)
-                || !row_index(output.placedConfigOccurrences.size(), leaf.firstConfigOccurrence)
-                || !row_index(output.placedBareTargets.size(), leaf.firstBareTarget)) {
-                return false;
-            }
-            leaf.subblockRow = subblockRow;
-            leaf.subblockOrdinal = static_cast<std::uint32_t>(bubbleIndex);
-            leaf.leafOrdinal = static_cast<std::uint32_t>(leafOrdinal);
-            leaf.declaredBubbleIndex = bubble.bubbleIndex;
-            leaf.rootTag = handle;
-            leaf.sourceOffset = static_cast<std::uint64_t>(bubble.handleDataOffset)
-                                + leafOrdinal * tables::kObjectPlacedHandleStride;
-            try {
-                output.placedLeaves.push_back(leaf);
-            } catch (...) {
-                return false;
-            }
-            if (!follow_handle(context,
-                               output,
-                               handle,
-                               placement.objectKey,
-                               bubble.bubbleIndex,
-                               subblockRow,
-                               leafRow,
-                               static_cast<std::uint32_t>(bubbleIndex),
-                               static_cast<std::uint32_t>(leafOrdinal))) {
-                return false;
-            }
-            subblockComplete = subblockComplete && output.placedLeaves[leafRow].complete;
-        }
-        const std::size_t leafCount = output.placedLeaves.size() - firstLeaf;
-        if (!row_index(leafCount, output.placedSubblocks[subblockRow].leafCount)) {
-            return false;
-        }
-        output.placedSubblocks[subblockRow].complete = subblockComplete;
-    }
-    if (!row_index(output.observedConfigs.size(), output.configCount)) {
-        return false;
-    }
-    output.replicatedPlacementCount = count_replicated_placements(context, output);
-    std::sort(output.descriptors.begin(),
-              output.descriptors.end(),
-              [](const AnalysisDescriptor& leftRow, const AnalysisDescriptor& rightRow) noexcept {
-                  const tables::SlotDescriptor& left = leftRow.descriptor;
-                  const tables::SlotDescriptor& right = rightRow.descriptor;
-                  if (left.slotIndex != right.slotIndex) {
-                      return left.slotIndex < right.slotIndex;
-                  }
-                  if (left.componentClass != right.componentClass) {
-                      return left.componentClass < right.componentClass;
-                  }
-                  if (left.senseSchema != right.senseSchema) {
-                      return left.senseSchema < right.senseSchema;
-                  }
-                  if (left.authSchema != right.authSchema) {
-                      return left.authSchema < right.authSchema;
-                  }
-                  if (left.configTag != right.configTag) {
-                      return left.configTag < right.configTag;
-                  }
-                  return left.descriptorOffset < right.descriptorOffset;
-              });
     return true;
 }
 
@@ -818,6 +281,7 @@ placed_hop_shape(tables::PlacedChainShape value) noexcept {
 
 /** @return True when one local row bank fits after an existing u32-indexed bank. */
 [[nodiscard]] bool can_append_rows(std::size_t existing, std::size_t incoming) noexcept {
+    // Snapshot rows are published as u32, so a bank stops at that maximum.
     constexpr std::size_t maximum = (std::numeric_limits<std::uint32_t>::max)();
     return existing <= maximum && incoming <= maximum - existing;
 }
@@ -1251,6 +715,7 @@ build_scenario_catalog(const middleware::content::packages::reader::Source& sour
         source, containers, scratch, nullptr, nullptr, nullptr, scenarioTag, scenarioName, cancel);
 }
 
+/** Builds one scenario catalog, reusing the caller's analysis caches when they exist. */
 [[nodiscard]] std::shared_ptr<state::build_data::scriptables::Snapshot>
 build_scenario_catalog(const middleware::content::packages::reader::Source& source,
                        const ContainerIndex& containers,

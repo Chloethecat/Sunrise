@@ -5,12 +5,9 @@
 
 #include "../../../../core/filesystem/path.h"
 #include "../../../../core/logging/log.h"
-#include "../../../../core/settings/rule_text.h"
 #include "../../../../middleware/content/packages/reader/reader.h"
 #include "../../../../middleware/content/packages/tables/definition_index_table.h"
 #include "../../../../state/build_data/runtime.h"
-#include "../../../../state/build_data/sobjects/sobject_catalog.h"
-#include "../../../../state/build_data/vendors/vendor_catalog.h"
 #include "../../activity/entity_position_profile_build.h"
 #include "../../hash_names/hash_name_build.h"
 #include "../../scenarios/scenario_build.h"
@@ -22,54 +19,6 @@
 
 namespace sunrise::client::content::items::packages {
 namespace {
-
-/**
- * Reads the vendors to publish definitions for, by definition hash, from `vendor_catalog.txt`.
- *
- * A row position is not a stable name for a vendor and the useful ones are not all at the head of
- * the index, so the list is authored by hash. An absent or empty file leaves the caller with the
- * leading window it used before.
- *
- * @param hashes Receives the requested definition hashes.
- * @return How many were read.
- */
-[[nodiscard]] std::size_t read_vendor_hashes(std::span<std::uint32_t> hashes) noexcept {
-    static std::array<char, core::rule_text::kRuleTextCapacity> text{};
-    if (!core::path::read_artifact_text(L"vendor_catalog.txt", text)) {
-        return 0;
-    }
-    std::size_t count = 0;
-    core::rule_text::Cursor rules{text.data()};
-    while (count < hashes.size() && rules.seek_field()) {
-        const std::uint32_t parsed = rules.read_hex();
-        if (parsed != 0) {
-            hashes[count++] = parsed;
-        }
-    }
-    return count;
-}
-
-/**
- * Publishes the vendor catalog, index and definitions both.
- *
- * `vendors::build` reads the whole index and a definition for each vendor named by hash, filling
- * any room left from the head of the index. The names come from `vendor_catalog.txt`: a row
- * position is not a stable name for a vendor and the useful ones are not all at the head - the
- * Drifter is row 195, so every request against him once failed to resolve a definition that had
- * never been read.
- *
- * @param source Package directory and borrowed block keys.
- * @param scratch Block storage shared with the other content passes.
- */
-void build_vendor_catalog(const reader::Source& source, reader::Scratch& scratch) noexcept {
-    namespace vendor_domain = state::build_data::vendors;
-    if (state::build_data::vendor_catalog_ready()) {
-        return;
-    }
-    static std::array<std::uint32_t, vendor_domain::kDefinitionCapacity> named{};
-    const std::size_t namedCount = read_vendor_hashes(named);
-    (void)content::vendors::build(source, scratch, std::span(named).first(namedCount));
-}
 
 /** @return True when every item and investment-root domain is published. */
 [[nodiscard]] bool root_domains_ready() noexcept {
@@ -83,11 +32,12 @@ void build_vendor_catalog(const reader::Source& source, reader::Scratch& scratch
            && state::build_data::ability_buckets_ready()
            && state::build_data::socket_entry_buckets_ready()
            && state::build_data::progression_definitions_ready()
+           && state::build_data::season_pass_ready()
+           && state::build_data::repeatable_bounties_ready()
            && state::build_data::record_definitions_ready()
            && state::build_data::node_definitions_ready()
-           && state::build_data::sobjects::count() != 0
-           && state::build_data::investment_constants_ready()
-           && state::build_data::exotic_catalysts_ready();
+           && state::build_data::sobject_definitions_ready()
+           && state::build_data::investment_constants_ready() && exotic_catalysts_settled();
 }
 
 } // namespace
@@ -96,6 +46,7 @@ void build_vendor_catalog(const reader::Source& source, reader::Scratch& scratch
 bool ready() noexcept {
     return root_domains_ready() && state::build_data::scenario_layouts_ready()
            && state::build_data::spawn_sets_ready() && state::build_data::hash_names_ready()
+           && state::build_data::vendor_catalog_ready()
            && content::activity::entity_position_profiles::ready();
 }
 
@@ -123,7 +74,7 @@ bool build() noexcept {
         (void)content::scenarios::build(packageSource, storage.scratch);
         (void)content::spawn_sets::build(packageSource, storage.scratch);
         (void)content::hash_names::build(packageSource, storage.scratch);
-        build_vendor_catalog(packageSource, storage.scratch);
+        (void)content::vendors::build(packageSource, storage.scratch);
         if (ready()) {
             SecureZeroMemory(&keys, sizeof keys);
             return true;
@@ -177,19 +128,18 @@ bool build() noexcept {
                     continue;
                 }
             }
-            if (!state::build_data::exotic_catalysts_ready()) {
+            if (!exotic_catalysts_settled()) {
                 reason = "catalyst_gates";
                 if (!read_catalyst_acquisition_gates(source,
                                                      storage.scratch,
                                                      std::span<const std::byte>{storage.root},
                                                      storage.child,
                                                      storage.catalystAcquisitionGates)
-                    || !read_catalyst_objective_values(
-                        source,
-                        storage.scratch,
-                        std::span<const std::byte>{storage.root},
-                        storage.child,
-                        storage.catalystObjectiveValues)) {
+                    || !read_catalyst_objective_values(source,
+                                                       storage.scratch,
+                                                       std::span<const std::byte>{storage.root},
+                                                       storage.child,
+                                                       storage.catalystObjectiveValues)) {
                     continue;
                 }
             }
@@ -206,33 +156,37 @@ bool build() noexcept {
                                        std::span<const std::byte>{storage.root},
                                        storage.child,
                                        storage.progressionRows,
-                                       progressionCount)) {
+                                       progressionCount,
+                                       storage.progressionSteps,
+                                       storage.progressionStepCount)) {
                     (void)state::build_data::publish_progression_definitions(
-                        std::span(storage.progressionRows).first(progressionCount));
+                        std::span(storage.progressionRows).first(progressionCount),
+                        std::span(storage.progressionSteps).first(storage.progressionStepCount));
                 }
             }
-            if (!state::build_data::node_definitions_ready()) {
-                std::size_t nodeCount = 0;
-                if (build_nodes(source,
-                                storage.scratch,
-                                std::span<const std::byte>{storage.root},
-                                storage.child,
-                                storage.nodeRows,
-                                nodeCount)) {
-                    (void)state::build_data::publish_node_definitions(
-                        std::span(storage.nodeRows).first(nodeCount));
-                }
+            if (!state::build_data::season_pass_ready()
+                && build_season_pass(source, storage, std::span<const std::byte>{storage.root})) {
+                (void)state::build_data::publish_season_pass(
+                    std::span(storage.seasonPassRewards).first(storage.seasonPassRewardCount),
+                    std::span(storage.seasonPassPackages).first(storage.seasonPassPackageCount));
             }
-            if (!state::build_data::record_definitions_ready()) {
-                std::size_t recordCount = 0;
-                if (build_records(source,
-                                  storage.scratch,
-                                  std::span<const std::byte>{storage.root},
-                                  storage.child,
-                                  storage.recordRows,
-                                  recordCount)) {
+            // Records are read before nodes: a node's lore-book flag and its parent bar come
+            // from the records it owns, so the record rows must already be in pass storage.
+            if (!state::build_data::record_definitions_ready()
+                || !state::build_data::node_definitions_ready()) {
+                const bool builtRecords =
+                    build_records(source, storage, std::span<const std::byte>{storage.root});
+                if (builtRecords && !state::build_data::record_definitions_ready()) {
                     (void)state::build_data::publish_record_definitions(
-                        std::span(storage.recordRows).first(recordCount));
+                        std::span(storage.recordRows).first(storage.recordCount),
+                        std::span(storage.recordObjectives).first(storage.recordObjectiveCount),
+                        std::span(storage.recordIntervals).first(storage.recordIntervalCount),
+                        std::span(storage.recordRewards).first(storage.recordRewardCount));
+                }
+                if (builtRecords && !state::build_data::node_definitions_ready()
+                    && build_nodes(source, storage, std::span<const std::byte>{storage.root})) {
+                    (void)state::build_data::publish_node_definitions(
+                        std::span(storage.nodeRows).first(storage.nodeCount));
                 }
             }
             if (!state::build_data::investment_constants_ready()) {
@@ -267,6 +221,10 @@ bool build() noexcept {
                                            std::span<const std::byte>{storage.root},
                                            table.count)) {
                 reason = "collectibles";
+            } else if (!state::build_data::repeatable_bounties_ready()
+                       && build_bounties(source, storage, rowCount)) {
+                (void)state::build_data::publish_repeatable_bounties(
+                    std::span(storage.bountyRows).first(storage.bountyCount));
             }
         }
     }

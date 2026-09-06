@@ -156,4 +156,17 @@ bool write(encoding::bits::Writer& writer,
     return encoded;
 }
 
+/** Encodes the same 10 fields as a standalone byte-aligned object body. */
+bool encode_object(const state::Family5State& family,
+                   std::uint64_t serverClockSeconds,
+                   std::span<std::byte> output,
+                   std::size_t& written) noexcept {
+    written = 0;
+    if (!valid(family) || output.size() < kObjectCapacity) {
+        return false;
+    }
+    encoding::bits::Writer writer(output);
+    return write(writer, family, serverClockSeconds) && writer.finish(written);
+}
+
 } // namespace sunrise::middleware::web_service::messages::family5

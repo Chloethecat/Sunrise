@@ -29,9 +29,8 @@ struct Controls {
     bool mouseInvertVertical{};
     bool mouseInvertHorizontal{};
     /**
-     * WS-701 preference field 36: a replicated Boolean stored between controller vibration and
-     * mouse aim smoothing in the native preference record. Its exact user-facing purpose has not
-     * been identified, so Sunrise preserves it for lossless round trips without guessing a name.
+     * WS-701 preference field 36, a replicated Boolean between controller vibration and mouse aim
+     * smoothing. Its purpose is unverified, so it is round-tripped rather than named.
      */
     bool unidentifiedToggle{};
     bool mouseAimSmoothing{};

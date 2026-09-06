@@ -68,6 +68,7 @@ enum class Family : std::uint8_t {
     count,
 };
 
+// A coverage report carries one row per family.
 inline constexpr std::size_t kFamilyCount = static_cast<std::size_t>(Family::count);
 static_assert(kFamilyCount == 55);
 

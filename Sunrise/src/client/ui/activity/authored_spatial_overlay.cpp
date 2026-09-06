@@ -17,6 +17,7 @@ namespace lines = hooks::graphics::renderer::world_lines;
 namespace marker = authored_placement_marker;
 namespace trigger_geometry = package_trigger_volume_geometry;
 
+// Fixed edge budget for one frame of trigger prisms.
 constexpr std::size_t kTriggerEdgeCapacity = 4'096;
 std::atomic<std::size_t> g_triggerVolumes{};
 std::atomic<std::size_t> g_triggerEdges{};
@@ -25,6 +26,7 @@ std::atomic<bool> g_triggerEdgeCapacityExceeded{};
 
 /** Converts one bounded UI colour to the renderer's byte layout. */
 [[nodiscard]] lines::Color line_color(marker::MarkerColor channels) noexcept {
+    // Channels are held 0..1 and drawn as bytes.
     constexpr float scale = 255.0F;
     for (float& channel : channels) {
         channel = std::isfinite(channel) ? std::clamp(channel, 0.0F, 1.0F) : 1.0F;

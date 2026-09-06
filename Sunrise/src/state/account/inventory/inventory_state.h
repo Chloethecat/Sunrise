@@ -73,19 +73,16 @@ inline constexpr std::uint32_t kEmoteCollectionDefinitionHash = 3183180185U;
 /** Ordinary socket lane count the "Emotes" collection item's real content declares. */
 inline constexpr std::size_t kEmoteCollectionSocketLaneCount = 4;
 /**
- * Native equipment slot the "Emotes" collection item is equipped under, in place of the individual
- * emote it replaces. Its own real content carries no native equipment-slot mapping at all, unlike
- * every other character-scoped item, so callers that need one for this item specifically fall back
- * to this constant through resolve_native_equipment_slot() below.
+ * Native equipment slot the "Emotes" collection item is equipped under.
+ * It is the one character-scoped item whose content declares no slot of its own.
  */
 inline constexpr std::uint8_t kEmoteCollectionNativeEquipmentSlot =
     static_cast<std::uint8_t>(EquipmentSlot::emote);
 
 /**
  * Resolves the native equipment slot a configured item detail occupies.
- * Every character-scoped item declares its own native slot except the "Emotes" collection item
- * (kEmoteCollectionDefinitionHash), the one item whose real content has none. Any other item
- * missing a native slot is rejected instead of silently aliasing this fallback.
+ * Only kEmoteCollectionDefinitionHash may fall back to the constant above; any other item with no
+ * declared slot is rejected rather than aliased onto it.
  * @param definitionHash Authored item definition hash being resolved.
  * @param detailEquipmentSlot The installed item detail's own native slot, if it declares one.
  * @param nativeSlot Receives the resolved native slot on success.

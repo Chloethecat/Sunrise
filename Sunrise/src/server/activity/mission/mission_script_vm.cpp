@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <limits>
 #include <new>
@@ -26,6 +27,7 @@ using detail::Candidate;
 using detail::Handler;
 using detail::Impl;
 using detail::impl_from_state;
+using detail::raise_lua_error;
 using detail::VmAccess;
 
 static_assert(sizeof(Impl) <= kVmStorageByteCapacity);
@@ -43,7 +45,7 @@ constexpr std::uint32_t kHookInterval = 100;
 void instruction_hook(lua_State* state, lua_Debug*) {
     Impl* const impl = impl_from_state(state);
     if (impl == nullptr || impl->frame == nullptr) {
-        luaL_error(state, "instruction_budget");
+        raise_lua_error(state, "instruction_budget");
     }
     if (impl->frame->remainingInstructions <= kHookInterval) {
         impl->frame->remainingInstructions = 0;
@@ -103,6 +105,7 @@ void instruction_hook(lua_State* state, lua_Debug*) {
     return true;
 }
 
+// One callback name per EventKind, in EventKind order. The index is the kind.
 inline constexpr std::array<const char*, host::kEventKindCount> kEventHandlerNames{{
     "on_event_sensor_sense_updated",
     "on_event_client_state_changed",
@@ -187,6 +190,8 @@ failed_call_status(const Impl& impl, const CallFrame& frame, int luaStatus) noex
                                                       : CallStatus::scriptError;
 }
 
+// Past three quarters of the arena a step cannot keep up, so a full collection runs; below
+// that the step is charged 64 KiB at a time.
 constexpr std::size_t kCollectionPressureBytes = (kArenaByteCapacity * 3U) / 4U;
 constexpr int kCollectionStepKilobytes = 64;
 
@@ -537,9 +542,13 @@ bool restore_state(Vm& vm,
     impl.phase = phase;
     impl.stateRevision = revision;
     std::copy(variables.begin(), variables.end(), impl.variables.begin());
-    std::fill(impl.variables.begin() + variables.size(), impl.variables.end(), ScriptVariable{});
+    std::fill(impl.variables.begin() + static_cast<std::ptrdiff_t>(variables.size()),
+              impl.variables.end(),
+              ScriptVariable{});
     std::copy(timers.begin(), timers.end(), impl.timers.begin());
-    std::fill(impl.timers.begin() + timers.size(), impl.timers.end(), MissionTimer{});
+    std::fill(impl.timers.begin() + static_cast<std::ptrdiff_t>(timers.size()),
+              impl.timers.end(),
+              MissionTimer{});
     impl.variableCount = variables.size();
     impl.timerCount = timers.size();
     impl.nextTimerSequence = nextTimerSequence;

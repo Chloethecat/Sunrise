@@ -14,8 +14,8 @@ inline constexpr std::uint32_t kVersion = 37;
 /** The ABI contains only activity identity, topology, placement, and panel metadata. */
 inline constexpr std::uint32_t kSectionCount = 43;
 #if defined(SUNRISE_ACTIVITY_SDK_TESTING)
-/** The runtime accepts only the checked generated SDK build. */
-inline constexpr std::array<std::byte, 32> kExpectedSdkBuildSha256{
+/** The runtime accepts only the checked generated SDK build. Each pin is a SHA-256 digest. */
+inline constexpr std::array<std::byte, 32> kExpectedSdkBuildDigest{
     std::byte{0x13}, std::byte{0x1A}, std::byte{0xA4}, std::byte{0x2D}, std::byte{0xE2},
     std::byte{0x8E}, std::byte{0xBF}, std::byte{0x73}, std::byte{0x90}, std::byte{0xA1},
     std::byte{0xBD}, std::byte{0x47}, std::byte{0x7C}, std::byte{0xC0}, std::byte{0x16},
@@ -25,7 +25,7 @@ inline constexpr std::array<std::byte, 32> kExpectedSdkBuildSha256{
     std::byte{0xA3}, std::byte{0x20},
 };
 /** The runtime accepts only the full generated row projection for this build. */
-inline constexpr std::array<std::byte, 32> kExpectedPayloadSha256{
+inline constexpr std::array<std::byte, 32> kExpectedPayloadDigest{
     std::byte{0x39}, std::byte{0xE9}, std::byte{0x03}, std::byte{0x03}, std::byte{0x9B},
     std::byte{0xB6}, std::byte{0x0C}, std::byte{0x08}, std::byte{0xCA}, std::byte{0x1E},
     std::byte{0xCB}, std::byte{0x7D}, std::byte{0x19}, std::byte{0x9A}, std::byte{0x39},
@@ -35,7 +35,7 @@ inline constexpr std::array<std::byte, 32> kExpectedPayloadSha256{
     std::byte{0x0A}, std::byte{0x65},
 };
 /** The runtime pins the independently replayed package and executable identity. */
-inline constexpr std::array<std::byte, 32> kExpectedContentKeySha256{
+inline constexpr std::array<std::byte, 32> kExpectedContentKeyDigest{
     std::byte{0xCE}, std::byte{0xFB}, std::byte{0x02}, std::byte{0xD9}, std::byte{0x24},
     std::byte{0x98}, std::byte{0x18}, std::byte{0x6D}, std::byte{0x0F}, std::byte{0x9A},
     std::byte{0x50}, std::byte{0x9A}, std::byte{0x52}, std::byte{0x10}, std::byte{0x66},
@@ -45,7 +45,7 @@ inline constexpr std::array<std::byte, 32> kExpectedContentKeySha256{
     std::byte{0x0F}, std::byte{0x49},
 };
 /** The runtime pins the complete normalized logical-IR identity. */
-inline constexpr std::array<std::byte, 32> kExpectedLogicalIrSha256{
+inline constexpr std::array<std::byte, 32> kExpectedLogicalIrDigest{
     std::byte{0x1E}, std::byte{0x91}, std::byte{0xDC}, std::byte{0xBB}, std::byte{0x7D},
     std::byte{0xCD}, std::byte{0x5E}, std::byte{0xE0}, std::byte{0xE5}, std::byte{0x39},
     std::byte{0x2A}, std::byte{0xF9}, std::byte{0xF6}, std::byte{0x79}, std::byte{0x0B},
@@ -151,6 +151,7 @@ enum class ActorCommandEffect : std::uint32_t {
     setFaction = 1,
 };
 
+/** Row flag bits. `Exact` means every fact of that row came from the pinned executable. */
 inline constexpr std::uint32_t kActorMessageSchemaExact = 0x1U;
 inline constexpr std::uint32_t kActorCommandDefinitionExact = 0x1U;
 inline constexpr std::uint32_t kActorBehaviorProfileExact = 0x1U;
@@ -208,6 +209,7 @@ enum class RuntimeCodecFamily : std::uint32_t {
     sobjectModeZero = 2,
     sobjectModeOne = 4,
 };
+/** SObject RSAT and entity-type row flag bits, in the order the extraction sets them. */
 inline constexpr std::uint32_t kSobjectRsatExact = 0x1U;
 inline constexpr std::uint32_t kSobjectRsatDescriptorDynamicPresenceEligible = 0x1U;
 inline constexpr std::uint32_t kEntityTypeDefinitionExact = 0x1U;
@@ -236,6 +238,7 @@ inline constexpr std::uint32_t kSquadCandidateCountsInvariantComplete = 0x20U;
 inline constexpr std::uint32_t kSquadFlagMask =
     kSquadSourceDescriptorExact | kSquadSpawnerRuleEdgeExact | kSquadScenarioOccurrenceExact
     | kSquadAllPointsExact | kSquadMemberCountValid | kSquadCandidateCountsInvariantComplete;
+/** A squad runs only with every extraction fact present. */
 inline constexpr std::uint32_t kSquadRunnableMask = kSquadFlagMask;
 /** Member flags separate actor resolution from count-array completeness. */
 inline constexpr std::uint32_t kSquadMemberActorClassExact = 0x1U;
@@ -269,6 +272,7 @@ inline constexpr std::uint32_t kAuthoredSceneSquadSameObjectExact = 0x1U;
 inline constexpr std::uint32_t kAuthoredSceneSquadPerformanceTargetExact = 0x2U;
 inline constexpr std::uint32_t kAuthoredSceneSquadFlagMask =
     kAuthoredSceneSquadSameObjectExact | kAuthoredSceneSquadPerformanceTargetExact;
+/** The package slot type, classes and descriptor offset that name a performance sensor. */
 inline constexpr std::uint32_t kPerformanceSlotType = 42U;
 inline constexpr std::uint32_t kPerformanceComponentClass = 0x80809583U;
 inline constexpr std::uint32_t kPerformanceAuthSchema = 0x80809586U;
@@ -380,6 +384,11 @@ inline constexpr std::size_t kAuthoredSceneSquadEdgeSize = 40;
 inline constexpr std::size_t kTaskTargetSize = 44;
 inline constexpr std::size_t kDialogueCueTextSize = 36;
 inline constexpr std::size_t kDirectiveElementSize = 56;
+inline constexpr std::size_t kBehaviorProgramSize = 28;
+inline constexpr std::size_t kBehaviorInputSize = 36;
+inline constexpr std::size_t kBehaviorChannelWriteSize = 16;
+inline constexpr std::size_t kBehaviorOwnerSize = 32;
+inline constexpr std::size_t kBehaviorActivityBindingSize = 32;
 inline constexpr std::size_t kActorMessageSchemaSize = 48;
 inline constexpr std::size_t kActorCommandDefinitionSize = 64;
 inline constexpr std::size_t kActorBehaviorProfileSize = 32;
@@ -1408,11 +1417,11 @@ static_assert(sizeof(AuthoredSceneSquadEdge) == kAuthoredSceneSquadEdgeSize);
 static_assert(sizeof(TaskTarget) == kTaskTargetSize);
 static_assert(sizeof(DialogueCueText) == kDialogueCueTextSize);
 static_assert(sizeof(DirectiveElement) == kDirectiveElementSize);
-static_assert(sizeof(BehaviorProgram) == 28);
-static_assert(sizeof(BehaviorInput) == 36);
-static_assert(sizeof(BehaviorChannelWrite) == 16);
-static_assert(sizeof(BehaviorOwner) == 32);
-static_assert(sizeof(BehaviorActivityBinding) == 32);
+static_assert(sizeof(BehaviorProgram) == kBehaviorProgramSize);
+static_assert(sizeof(BehaviorInput) == kBehaviorInputSize);
+static_assert(sizeof(BehaviorChannelWrite) == kBehaviorChannelWriteSize);
+static_assert(sizeof(BehaviorOwner) == kBehaviorOwnerSize);
+static_assert(sizeof(BehaviorActivityBinding) == kBehaviorActivityBindingSize);
 static_assert(sizeof(ActorMessageSchema) == kActorMessageSchemaSize);
 static_assert(sizeof(ActorCommandDefinition) == kActorCommandDefinitionSize);
 static_assert(sizeof(ActorBehaviorProfile) == kActorBehaviorProfileSize);

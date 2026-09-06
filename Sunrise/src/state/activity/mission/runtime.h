@@ -93,7 +93,7 @@ bind(const SessionBinding& binding, const ProgramKey& program, Snapshot& output)
                             const ProgramKey& program,
                             std::uint64_t expectedRevision,
                             std::uint64_t expectedInputSequence,
-                            const CommitCandidate& candidate,
+                            const CommitCandidate& transaction,
                             Snapshot& output) noexcept;
 
 /** Assigns the exact next Host output revision to the durable head intent. */

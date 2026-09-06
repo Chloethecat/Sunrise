@@ -3,7 +3,7 @@
 #include <array>
 #include <cstring>
 #include <limits>
-#include <string>
+#include <string_view>
 
 #include "../../core/filesystem/path.h"
 #include "../../middleware/crypto/sha256.h"
@@ -120,8 +120,8 @@ constexpr std::array<std::uint32_t, format::kSectionCount> kExpectedStrides{
 }
 
 /** Resolves the exact parent directory before the pack mapping becomes public. */
-[[nodiscard]] bool pack_directory(const wchar_t* path, std::wstring& output) noexcept {
-    output.clear();
+[[nodiscard]] bool pack_directory(const wchar_t* path, core::path::Buffer& output) noexcept {
+    output = {};
     core::path::Buffer absolute;
     wchar_t* filePart = nullptr;
     const DWORD copied = GetFullPathNameW(
@@ -138,13 +138,7 @@ constexpr std::array<std::uint32_t, format::kSectionCount> kExpectedStrides{
     if (length == 0) {
         return false;
     }
-    try {
-        output.assign(absolute.chars.data(), length);
-        return true;
-    } catch (...) {
-        output.clear();
-        return false;
-    }
+    return core::path::assign(output, std::wstring_view(absolute.chars.data(), length));
 }
 
 } // namespace
@@ -213,10 +207,10 @@ bool load_path_expected(const wchar_t* path,
 #if defined(SUNRISE_ACTIVITY_SDK_TESTING)
 /** Loads the compile-pinned regression fixture without exposing that trust path in production. */
 bool load_path(const wchar_t* path, std::shared_ptr<Catalog>& output, Status& result) noexcept {
-    const ExpectedIdentity expected{format::kExpectedSdkBuildSha256,
-                                    format::kExpectedPayloadSha256,
-                                    format::kExpectedContentKeySha256,
-                                    format::kExpectedLogicalIrSha256};
+    const ExpectedIdentity expected{format::kExpectedSdkBuildDigest,
+                                    format::kExpectedPayloadDigest,
+                                    format::kExpectedContentKeyDigest,
+                                    format::kExpectedLogicalIrDigest};
     return load_path_expected(path, expected, output, result);
 }
 
@@ -225,10 +219,10 @@ bool load_path_for_test(const wchar_t* path,
                         const std::array<std::byte, 32>& expectedPayloadSha256,
                         std::shared_ptr<Catalog>& output,
                         Status& result) noexcept {
-    const ExpectedIdentity expected{format::kExpectedSdkBuildSha256,
+    const ExpectedIdentity expected{format::kExpectedSdkBuildDigest,
                                     expectedPayloadSha256,
-                                    format::kExpectedContentKeySha256,
-                                    format::kExpectedLogicalIrSha256};
+                                    format::kExpectedContentKeyDigest,
+                                    format::kExpectedLogicalIrDigest};
     return load_path_expected(path, expected, output, result);
 }
 #endif

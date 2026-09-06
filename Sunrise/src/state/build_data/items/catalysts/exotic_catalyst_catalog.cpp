@@ -8,8 +8,8 @@
 #include "../../../account/inventory/item_state.h"
 #include "../../../unlocks/definition.h"
 #include "../../table.h"
-#include "core/threading/srw_lock.h"
 #include "../details/definition.h"
+#include "core/threading/srw_lock.h"
 
 namespace sunrise::state::build_data::items::catalysts {
 namespace {
@@ -145,6 +145,11 @@ bool completion_enabled() noexcept {
     return g_completionEnabled.load(std::memory_order_acquire);
 }
 
+/**
+ * Checks that every catalog row is canonical and the rows are in native item-index order.
+ * @param definitions Complete candidate catalog.
+ * @return False on an empty or oversized catalog, or on any row that breaks its shape.
+ */
 bool valid(std::span<const Definition> definitions) noexcept {
     if (definitions.empty() || definitions.size() > kDefinitionCapacity) {
         return false;
@@ -167,9 +172,8 @@ bool valid(std::span<const Definition> definitions) noexcept {
             || !valid_availability(definition.availability)
             || (definition.availability == Availability::unsupported
                 && (hasCompletedPlug || hasProgress || hasEffect || hasAcquisition
-                    || definition.completion.flagCount != 0
-                    || definition.completion.valueCount != 0 || hasObjective
-                    || definition.objective.value != 0))
+                    || definition.completion.flagCount != 0 || definition.completion.valueCount != 0
+                    || hasObjective || definition.objective.value != 0))
             || (definition.availability != Availability::unsupported
                 && (!hasCompletedPlug || !hasEffect || !hasAcquisition
                     || !valid_completion(definition.completion)))
@@ -192,6 +196,10 @@ bool replace(std::span<const Definition> definitions) noexcept {
     return g_definitions.replace(definitions);
 }
 
+/**
+ * Looks up one weapon's catalyst state under the shared lock.
+ * @return The released relation, a safe skip state, or absence for the item.
+ */
 Result resolve(std::uint16_t itemDefinitionIndex) noexcept {
     const std::shared_lock guard(g_lock);
     const Definition* definition = find(g_definitions.rows(), itemDefinitionIndex);
@@ -215,6 +223,11 @@ Result resolve(std::uint16_t itemDefinitionIndex) noexcept {
              definition->objective}};
 }
 
+/**
+ * Resolves the item row that supplies a socketed catalyst's perks and stat changes.
+ * @param plugDefinitionIndex Socketed plug definition index.
+ * @return The linked effect item, or plugDefinitionIndex when the lane is not a released catalyst.
+ */
 std::uint16_t resolve_effect(std::uint16_t itemDefinitionIndex,
                              std::uint8_t socketLane,
                              std::uint16_t plugDefinitionIndex) noexcept {
@@ -236,6 +249,12 @@ bool owns_lane(std::uint16_t itemDefinitionIndex, std::uint8_t socketLane) noexc
     return definition != nullptr && definition->socketLane == socketLane;
 }
 
+/**
+ * Applies a released catalyst plug and the Masterwork bit as one checked item change.
+ * @param flags Candidate item-state bits.
+ * @param plugs Candidate ordinary socket plugs.
+ * @return Completed, unchanged, or failed; failed leaves no partial change.
+ */
 ApplyResult apply_completed(std::uint16_t itemDefinitionIndex,
                             std::uint32_t& flags,
                             std::span<std::optional<std::uint16_t>> plugs) noexcept {
@@ -259,6 +278,11 @@ ApplyResult apply_completed(std::uint16_t itemDefinitionIndex,
     return ApplyResult::completed;
 }
 
+/**
+ * Adds the acquired-state gates, completion flags and values of every released catalyst.
+ * @param family Candidate Family-5 state; unchanged unless every override fits.
+ * @return False when either override bank cannot hold the deduplicated result.
+ */
 bool append_investment_overrides(state::Family5State& family) noexcept {
     if (!completion_enabled()) {
         return true;
@@ -292,6 +316,11 @@ bool append_investment_overrides(state::Family5State& family) noexcept {
     return true;
 }
 
+/**
+ * Raises the account objective values that released legacy catalysts need.
+ * @param values Candidate objective bank; unchanged unless every objective is in range.
+ * @return False when a released objective falls outside the bank or carries no value.
+ */
 bool append_objective_completions(std::span<std::int32_t> values) noexcept {
     if (!completion_enabled()) {
         return true;

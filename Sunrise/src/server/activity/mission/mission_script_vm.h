@@ -24,6 +24,7 @@ inline constexpr std::size_t kVariableCapacity = state::activity::mission::kVari
 inline constexpr std::size_t kTimerCapacity = state::activity::mission::kTimerCapacity;
 inline constexpr std::size_t kStateKeyByteCapacity =
     state::activity::mission::kStateKeyByteCapacity;
+/** One variable string may not outgrow the durable slot the state holds it in. */
 inline constexpr std::size_t kVariableStringByteCapacity =
     state::activity::mission::kVariableStringByteCapacity;
 /** Squad Auth accepts at most fifteen authored member counts. */

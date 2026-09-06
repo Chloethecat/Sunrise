@@ -18,7 +18,6 @@ bool Parser::parse_root(Settings& output) noexcept {
         return at_end();
     }
     bool hasVersion = false;
-    bool hasCompleteExoticCatalysts = false;
     bool hasCore = false;
     bool hasClient = false;
     bool hasServer = false;
@@ -37,11 +36,6 @@ bool Parser::parse_root(Settings& output) noexcept {
             }
             output.version = static_cast<std::uint32_t>(value);
             hasVersion = true;
-        } else if (key == "complete_exotic_catalysts") {
-            if (hasCompleteExoticCatalysts || !boolean(output.completeExoticCatalysts)) {
-                return false;
-            }
-            hasCompleteExoticCatalysts = true;
         } else if (key == "core") {
             if (hasCore || !core(output)) {
                 return false;

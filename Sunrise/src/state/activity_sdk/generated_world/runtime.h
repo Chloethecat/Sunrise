@@ -99,6 +99,7 @@ private:
     std::shared_ptr<const build_data::scriptables::Snapshot> snapshot_{};
 };
 
+/** Copies the whole bound identity so the view stays valid for the snapshot's lifetime. */
 inline GeneratedWorldView::GeneratedWorldView(
     const activity_sdk::BoundView& activitySdkView,
     std::uint32_t scenarioTag,

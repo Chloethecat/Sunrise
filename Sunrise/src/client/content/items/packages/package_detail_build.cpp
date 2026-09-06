@@ -76,7 +76,7 @@ namespace domain = state::build_data::items::details;
 constexpr std::size_t kConstantsPrefix = 8;
 /** Client offset of the stat row the banner's power number is searched by. */
 constexpr std::size_t kLightStatRowOffset = 592;
-/** Build-86657 sub_140553ED0 reads the weapon Power stat row at this client offset. */
+/** Client offset of the stat row a weapon's power number is read from. */
 constexpr std::size_t kWeaponPowerStatRowOffset = 606;
 /**
  * Client offsets of the 6 character stat rows, in the two runs the blob stores them in.

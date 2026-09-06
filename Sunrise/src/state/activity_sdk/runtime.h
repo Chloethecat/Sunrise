@@ -5,10 +5,10 @@
 #include <cstdint>
 #include <memory>
 #include <span>
-#include <string>
 #include <string_view>
 #include <type_traits>
 
+#include "../../core/filesystem/path.h"
 #include "../../middleware/bap/activity_message/wire_schema/activity_communication_route.h"
 #include "../activity/definition.h"
 #include "../build_data/scenarios/definition.h"
@@ -70,8 +70,11 @@ struct AuthoredSceneSeed final {
     std::uint32_t resourceTag;
 };
 
+/** Six packed 32-bit fields; the size pins that layout against ABI drift. */
+inline constexpr std::size_t kAuthoredSceneSeedSize = 24;
+
 static_assert(std::is_trivial_v<AuthoredSceneSeed> && std::is_standard_layout_v<AuthoredSceneSeed>);
-static_assert(sizeof(AuthoredSceneSeed) == 24);
+static_assert(sizeof(AuthoredSceneSeed) == kAuthoredSceneSeedSize);
 
 /** The mission owns which objects its seed leaves out, so Mission State owns the type. */
 using MissionSeedOmission = ::sunrise::state::activity::mission::MissionSeedOmission;
@@ -257,7 +260,7 @@ private:
     const std::byte* view_{};
     std::size_t size_{};
     const format::Header* header_{};
-    std::wstring artifactDirectory_{};
+    core::path::Buffer artifactDirectory_{};
 };
 
 using Snapshot = std::shared_ptr<const Catalog>;

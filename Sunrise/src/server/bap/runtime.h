@@ -18,6 +18,30 @@
 
 namespace sunrise::server::bap {
 
+/** Notes that a committed publication replaced investment state before the next freshness query. */
+using InvestmentPublicationConsumer = void (*)() noexcept;
+
+/** Makes the next investment refresh pump take one more slice. */
+using InvestmentSliceConsumer = void (*)() noexcept;
+
+/**
+ * Registers the Client's investment consumers; the Client sets them once at activation.
+ * @param publication Committed investment publication report.
+ * @param slice Extra investment refresh slice request.
+ * @return False when either consumer is null or the slots are already taken.
+ */
+[[nodiscard]] bool register_client_investment_consumers(InvestmentPublicationConsumer publication,
+                                                        InvestmentSliceConsumer slice) noexcept;
+
+/** Clears the Client's investment consumers at Client shutdown. */
+void unregister_client_investment_consumers() noexcept;
+
+/** Reports a committed investment publication. Does nothing while no Client is registered. */
+void notify_investment_publication() noexcept;
+
+/** Asks for one more investment refresh slice. Does nothing while no Client is registered. */
+void request_investment_slice() noexcept;
+
 /** Read-only eligibility state from one exact authenticated ActivityClient link. */
 struct ActivityLinkView final {
     std::size_t matchingLinks{};
@@ -172,7 +196,7 @@ activity_type23_override_available(const state::activity::SessionBinding& bindin
 /** Queues activity message 44 on one exact ActivityClient generation. */
 [[nodiscard]] bool request_replication_epoch(const state::activity::SessionBinding& binding,
                                              std::uint64_t expectedGeneration,
-                                             std::uint8_t generation) noexcept;
+                                             std::uint8_t requestedEpoch) noexcept;
 
 /** Queues one msg-30 readback on an exact unique ActivityClient link. */
 [[nodiscard]] ActivityAuthorityQueryStatus
@@ -227,8 +251,6 @@ activity_authority_reset_snapshot(const state::activity::SessionBinding& binding
     bool snap,
     std::int32_t expectedRegion,
     std::uint64_t expectedGeneration,
-    std::uint32_t scenarioRow,
-    std::uint32_t stateRow,
     const activity::host::ScriptableOutputReservation* reservation = nullptr) noexcept;
 
 /** Queues one structurally compiled SDK Auth body through the durable message-5 lane. */
@@ -240,8 +262,6 @@ activity_authority_reset_snapshot(const state::activity::SessionBinding& binding
     std::uint16_t bitCount,
     std::int32_t expectedRegion,
     std::uint64_t expectedGeneration,
-    std::uint32_t scenarioRow,
-    std::uint32_t stateRow,
     const activity::host::ScriptableOutputReservation* reservation = nullptr) noexcept;
 
 /** Queues a type-31 pulse only while exactly one authenticated link owns the binding. */
@@ -258,8 +278,6 @@ activity_authority_reset_snapshot(const state::activity::SessionBinding& binding
     const state::build_data::scenarios::RosterGroup& stateLocalRosterGroup,
     std::int32_t expectedRegion,
     std::uint64_t expectedGeneration,
-    std::uint32_t scenarioRow,
-    std::uint32_t stateRow,
     const activity::host::ScriptableOutputReservation* reservation = nullptr) noexcept;
 
 /** Queues one authored sequence restart only while its exact mission-seed state is live. */
@@ -269,8 +287,6 @@ activity_authority_reset_snapshot(const state::activity::SessionBinding& binding
     const state::build_data::scenarios::RosterGroup& stateLocalRosterGroup,
     std::int32_t expectedRegion,
     std::uint64_t expectedGeneration,
-    std::uint32_t scenarioRow,
-    std::uint32_t stateRow,
     const activity::host::ScriptableOutputReservation* reservation = nullptr) noexcept;
 
 /** Queues one authored cinematic start or stop while its mission-seed state is live. */
@@ -281,8 +297,6 @@ activity_authority_reset_snapshot(const state::activity::SessionBinding& binding
     bool active,
     std::int32_t expectedRegion,
     std::uint64_t expectedGeneration,
-    std::uint32_t scenarioRow,
-    std::uint32_t stateRow,
     const activity::host::ScriptableOutputReservation* reservation = nullptr) noexcept;
 
 /** Queues one type-42 performance start while its mission-seed state is live. */
@@ -293,8 +307,6 @@ activity_authority_reset_snapshot(const state::activity::SessionBinding& binding
     std::uint32_t stateNameHash,
     std::int32_t expectedRegion,
     std::uint64_t expectedGeneration,
-    std::uint32_t scenarioRow,
-    std::uint32_t stateRow,
     const activity::host::ScriptableOutputReservation* reservation = nullptr) noexcept;
 
 /** Queues one authored-scene activation only while its exact mission-seed state is live. */
@@ -304,8 +316,6 @@ activity_authority_reset_snapshot(const state::activity::SessionBinding& binding
     const state::build_data::scenarios::RosterGroup& stateLocalRosterGroup,
     std::int32_t expectedRegion,
     std::uint64_t expectedGeneration,
-    std::uint32_t scenarioRow,
-    std::uint32_t stateRow,
     const activity::host::ScriptableOutputReservation* reservation = nullptr) noexcept;
 
 /** Queues one authored dialogue line only while its exact mission-seed state is live. */
@@ -317,8 +327,6 @@ activity_authority_reset_snapshot(const state::activity::SessionBinding& binding
     std::uint16_t authoredCueCount,
     std::int32_t expectedRegion,
     std::uint64_t expectedGeneration,
-    std::uint32_t scenarioRow,
-    std::uint32_t stateRow,
     const activity::host::ScriptableOutputReservation* reservation = nullptr) noexcept;
 
 /** Queues one objective reset only while its exact mission-seed state is live. */
@@ -328,8 +336,6 @@ activity_authority_reset_snapshot(const state::activity::SessionBinding& binding
     const state::build_data::scenarios::RosterGroup& stateLocalRosterGroup,
     std::int32_t expectedRegion,
     std::uint64_t expectedGeneration,
-    std::uint32_t scenarioRow,
-    std::uint32_t stateRow,
     const activity::host::ScriptableOutputReservation* reservation = nullptr) noexcept;
 
 /** Queues one authored task only while its exact mission-seed state is live. */
@@ -339,8 +345,6 @@ activity_authority_reset_snapshot(const state::activity::SessionBinding& binding
     const state::build_data::scenarios::RosterGroup& stateLocalRosterGroup,
     std::int32_t expectedRegion,
     std::uint64_t expectedGeneration,
-    std::uint32_t scenarioRow,
-    std::uint32_t stateRow,
     const activity::host::ScriptableOutputReservation* reservation = nullptr) noexcept;
 
 /** Queues a squad placement only while exactly one authenticated link owns the binding. */

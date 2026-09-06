@@ -52,6 +52,7 @@ sdk_find_schema(const void* raw, std::uint32_t handle, wire::runtime::SchemaView
         if (row.handle != handle) {
             continue;
         }
+        /** Only these two flags are understood; any other flag refuses the row. */
         constexpr std::uint32_t kAllowedFlags =
             format::kRuntimeSchemaExact | format::kRuntimeSchemaArrayRegion;
         const bool arrayRegion = (row.flags & format::kRuntimeSchemaArrayRegion) != 0;
@@ -367,6 +368,7 @@ bool encode_actor_command_body(const ActorCommandCatalog& catalog,
     }
 
     std::array<wire::RuntimeDraftValue, wire::kRuntimeValueCapacity> values{};
+    /** Header roles in wire order; the values below are staged in the same order. */
     constexpr std::array<wire::ValueRole, kCommandHeaderValueCount> roles{
         wire::ValueRole::commandDefault,
         wire::ValueRole::commandMode,

@@ -9,8 +9,11 @@ namespace sunrise::middleware::bap::activity_message::sense_update {
 namespace {
 namespace bits = middleware::encoding::bits;
 
+/** Field widths of the object header ClientRef, in bits. */
 constexpr std::uint8_t kKeyWidth = 32, kTypeWidth = 7, kIndexWidth = 16;
+/** The slot type and index are sent unsigned, biased so their absent value is zero. */
 constexpr std::uint32_t kTypeBias = 1, kIndexBias = 32768;
+/** Schema tags the sense-update objects and their nested arrays declare. */
 constexpr std::uint32_t kDevice = 0x80804F47U, kScene = 0x8080626AU;
 constexpr std::uint32_t kSquad = 0x80807ECCU, kObjective = 0x80807F04U;
 constexpr std::uint32_t kOccupancy = 0x80809531U;
@@ -33,12 +36,16 @@ public:
     Reader(bits::Reader& source, std::size_t budget, std::size_t total) noexcept
         : source_(source), left_(budget), total_(total) {}
     [[nodiscard]] bool read(std::uint8_t width, std::uint64_t& value) noexcept {
-        if (width > left_ || !source_.read(width, value)) return false;
+        if (width > left_ || !source_.read(width, value)) {
+            return false;
+        }
         left_ -= width;
         return true;
     }
     [[nodiscard]] bool skip(std::size_t width) noexcept {
-        if (width > left_ || !source_.skip(width)) return false;
+        if (width > left_ || !source_.skip(width)) {
+            return false;
+        }
         left_ -= width;
         return true;
     }
@@ -55,6 +62,7 @@ private:
     std::size_t total_{};
 };
 
+/** @param width Field width in bits. @return Low-bit mask of that width. */
 [[nodiscard]] constexpr std::uint64_t mask(std::uint8_t width) noexcept {
     return width == 64 ? (std::numeric_limits<std::uint64_t>::max)()
                        : (std::uint64_t{1} << width) - 1;
@@ -63,7 +71,9 @@ private:
 signed_value(std::uint64_t raw, std::int32_t bias, std::uint8_t storageWidth) noexcept {
     const std::uint64_t decoded =
         (raw - static_cast<std::uint64_t>(static_cast<std::int64_t>(bias))) & mask(storageWidth);
-    if (storageWidth == 64) return static_cast<std::int64_t>(decoded);
+    if (storageWidth == 64) {
+        return static_cast<std::int64_t>(decoded);
+    }
     const std::uint64_t sign = std::uint64_t{1} << (storageWidth - 1);
     return static_cast<std::int64_t>((decoded ^ sign) - sign);
 }
@@ -96,7 +106,9 @@ public:
              std::int64_t signedRaw,
              float real,
              bool present) noexcept {
-        if (object_ == nullptr) return;
+        if (object_ == nullptr) {
+            return;
+        }
         if (packet_.valueCount == packet_.values.size()) {
             packet_.valuesTruncated = true;
             return;
@@ -120,11 +132,21 @@ private:
     DecodedObject* object_{};
 };
 
+/**
+ * Reads the presence bit that precedes an optional field.
+ * @param optional False when the field is required, which is always present.
+ * @param output Receives whether the field follows.
+ * @return False when the bit does not fit the object's budget.
+ */
 [[nodiscard]] bool present(Reader& reader, bool optional, bool& output) noexcept {
     output = true;
-    if (!optional) return true;
+    if (!optional) {
+        return true;
+    }
     std::uint64_t raw = 0;
-    if (!reader.read(1, raw)) return false;
+    if (!reader.read(1, raw)) {
+        return false;
+    }
     output = raw != 0;
     return true;
 }
@@ -142,9 +164,13 @@ private:
                                  std::uint32_t occurrence = 0) noexcept {
     const auto at = static_cast<std::uint32_t>(reader.position());
     bool exists = true;
-    if (!present(reader, optional, exists)) return false;
+    if (!present(reader, optional, exists)) {
+        return false;
+    }
     std::uint64_t raw = 0;
-    if (exists && !reader.read(width, raw)) return false;
+    if (exists && !reader.read(width, raw)) {
+        return false;
+    }
     values.put(schema,
                ordinal,
                occurrence,
@@ -175,9 +201,13 @@ private:
                                std::uint32_t occurrence = 0) noexcept {
     const auto at = static_cast<std::uint32_t>(reader.position());
     bool exists = true;
-    if (!present(reader, optional, exists)) return false;
+    if (!present(reader, optional, exists)) {
+        return false;
+    }
     std::uint64_t raw = 0;
-    if (exists && !reader.read(wireWidth, raw)) return false;
+    if (exists && !reader.read(wireWidth, raw)) {
+        return false;
+    }
     const std::int64_t decoded = exists ? signed_value(raw, bias, storageWidth) : 0;
     values.put(schema,
                ordinal,
@@ -200,20 +230,37 @@ private:
                              std::uint32_t occurrence = 0) noexcept {
     const auto at = static_cast<std::uint32_t>(reader.position());
     bool exists = true;
-    if (!present(reader, optional, exists)) return false;
+    if (!present(reader, optional, exists)) {
+        return false;
+    }
     std::uint64_t raw = 0;
-    if (exists && !reader.read(1, raw)) return false;
+    if (exists && !reader.read(1, raw)) {
+        return false;
+    }
     values.put(
         schema, ordinal, occurrence, at, exists ? 1 : 0, ValueKind::boolean, raw, 0, 0.0F, exists);
     return true;
 }
+/**
+ * Expands one quantized real back to its float value.
+ * @param raw Field bits as read.
+ * @param width Field width; 32 carries a raw float instead.
+ * @param maximumBits Quantization ceiling, as float bits.
+ * @return The decoded value. The lowest and highest levels are exact.
+ */
 [[nodiscard]] float
 real_value(std::uint64_t raw, std::uint8_t width, std::uint32_t maximumBits) noexcept {
-    if (width == 32) return std::bit_cast<float>(static_cast<std::uint32_t>(raw));
+    if (width == 32) {
+        return std::bit_cast<float>(static_cast<std::uint32_t>(raw));
+    }
     const float maximum = std::bit_cast<float>(maximumBits);
     const std::uint64_t levels = std::uint64_t{1} << width;
-    if (raw == 0) return 0.0F;
-    if (raw == levels - 1) return maximum;
+    if (raw == 0) {
+        return 0.0F;
+    }
+    if (raw == levels - 1) {
+        return maximum;
+    }
     const float step = maximum / static_cast<float>(levels - 2);
     return static_cast<float>(raw - 1) * step + step * 0.5F;
 }
@@ -232,9 +279,13 @@ real_value(std::uint64_t raw, std::uint8_t width, std::uint32_t maximumBits) noe
                              std::uint32_t maximumBits = 0) noexcept {
     const auto at = static_cast<std::uint32_t>(reader.position());
     bool exists = true;
-    if (!present(reader, optional, exists)) return false;
+    if (!present(reader, optional, exists)) {
+        return false;
+    }
     std::uint64_t raw = 0;
-    if (exists && !reader.read(width, raw)) return false;
+    if (exists && !reader.read(width, raw)) {
+        return false;
+    }
     values.put(schema,
                ordinal,
                occurrence,
@@ -264,8 +315,9 @@ real_value(std::uint64_t raw, std::uint8_t width, std::uint32_t maximumBits) noe
                             32,
                             32,
                             (std::numeric_limits<std::int32_t>::min)(),
-                            true))
+                            true)) {
             return NativeStatus::malformed;
+        }
     }
     return NativeStatus::complete;
 }
@@ -308,16 +360,23 @@ real_value(std::uint64_t raw, std::uint8_t width, std::uint32_t maximumBits) noe
             reader, values, kScene, 0, 32, 32, (std::numeric_limits<std::int32_t>::min)(), false)
         || !read_bool(reader, values, kScene, 1, false)
         || !read_signed(reader, values, kScene, 2, 31, 32, 0, true)
-        || !read_signed(reader, values, kScene, 3, 2, 8, 1, false))
+        || !read_signed(reader, values, kScene, 3, 2, 8, 1, false)) {
         return NativeStatus::malformed;
+    }
     std::uint64_t count = 0;
     const auto at = static_cast<std::uint32_t>(reader.position());
-    if (!reader.read(6, count)) return NativeStatus::malformed;
-    if (count > 32) return NativeStatus::unsafeCount;
+    if (!reader.read(6, count)) {
+        return NativeStatus::malformed;
+    }
+    if (count > 32) {
+        return NativeStatus::unsafeCount;
+    }
     values.put(kSceneList, 0, 0, at, 6, ValueKind::unsignedInteger, count, 0, 0.0F, true);
-    for (std::uint32_t index = 0; index < count; ++index)
-        if (!read_unsigned(reader, values, kSceneEvents, 0, 32, false, index))
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (!read_unsigned(reader, values, kSceneEvents, 0, 32, false, index)) {
             return NativeStatus::malformed;
+        }
+    }
     return NativeStatus::complete;
 }
 /**
@@ -337,17 +396,24 @@ real_value(std::uint64_t raw, std::uint8_t width, std::uint32_t maximumBits) noe
         || !read_signed(reader, values, kSquad, 7, 3, 8, 1, false)
         || !read_bool(reader, values, kSquad, 8, false)
         || !read_bool(reader, values, kSquad, 9, false)
-        || !read_bool(reader, values, kSquad, 10, false))
+        || !read_bool(reader, values, kSquad, 10, false)) {
         return NativeStatus::malformed;
+    }
     bool exists = false;
-    if (!present(reader, true, exists)) return NativeStatus::malformed;
+    if (!present(reader, true, exists)) {
+        return NativeStatus::malformed;
+    }
     if (exists) {
         std::uint64_t count = 0;
         const auto at = static_cast<std::uint32_t>(reader.position());
-        if (!reader.read(4, count)) return NativeStatus::malformed;
-        if (count > 8) return NativeStatus::unsafeCount;
+        if (!reader.read(4, count)) {
+            return NativeStatus::malformed;
+        }
+        if (count > 8) {
+            return NativeStatus::unsafeCount;
+        }
         values.put(kSquadList, 0, 0, at, 4, ValueKind::unsignedInteger, count, 0, 0.0F, true);
-        for (std::uint32_t index = 0; index < count; ++index)
+        for (std::uint32_t index = 0; index < count; ++index) {
             if (!read_signed(reader,
                              values,
                              kSquadCounts,
@@ -356,14 +422,20 @@ real_value(std::uint64_t raw, std::uint8_t width, std::uint32_t maximumBits) noe
                              32,
                              (std::numeric_limits<std::int32_t>::min)(),
                              false,
-                             index))
+                             index)) {
                 return NativeStatus::malformed;
+            }
+        }
     }
-    if (!present(reader, true, exists)) return NativeStatus::malformed;
+    if (!present(reader, true, exists)) {
+        return NativeStatus::malformed;
+    }
     if (exists) {
-        for (std::uint32_t index = 0; index < 24; ++index)
-            if (!read_real(reader, values, kSquadReals, 0, 7, true, index, 1157562368U))
+        for (std::uint32_t index = 0; index < 24; ++index) {
+            if (!read_real(reader, values, kSquadReals, 0, 7, true, index, 1157562368U)) {
                 return NativeStatus::malformed;
+            }
+        }
     }
     return NativeStatus::complete;
 }
@@ -375,19 +447,28 @@ real_value(std::uint64_t raw, std::uint8_t width, std::uint32_t maximumBits) noe
  */
 [[nodiscard]] NativeStatus decode_objective(Reader& reader, Values& values) noexcept {
     bool exists = false;
-    if (!present(reader, true, exists)) return NativeStatus::malformed;
+    if (!present(reader, true, exists)) {
+        return NativeStatus::malformed;
+    }
     if (exists) {
         for (std::uint32_t block = 0; block < 24; ++block) {
             if (!read_signed(reader, values, kObjectiveBlock, 0, 7, 8, 0, true, block)
-                || !read_unsigned(reader, values, kObjectiveBlock, 1, 1, false, block))
+                || !read_unsigned(reader, values, kObjectiveBlock, 1, 1, false, block)) {
                 return NativeStatus::malformed;
+            }
             bool tasks = false;
-            if (!present(reader, true, tasks)) return NativeStatus::malformed;
-            if (!tasks) continue;
-            for (std::uint32_t task = 0; task < 24; ++task)
+            if (!present(reader, true, tasks)) {
+                return NativeStatus::malformed;
+            }
+            if (!tasks) {
+                continue;
+            }
+            for (std::uint32_t task = 0; task < 24; ++task) {
                 if (!read_signed(
-                        reader, values, kObjectiveTasks, 0, 7, 8, 0, true, block * 24 + task))
+                        reader, values, kObjectiveTasks, 0, 7, 8, 0, true, block * 24 + task)) {
                     return NativeStatus::malformed;
+                }
+            }
         }
     }
     return read_signed(reader, values, kObjective, 1, 31, 32, 0, true)
@@ -406,15 +487,26 @@ real_value(std::uint64_t raw, std::uint8_t width, std::uint32_t maximumBits) noe
             reader, values, kObject, 0, 32, 32, (std::numeric_limits<std::int32_t>::min)(), false)
         || !read_bool(reader, values, kObject, 1, false)
         || !read_bool(reader, values, kObject, 2, false)
-        || !read_signed(
-            reader, values, kObject, 3, 32, 32, (std::numeric_limits<std::int32_t>::min)(), false))
+        || !read_signed(reader,
+                        values,
+                        kObject,
+                        3,
+                        32,
+                        32,
+                        (std::numeric_limits<std::int32_t>::min)(),
+                        false)) {
         return NativeStatus::malformed;
-    for (std::uint32_t index = 0; index < 2; ++index)
-        if (!read_unsigned(reader, values, kObjectSpawnMask, 0, 32, false, index))
+    }
+    for (std::uint32_t index = 0; index < 2; ++index) {
+        if (!read_unsigned(reader, values, kObjectSpawnMask, 0, 32, false, index)) {
             return NativeStatus::malformed;
+        }
+    }
     std::uint64_t count = 0;
     const auto at = static_cast<std::uint32_t>(reader.position());
-    if (!reader.read(2, count)) return NativeStatus::malformed;
+    if (!reader.read(2, count)) {
+        return NativeStatus::malformed;
+    }
     values.put(kObjectReplies, 0, 0, at, 2, ValueKind::unsignedInteger, count, 0, 0.0F, true);
     // Reply elements carry per-schema registered bodies with no authored layout here.
     return count == 0 ? NativeStatus::complete : NativeStatus::unsupported;
@@ -476,8 +568,12 @@ real_value(std::uint64_t raw, std::uint8_t width, std::uint32_t maximumBits) noe
 [[nodiscard]] NativeStatus
 decode_body(std::uint32_t schema, Reader& reader, Values& values) noexcept {
     std::uint64_t root = 0;
-    if (!reader.read(1, root)) return NativeStatus::malformed;
-    if (root == 0) return NativeStatus::complete;
+    if (!reader.read(1, root)) {
+        return NativeStatus::malformed;
+    }
+    if (root == 0) {
+        return NativeStatus::complete;
+    }
     switch (schema) {
     case kDevice:
         return decode_device(reader, values);
@@ -498,7 +594,9 @@ decode_body(std::uint32_t schema, Reader& reader, Values& values) noexcept {
     }
 }
 [[nodiscard]] bool skip_group(Reader& reader) noexcept {
-    if (reader.left() == 0 || !reader.skip(reader.left() - 1)) return false;
+    if (reader.left() == 0 || !reader.skip(reader.left() - 1)) {
+        return false;
+    }
     std::uint64_t end = 0;
     return reader.read(1, end) && end == 0 && reader.left() == 0;
 }
@@ -528,7 +626,9 @@ bool decode_sense_update(std::span<const std::byte> input,
                          std::size_t& consumed) noexcept {
     update = {};
     consumed = 0;
-    if (input.size() > kOuterByteCapacity) return false;
+    if (input.size() > kOuterByteCapacity) {
+        return false;
+    }
     const std::size_t total = input.size() * encoding::kBitsPerByte;
     bits::Reader reader(input);
     std::uint64_t literal = 0, root = 0;
@@ -550,7 +650,9 @@ bool decode_sense_update(std::span<const std::byte> input,
             finish(update, reader, total, DecodeStatus::malformed, consumed);
             return false;
         }
-        if (groupPresent == 0) break;
+        if (groupPresent == 0) {
+            break;
+        }
         std::uint64_t groupKey = 0, groupBits = 0;
         if (!reader.read(32, groupKey) || !reader.read(32, groupBits)
             || groupBits > kGroupByteCapacity * 8 || groupBits > reader.remaining_bits()) {
@@ -616,8 +718,9 @@ bool decode_sense_update(std::span<const std::byte> input,
                 retained->slotType = type;
                 retained->slotIndex = index;
                 retained->firstValue = static_cast<std::uint32_t>(update.decoded.valueCount);
-            } else
+            } else {
                 update.decoded.objectsTruncated = true;
+            }
             SlotTarget slot{};
             const TargetStatus slotStatus =
                 resolver.resolveSlot == nullptr
@@ -629,10 +732,11 @@ bool decode_sense_update(std::span<const std::byte> input,
                 retained->schemaRow = slot.senseSchema;
             }
             if (slotStatus != TargetStatus::resolved) {
-                if (retained != nullptr)
+                if (retained != nullptr) {
                     retained->status = slotStatus == TargetStatus::schemaUnavailable
                                            ? ObjectStatus::schemaUnavailable
                                            : ObjectStatus::targetUnavailable;
+                }
                 if (!skip_group(body)) {
                     finish(update, reader, total, DecodeStatus::malformed, consumed);
                     return false;

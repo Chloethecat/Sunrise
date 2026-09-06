@@ -37,9 +37,7 @@ struct AuthorityState final {
     std::array<std::uint16_t, kAuthoritySlotCount> grantTokens{};
     /**
      * Highest token ever issued per bubble, which a release does not clear.
-     * The client compares an arriving token against its own mirror and ignores a repeat, so a
-     * re-grant after a hand-back has to carry a token it has not already seen. Keeping the issued
-     * value separately from the in-force one is what lets the next grant differ.
+     * The client ignores a token its mirror already holds, so a re-grant must exceed this.
      */
     std::array<std::uint16_t, kAuthoritySlotCount> issuedTokens{};
     /** True while the client holds the bubble. An abdication clears it. */

@@ -27,6 +27,7 @@ namespace sunrise::client::content::activity::scriptables::internal {
 
 namespace catalog = state::build_data::scriptables;
 
+// Fixed capacities bound one cached table's rows and inline bytes.
 constexpr std::size_t kCachedTableCapacity = 2'048;
 constexpr std::size_t kCachedInstanceCapacity = 2'000'000;
 constexpr std::size_t kCachedInlineNameCapacity = 1'048'576;
@@ -357,6 +358,7 @@ void materialize_table(BuildContext& context, std::uint32_t row) {
 /** Adds cached table and bounds inline strings at the skipped read boundary. */
 [[nodiscard]] bool append_cached_evidence(const CachedStaticSpatialTable& cached,
                                           catalog::Snapshot& output) noexcept {
+    // Snapshot rows are published as u32, so a bank stops at that maximum.
     constexpr std::size_t maximum = (std::numeric_limits<std::uint32_t>::max)();
     const std::size_t firstRow = output.inlineNameCandidates.size();
     const std::size_t firstByte = output.inlineNameBytes.size();

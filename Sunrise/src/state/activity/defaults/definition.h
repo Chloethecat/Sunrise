@@ -75,20 +75,9 @@ struct ActivityDefaults final {
     bool rosterKeyFromIdentity{};
     /**
      * Fills message 5's participation body on every type-13 slot of the key group.
-     * The old encoder fills only the group's first, and the gate reads whichever object the player
-     * datum names, which need not be that one.
+     * The gate reads whichever object the player datum names, which need not be the first slot.
      */
     bool rosterKeyOnAllSlots{};
-    /**
-     * Author the type-35 mission-director and type-18 script-runtime auth bodies.
-     * On by default: they are what an encounter bubble's script objects come from, and shipping
-     * them bodyless is why Last Wish's encounter bubbles create no objects. Turn off to restore
-     * the previous behaviour without a rebuild if a body ever desynchronises the phase-2 stream,
-     * whose symptom is the player failing to spawn at all rather than only the encounter failing.
-     */
-    bool authorDirectorBodies{true};
-    /** Fill the type-37 auth body. See `authorDirectorBodies` for the width-gate rationale. */
-    bool authorWideRecordBodies{true};
 };
 
 } // namespace sunrise::state::activity::defaults

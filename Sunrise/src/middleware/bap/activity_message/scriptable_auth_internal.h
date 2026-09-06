@@ -8,17 +8,22 @@
 #include "../../encoding/bit_writer.h"
 #include "scriptable_auth_body.h"
 
-// Constants and primitives shared by the variable-width and fixed-width scriptable-auth codecs.
-// Not a public interface: only those two translation units include it.
+// Constants and primitives shared by the scriptable-auth codecs.
+// Not a public interface: only those translation units include it.
 
 namespace sunrise::middleware::bap::activity_message::scriptable_auth {
 
+/** Widths of the scalar wire fields, in bits, and the value a present flag carries. */
 inline constexpr std::uint8_t kReal32Width = 32;
 inline constexpr std::uint8_t kBoolWidth = 1;
 inline constexpr std::uint8_t kEnabled = 1;
 inline constexpr std::uint8_t kSigned32Width = 32;
 /** Signed 32-bit schema fields store zero at the middle of the unsigned wire range. */
 inline constexpr std::uint32_t kSigned32Bias = 0x80000000U;
+/** Signed 16-bit schema fields store zero at the middle of the unsigned wire range. */
+inline constexpr std::uint32_t kSigned16Bias = 0x8000;
+/** Wide schema integers travel as 64-bit fields. */
+inline constexpr std::uint8_t kWideIntegerWidth = 64;
 /** Two-bit mode scalars carry a bias of one, so -1 is the lowest value they can store. */
 inline constexpr std::uint8_t kModeWidth = 2;
 inline constexpr std::int8_t kMinimumMode = -1;

@@ -54,30 +54,6 @@ constexpr std::uint8_t kDismantleClassMaskBits =
     return std::all_of(tail, state.dismantleRewards.cend(), empty_dismantle_reward);
 }
 
-[[nodiscard]] bool empty_record_reward(const RecordRewardPolicy& reward) noexcept {
-    return reward.recordIndex == 0 && reward.itemIndex == 0 && reward.quantity == 0;
-}
-
-[[nodiscard]] bool valid_record_rewards(const AccountState& state) noexcept {
-    if (state.recordRewardCount > state.recordRewards.size()) {
-        return false;
-    }
-    for (std::size_t index = 0; index < state.recordRewardCount; ++index) {
-        const RecordRewardPolicy& reward = state.recordRewards[index];
-        if (reward.quantity <= 0) {
-            return false;
-        }
-        for (std::size_t prior = 0; prior < index; ++prior) {
-            if (same_record_reward_key(state.recordRewards[prior], reward)) {
-                return false;
-            }
-        }
-    }
-    const auto tail =
-        state.recordRewards.cbegin() + static_cast<std::ptrdiff_t>(state.recordRewardCount);
-    return std::all_of(tail, state.recordRewards.cend(), empty_record_reward);
-}
-
 /** Adds one nonzero key to the bounded identity buffer. */
 [[nodiscard]] bool append_identity(std::array<std::uint64_t, kIdentityCapacity>& identities,
                                    std::size_t& count,
@@ -97,20 +73,17 @@ constexpr std::uint8_t kDismantleClassMaskBits =
     }
     if (state.primarySoid == 0) {
         if (state.profileItemCount != 0 || state.characterCount != 0
-            || state.dismantleRewardCount != 0 || state.recordRewardCount != 0
-            || state.settings.configured || state.settings.keyBindings.configured) {
+            || state.dismantleRewardCount != 0 || state.settings.configured
+            || state.settings.keyBindings.configured) {
             return false;
         }
         return std::all_of(
                    state.profileItems.cbegin(), state.profileItems.cend(), empty_profile_item)
                && std::all_of(state.dismantleRewards.cbegin(),
                               state.dismantleRewards.cend(),
-                              empty_dismantle_reward)
-               && std::all_of(
-                   state.recordRewards.cbegin(), state.recordRewards.cend(), empty_record_reward);
+                              empty_dismantle_reward);
     }
-    if (!settings::valid(state.settings) || !valid_dismantle_rewards(state)
-        || !valid_record_rewards(state)) {
+    if (!settings::valid(state.settings) || !valid_dismantle_rewards(state)) {
         return false;
     }
 
@@ -208,19 +181,6 @@ std::uint64_t banner_character_soid(const AccountState& state) noexcept {
         return selected;
     }
     return state.characterCount == 0 ? 0 : state.characters[0].soid;
-}
-
-bool find_record_reward(const AccountState& state,
-                        std::uint16_t recordIndex,
-                        RecordRewardPolicy& reward) noexcept {
-    const std::size_t count = (std::min)(state.recordRewardCount, state.recordRewards.size());
-    for (std::size_t index = 0; index < count; ++index) {
-        if (state.recordRewards[index].recordIndex == recordIndex) {
-            reward = state.recordRewards[index];
-            return true;
-        }
-    }
-    return false;
 }
 
 } // namespace sunrise::state::account

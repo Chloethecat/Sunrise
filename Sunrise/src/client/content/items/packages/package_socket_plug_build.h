@@ -44,12 +44,11 @@ read_catalyst_acquisition_gates(const reader::Source& source,
  * @param output Receives one completion value per native objective index.
  * @return True when the table class, row class, count, and fixed rows are valid.
  */
-[[nodiscard]] bool
-read_catalyst_objective_values(const reader::Source& source,
-                               reader::Scratch& scratch,
-                               std::span<const std::byte> root,
-                               std::vector<std::byte>& blob,
-                               std::vector<std::int32_t>& output) noexcept;
+[[nodiscard]] bool read_catalyst_objective_values(const reader::Source& source,
+                                                  reader::Scratch& scratch,
+                                                  std::span<const std::byte> root,
+                                                  std::vector<std::byte>& blob,
+                                                  std::vector<std::int32_t>& output) noexcept;
 
 /**
  * Finds every positive flag and `value >= literal` term plus one objective reference.
@@ -139,7 +138,10 @@ private:
 
     /** Expands native category families, canonicalizes, and interns the current candidate. */
     [[nodiscard]] bool intern(std::uint32_t& poolIndex) noexcept;
-    /** Replaces the four Worthy-era general memberships with the reference Arrivals leg set. */
+    /**
+     * Replaces the four Worthy-era general memberships with the reference Arrivals leg set.
+     * Does nothing when the package names no reference item or is missing one of the four mods.
+     */
     [[nodiscard]] bool route_arrivals_leg_mods() noexcept;
     /** Releases every transient allocation and count. */
     void release() noexcept;

@@ -128,6 +128,7 @@ void register_key_metatables(lua_State* state) {
     register_metatable(state, kVariableRefCollectionMetatable, &variable_ref_collection_index);
 }
 
+/** Pushes one recognized key-context member. @return False when the key is not ours. */
 bool push_key_context_member(lua_State* state, std::string_view key) {
     if (key == "timers") {
         push_handle(state, kTimerRefCollectionMetatable, TimerRefCollectionHandle{});

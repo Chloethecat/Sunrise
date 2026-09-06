@@ -11,7 +11,6 @@
 
 #include "../../middleware/web_service/messages/opcode206.h"
 #include "../../state/runtime/runtime.h"
-#include "../../state/vendors/answered_interactions.h"
 
 namespace sunrise::server::web_service {
 
@@ -30,6 +29,8 @@ struct Outcome {
     /** Reset is precommitted because it changes persistence and account currency together. */
     bool hasArtifactReset{};
     state::ArtifactResetResult artifactReset{};
+    /** A WS-701 carried the profile-setup completion marker and State refused it. */
+    bool profileSetupRefused{};
     /** A request prepares at most one State mutation and allocates only that exact payload. */
     using Mutation = std::variant<std::monostate,
                                   std::unique_ptr<state::PendingEquipmentSwap>,
@@ -44,14 +45,6 @@ struct Outcome {
                                   std::unique_ptr<state::PendingSeasonPassReward>,
                                   std::unique_ptr<state::PendingSettingsUpdate>>;
     Mutation mutation{};
-    /**
-     * Vendor whose shown interaction this request answers once its mutation commits, or
-     * `state::vendors::kAbsentIndex`. A quest grant answers the banner that offered it, but only a
-     * committed grant does: queuez preflight or the commit's staleness guard can still drop the
-     * mutation, and an answered list that is append-only for the session would then bury a quest
-     * the player is still owed. So the answer rides the transaction to where the grant commits.
-     */
-    std::uint16_t answeredVendor{state::vendors::kAbsentIndex};
 };
 
 /** Allocates only the selected mutation outside the request's already deep stack. */
@@ -101,6 +94,13 @@ template <typename Mutation>
 inline void clear_mutation(Outcome& outcome) noexcept {
     outcome.mutation.template emplace<std::monostate>();
 }
+
+/**
+ * Issues the next family-5 clock, in Unix seconds.
+ * One issuer serves every family-5 publication, so the value the Client extrapolates from only
+ * ever moves forward.
+ */
+[[nodiscard]] std::uint64_t next_family5_clock() noexcept;
 
 /** Records the final profile-stack creation reply and exact Family-4 account revision. */
 void report_profile_item_acquisition_response(const middleware::web_service::Message& message,

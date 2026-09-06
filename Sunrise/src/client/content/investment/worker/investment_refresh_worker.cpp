@@ -13,8 +13,7 @@ namespace {
 
 /**
  * Delay between bounded refresh slices.
- * A slice runs on every pump. The extraction is hundreds of slices and each bounds its own length,
- * so a delay on top only added waiting: at 50 ms it was most of what the boot spent extracting.
+ * Each slice bounds its own length, so a delay on top of that is pure boot latency.
  */
 constexpr std::uint64_t kRefreshIntervalMilliseconds = 0;
 

@@ -11,8 +11,10 @@ namespace {
 
 namespace catalog = state::build_data::scriptables;
 
+// Package slot types of an incoming trigger reference and of its target.
 constexpr std::uint16_t kIncomingTriggerSlotType = 31;
 constexpr std::uint8_t kTargetTriggerSlotType = 60;
+// Fixed capacity for one pass's incoming trigger references.
 constexpr std::size_t kIncomingReferenceCapacity = 262'144;
 
 struct Candidate final {
@@ -75,8 +77,8 @@ bool append_trigger_volume_incoming_references(catalog::Snapshot& output,
         }
         std::sort(candidates.begin(),
                   candidates.end(),
-                  [](const Candidate& left, const Candidate& right) noexcept {
-                      return identity(left) < identity(right);
+                  [](const Candidate& first, const Candidate& second) noexcept {
+                      return identity(first) < identity(second);
                   });
         output.triggerVolumeIncomingReferences.reserve(
             (std::min)(candidates.size(), kIncomingReferenceCapacity));

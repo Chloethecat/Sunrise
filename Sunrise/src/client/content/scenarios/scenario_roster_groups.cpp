@@ -108,10 +108,7 @@ struct ChainReadContext {
     return true;
 }
 
-/**
- * Group objects reported per run. The measured drop count is 59, so this shows every one and
- * still bounds a content tree that drops far more.
- */
+/** Unresolved group objects reported per walk. Bounds the sink on a tree that drops many. */
 constexpr std::size_t kMaxUnresolvedReports = 128;
 /** Size of one line, set by its tag, key and the per-exit counts that follow them. */
 constexpr std::size_t kUnresolvedLineCapacity = 256;
@@ -121,9 +118,7 @@ std::atomic_size_t g_unresolvedReports{0};
 
 /**
  * Names one group object the descriptor walk could not fill.
- * The domain summary counts these but names none, so a walk that drops most of what it finds
- * reads the same as one that found little. The gap between declared and found is what says
- * whether the chain stopped early or the classification refused what it reached.
+ * The declared-to-found gap says whether the chain stopped early or the classification refused it.
  * @param objectTag Tag of the object being resolved.
  * @param registryKey Registry key the object declares.
  * @param declaredSlotCount Slots the object's own slot array declares.
@@ -178,12 +173,8 @@ std::atomic_size_t g_placementReports{0};
 
 /**
  * Names one placed object and every slot type it declares, before any filter has judged it.
- * `carries_roster_slot` admits an object only when it declares one of `kRosterSlotTypes`, and an
- * object it refuses leaves no trace anywhere: it is not counted, not published, and not reported.
- * So a bubble whose objects all declare some other type is indistinguishable from a bubble with no
- * objects at all, which is exactly the ambiguity that has to be settled before that list is
- * widened. Widening it blind is not safe — `kRosterKeyCapacity` overflow costs a destination every
- * group it publishes today, so this reports what the filter sees rather than changing it.
+ * An object `carries_roster_slot` refuses leaves no other trace, so the two empty cases read alike.
+ * @param destinationTag Destination whose scenario named this object.
  * @param sliceSetIndex Slice set whose registry named this object.
  * @param objectTag Tag of the placed object.
  * @param object Whole placed-object bytes.

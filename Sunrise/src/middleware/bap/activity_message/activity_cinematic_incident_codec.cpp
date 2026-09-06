@@ -8,13 +8,16 @@ namespace {
 
 namespace bits = encoding::bits;
 
+/** Bit offset of the client reference inside the incident body. */
 constexpr std::size_t kClientReferenceOffset = 335;
+/** Field widths of the client reference and the event tail, in bits. */
 constexpr std::uint8_t kRegistryKeyBits = 32;
 constexpr std::uint8_t kSlotTypeBits = 7;
 constexpr std::uint8_t kSlotIndexBits = 16;
 constexpr std::uint8_t kRuntimeObjectBits = 64;
 constexpr std::uint8_t kEventValueBits = 32;
 constexpr std::uint8_t kPaddingBits = 2;
+/** The slot type and index are sent unsigned, biased so their absent value is zero. */
 constexpr std::int32_t kSlotTypeBias = 1;
 constexpr std::int32_t kSlotIndexBias = 32'768;
 

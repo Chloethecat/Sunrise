@@ -8,6 +8,7 @@
 #include "../content/content_catalog.h"
 #include "../gameplay/external/entity_position_profiles.h"
 #include "abilities/ability_bucket_catalog.h"
+#include "bounties/bounty_catalog.h"
 #include "cache/internal.h"
 #include "collectibles/collectible_catalog.h"
 #include "constants/investment_constant_catalog.h"
@@ -25,6 +26,7 @@
 #include "runtime/domain_markers.h"
 #include "runtime/persistence/build_data_persistence.h"
 #include "scenarios/scenario_catalog.h"
+#include "season_pass/season_pass_catalog.h"
 #include "sobjects/sobject_catalog.h"
 #include "socket_entry_lists/socket_entry_list_catalog.h"
 #include "spawn_sets/spawn_set_catalog.h"
@@ -120,7 +122,15 @@ bool initialize(void* module, std::uint64_t configuredEquipmentHash) noexcept {
         || !items::socket_plugs::replace(
             domains.socketPlugRules, domains.socketPlugPools, domains.socketPlugMembers)
         || !catalystsReplaced || !abilities::replace(domains.abilityBuckets)
-        || !progressions::replace(domains.progressions) || !records::replace(domains.records)
+        || !progressions::replace(domains.progressions, domains.progressionSteps)
+        // An empty catalog is complete: a build with no installed pass declares no reward.
+        || (!domains.seasonPassRewards.empty()
+            && !season_pass::replace(domains.seasonPassRewards, domains.seasonPassPackages))
+        || !bounties::replace(domains.bounties)
+        || !records::replace(domains.records,
+                             domains.recordObjectives,
+                             domains.recordIntervals,
+                             domains.recordRewards)
         || !nodes::replace(domains.nodes)
         || !sobjects::replace(domains.sobjects)
         // The layouts are what activity message 1 reads. Without them a cache hit makes the

@@ -16,38 +16,8 @@ namespace {
 using encoding::bits::Reader;
 namespace settings = state::account::settings;
 
-/**
- * Schema 0x80807603 is a presence-driven reflected object. Every `optional` node starts with one
- * presence bit; an absent node consumes no body bits. No field is byte-aligned.
- *
- * Implicit root (there is no root presence bit)
- * |-- 0.0? client metadata
- * |   |-- 0.0.0? [128] optional 64-bit publicity expiries
- * |   `-- 0.0.1? [13] required 32-bit seen-message values
- * `-- 0.1? account data
- *     |-- 0.1.0? [2] optional vectors, each with two required real32 values
- *     |-- 0.1.1? preference record
- *     |   |-- 0.1.1.0-.61: 62 optional scalar preferences
- *     |   `-- 0.1.1.62? [3][50]: 150 cells, each with its own presence bit and int32
- *     |-- 0.1.2? seed, three local mirrors, source, and optional 60-word binding table
- *     |-- 0.1.3? four required 16-bit values
- *     |-- 0.1.4? mixed known-width record, semantic meaning unknown
- *     |-- 0.1.5? 22 required 32-bit values
- *     |-- 0.1.6? optional-region record
- *     |   |-- 0.1.6.0? [100] optional int16 values, then two required int32 words
- *     |   `-- 0.1.6.1? one int16 value
- *     |-- 0.1.7? bool
- *     |-- 0.1.8? bool
- *     |-- 0.1.9? bool
- *     |-- 0.1.10? 8-bit scalar
- *     |-- 0.1.11? 32-bit scalar
- *     |-- 0.1.12? 30 required int16 values, then two required int32 words
- *     `-- 0.1.13? one 32-bit value
- *
- * Two optional length-prefixed blobs follow the reflected object. The final partial byte, if any,
- * is zero padding. Traversal must therefore follow every presence flag even for unsupported data;
- * a fixed wire offset would become invalid as soon as any earlier optional node is absent.
- */
+// Schema 0x80807603 is presence-driven: an absent node consumes no bits and nothing is byte
+// aligned, so every presence flag must be read or later fields land at the wrong offset.
 
 /** Wire primitive widths used by schema 0x80807603. */
 constexpr std::uint8_t kPresenceWidthBits = 1;
@@ -115,14 +85,17 @@ constexpr std::uint64_t kCompactIntegerBias = 1;
 /** Reflected signed 32-bit values store the destination bit pattern plus INT32_MIN. */
 constexpr std::uint64_t kSigned32Bias = 0x80000000ULL;
 
+/** Wire width, native width and bias for the bool and the two- and three-bit selectors. */
 constexpr ScalarEncoding kBoolEncoding{kBooleanWidthBits, kBooleanWidthBits, 0};
 constexpr ScalarEncoding kInt8TwoBitEncoding{kTwoWidthBits, kByteWidthBits, kCompactIntegerBias};
 constexpr ScalarEncoding kInt8ThreeBitEncoding{
     kThreeWidthBits, kByteWidthBits, kCompactIntegerBias};
+/** Same for the four-bit selector and the two reflected 32-bit types. */
 constexpr ScalarEncoding kInt8FourBitEncoding{kFourWidthBits, kByteWidthBits, kCompactIntegerBias};
 constexpr ScalarEncoding kInt32Encoding{kScalar32WidthBits, kScalar32WidthBits, kSigned32Bias};
 constexpr ScalarEncoding kReal32Encoding{kScalar32WidthBits, kScalar32WidthBits, 0};
 
+/** Field and binding counts the catalog fixes; the static_assert below holds them. */
 constexpr std::size_t kPreferenceFieldCount = kCatalogPreferenceFieldCount;
 constexpr std::size_t kKeyBindingCount = settings::bindings::kActionCount;
 
@@ -145,27 +118,32 @@ static_assert(kKeyBindingCount == kCatalogKeyBindingCount);
 
 /** Typed assignment adapters let each schema descriptor name its exact nested delta member. */
 template <auto GroupMember, auto FieldMember>
-void assign_bool(std::uint64_t value, settings::SettingsDelta& delta) noexcept {
-    (delta.*GroupMember).*FieldMember = value != 0;
+void assign_bool(std::uint64_t value, Request& output) noexcept {
+    (output.settings.*GroupMember).*FieldMember = value != 0;
 }
 
 template <auto GroupMember, auto FieldMember>
-void assign_int8(std::uint64_t value, settings::SettingsDelta& delta) noexcept {
-    (delta.*GroupMember).*FieldMember = as_int8(value);
+void assign_int8(std::uint64_t value, Request& output) noexcept {
+    (output.settings.*GroupMember).*FieldMember = as_int8(value);
 }
 
 template <auto GroupMember, auto FieldMember>
-void assign_int32(std::uint64_t value, settings::SettingsDelta& delta) noexcept {
-    (delta.*GroupMember).*FieldMember = as_int32(value);
+void assign_int32(std::uint64_t value, Request& output) noexcept {
+    (output.settings.*GroupMember).*FieldMember = as_int32(value);
 }
 
 template <auto GroupMember, auto FieldMember>
-void assign_real32(std::uint64_t value, settings::SettingsDelta& delta) noexcept {
-    (delta.*GroupMember).*FieldMember = as_real32(value);
+void assign_real32(std::uint64_t value, Request& output) noexcept {
+    (output.settings.*GroupMember).*FieldMember = as_real32(value);
 }
 
-/** A plain function pointer keeps the descriptor table constexpr and allocation-free. */
-using PreferenceAssignment = void (*)(std::uint64_t, settings::SettingsDelta&) noexcept;
+/** Preference 0.1.1.0 is the profile-setup marker, which State reads, not the settings delta. */
+void assign_profile_setup(std::uint64_t value, Request& output) noexcept {
+    output.profileSetupCompleted = value != 0;
+}
+
+/** A plain function pointer keeps the descriptor table a compile-time constant. */
+using PreferenceAssignment = void (*)(std::uint64_t, Request&) noexcept;
 
 /** One schema path's index, wire decoding rule, and optional semantic State destination. */
 struct PreferenceDescriptor {
@@ -179,7 +157,7 @@ struct PreferenceDescriptor {
  * A null assignment marks a structurally known field that is intentionally traversal-only.
  */
 constexpr std::array<PreferenceDescriptor, kPreferenceFieldCount> kPreferenceDescriptors{
-    PreferenceDescriptor{0, kBoolEncoding, nullptr},  // profile setup marker
+    PreferenceDescriptor{0, kBoolEncoding, assign_profile_setup},
     PreferenceDescriptor{1, kInt32Encoding, nullptr}, // post-processing seed version
     PreferenceDescriptor{
         2,
@@ -538,7 +516,7 @@ template <typename ReadBody>
 }
 
 /** Decodes present preference group 0.1.1 and consumes its optional opaque matrix. */
-[[nodiscard]] bool read_preference_record(Reader& reader, settings::SettingsDelta& delta) noexcept {
+[[nodiscard]] bool read_preference_record(Reader& reader, Request& output) noexcept {
     for (const PreferenceDescriptor& descriptor : kPreferenceDescriptors) {
         bool present = false;
         std::uint64_t value = 0;
@@ -546,7 +524,7 @@ template <typename ReadBody>
             return false;
         }
         if (present && descriptor.assign != nullptr) {
-            descriptor.assign(value, delta);
+            descriptor.assign(value, output);
         }
     }
     return read_optional_group(reader, skip_preference_matrix);
@@ -662,22 +640,22 @@ template <typename ReadBody>
 }
 
 /** Traverses every child of present account branch 0.1 in descriptor order. */
-[[nodiscard]] bool read_account_branch(Reader& reader, settings::SettingsDelta& delta) noexcept {
+[[nodiscard]] bool read_account_branch(Reader& reader, Request& output) noexcept {
     // 0.1.0: calibration vectors.
     if (!read_optional_group(reader, skip_group_0_1_0)) {
         return false;
     }
 
     // 0.1.1: preference scalars and the optional 3-by-50 matrix.
-    if (!read_optional_group(reader, [&delta](Reader& groupReader) noexcept {
-            return read_preference_record(groupReader, delta);
+    if (!read_optional_group(reader, [&output](Reader& groupReader) noexcept {
+            return read_preference_record(groupReader, output);
         })) {
         return false;
     }
 
     // 0.1.2: local mirrors, keybinding source, and packed binding table.
-    if (!read_optional_group(reader, [&delta](Reader& groupReader) noexcept {
-            return read_binding_record(groupReader, delta);
+    if (!read_optional_group(reader, [&output](Reader& groupReader) noexcept {
+            return read_binding_record(groupReader, output.settings);
         })) {
         return false;
     }
@@ -797,47 +775,62 @@ namespace schema_size_proof {
     return total + kScalar64WidthBits + optional_scalar(kThreeWidthBits) + kBooleanWidthBits;
 }
 
+// Largest form of the publicity-expiry bank.
 constexpr std::size_t kPublicityExpiryBankBits =
     optional_group(optional_scalar_array(kPublicityExpiryCount, kScalar64WidthBits));
+// Largest form of the seen-message bank.
 constexpr std::size_t kSeenMessageBankBits =
     optional_group(fixed_array_width_bits(kSeenMessageCount, kScalar32WidthBits));
+// Largest form of the root metadata group.
 constexpr std::size_t kRootMetadataBits =
     optional_group(kPublicityExpiryBankBits + kSeenMessageBankBits);
 
+// Largest form of the calibration group.
 constexpr std::size_t kCalibrationGroupBits = optional_group(
     kCalibrationVectorCount
     * optional_group(fixed_array_width_bits(kCalibrationValuesPerVector, kScalar32WidthBits)));
+// Largest form of the preference matrix.
 constexpr std::size_t kPreferenceMatrixBits = optional_group(optional_scalar_array(
     kPreferenceMatrixRowCount * kPreferenceMatrixColumnCount, kScalar32WidthBits));
+// Largest form of the preferences group.
 constexpr std::size_t kPreferencesBits =
     optional_group(preference_fields() + kPreferenceMatrixBits);
+// Largest form of the bindings group.
 constexpr std::size_t kBindingsBits =
     optional_group(optional_scalar(kScalar32WidthBits) + optional_scalar(kBooleanWidthBits)
                    + optional_scalar(kThreeWidthBits) + optional_scalar(kScalar32WidthBits)
                    + optional_scalar(kBooleanWidthBits)
                    + optional_group(fixed_array_width_bits(kKeyBindingCount, kScalar32WidthBits)));
+// Largest form of group 0.1.3.
 constexpr std::size_t kGroup_0_1_3Bits =
     optional_group(fixed_array_width_bits(kGroup_0_1_3ValueCount, kScalar16WidthBits));
+// Largest form of groups 0.1.4 and 0.1.5.
 constexpr std::size_t kGroup_0_1_4Bits = optional_group(group_0_1_4_body());
 constexpr std::size_t kGroup_0_1_5Bits =
     optional_group(fixed_array_width_bits(kGroup_0_1_5ValueCount, kScalar32WidthBits));
+// Largest form of group 0.1.6.
 constexpr std::size_t kGroup_0_1_6Bits = optional_group(
     optional_group(optional_scalar_array(kGroup_0_1_6EntryCount, kScalar16WidthBits)
                    + fixed_array_width_bits(kGroup_0_1_6FixedWordCount, kScalar32WidthBits))
     + optional_scalar(kScalar16WidthBits));
+// Largest form of the account tail fields.
 constexpr std::size_t kAccountTailBits =
     optional_scalar(kBooleanWidthBits) + optional_scalar(kBooleanWidthBits)
     + optional_scalar(kBooleanWidthBits) + optional_scalar(kByteWidthBits)
     + optional_scalar(kScalar32WidthBits);
+// Largest form of group 0.1.12.
 constexpr std::size_t kGroup_0_1_12Bits =
     optional_group(fixed_array_width_bits(kGroup_0_1_12ValueCount, kScalar16WidthBits)
                    + fixed_array_width_bits(kGroup_0_1_12FixedWordCount, kScalar32WidthBits));
+// Largest form of group 0.1.13.
 constexpr std::size_t kGroup_0_1_13Bits = optional_scalar(kScalar32WidthBits);
 
+// Largest form of the account branch.
 constexpr std::size_t kAccountBranchBits =
     optional_group(kCalibrationGroupBits + kPreferencesBits + kBindingsBits + kGroup_0_1_3Bits
                    + kGroup_0_1_4Bits + kGroup_0_1_5Bits + kGroup_0_1_6Bits + kAccountTailBits
                    + kGroup_0_1_12Bits + kGroup_0_1_13Bits);
+// Largest form of the whole body.
 constexpr std::size_t kSchemaBits = kRootMetadataBits + kAccountBranchBits;
 
 static_assert(kRootMetadataBits == kCatalogRootMetadataMaximumBits);
@@ -862,7 +855,7 @@ bool parse_request(const Message& message, Request& output) noexcept {
     if (!read_optional_group(reader, skip_publicity_and_seen_messages)
         || !read_optional_group(reader,
                                 [&candidate](Reader& groupReader) noexcept {
-                                    return read_account_branch(groupReader, candidate.settings);
+                                    return read_account_branch(groupReader, candidate);
                                 })
         || !skip_outer_blobs(reader) || !finish_padding(reader)) {
         return false;

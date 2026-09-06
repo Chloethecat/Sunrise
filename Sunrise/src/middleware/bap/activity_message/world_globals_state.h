@@ -6,6 +6,7 @@
 
 namespace sunrise::middleware::bap::activity_message::world_globals_state {
 
+/** Message type and schema the client accepts, and the fixed size of its body. */
 inline constexpr std::uint32_t kMessageType = 2;
 inline constexpr std::uint32_t kSchema = 0x8080867EU;
 inline constexpr std::size_t kBitCount = 33;

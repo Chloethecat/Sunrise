@@ -122,6 +122,7 @@ enum class EventKind : std::uint8_t {
     cinematicTerminated = 30,
 };
 
+/** Kinds are numbered without gaps, so the last one plus one is the count. */
 inline constexpr std::size_t kEventKindCount =
     static_cast<std::size_t>(EventKind::cinematicTerminated) + 1U;
 

@@ -2,7 +2,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <string_view>
 #include <vector>
 
@@ -17,6 +16,12 @@ struct PlanRow final {
 struct SchemaRow final {
     std::uint32_t handle{}, size{}, first{}, count{};
 };
+/** Fixed cache-file row sizes make producer and consumer ABI drift fail at compile time. */
+inline constexpr std::size_t kPlanRowSize = 24;
+inline constexpr std::size_t kSchemaRowSize = 16;
+inline constexpr std::size_t kAdditionalSchemaSize = 28;
+inline constexpr std::size_t kAdditionalFieldSize = 40;
+inline constexpr std::size_t kDecodeEntrySize = 20;
 namespace runtime = middleware::bap::activity_message::wire_schema::runtime;
 struct AdditionalSchema final {
     std::uint32_t handle{}, original{}, serialized{}, flags{}, array{}, first{}, count{};
@@ -35,9 +40,8 @@ class Cache final {
 public:
     [[nodiscard]] bool load_installed(std::wstring_view artifactDirectory,
                                       const Digest& sdkBuild) noexcept;
-    [[nodiscard]] bool load(const std::filesystem::path& path,
-                            const Digest& sdkBuild,
-                            const Digest& evidence) noexcept;
+    [[nodiscard]] bool
+    load(const wchar_t* path, const Digest& sdkBuild, const Digest& evidence) noexcept;
     [[nodiscard]] bool ready() const noexcept {
         return ready_;
     }

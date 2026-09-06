@@ -8,6 +8,7 @@
 
 namespace sunrise::server::activity::mission::lua_vm::detail::catalog_api {
 
+// Metatable names that lock the runtime-pack catalog userdata shapes a program may hold.
 inline constexpr char kCatalogMetatable[] = "sunrise.sdk.catalog";
 inline constexpr char kCatalogCollectionMetatable[] = "sunrise.sdk.catalog_collection";
 inline constexpr char kCatalogRowMetatable[] = "sunrise.sdk.catalog_row";
@@ -36,7 +37,7 @@ struct CatalogTagCollectionHandle final {
     std::uint32_t activityRow{};
 };
 
-[[nodiscard]] bool current(const Impl& impl, const CatalogGenerationIdentity& generation) noexcept;
+[[nodiscard]] bool current(const Impl& owner, const CatalogGenerationIdentity& generation) noexcept;
 [[nodiscard]] bool resolved_field(lua_State* state,
                                   const CatalogRowHandle& handle,
                                   std::string_view key,

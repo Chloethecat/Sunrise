@@ -1,12 +1,13 @@
 #pragma once
 
-#include <WinSock2.h>
+#include <Windows.h>
 
 namespace sunrise::core::threading {
 
-/** Wrapper to enable std::lock_guard and std::shared_lock for SRWLOCK */
+/** SRWLOCK with the Lockable and SharedLockable shape the standard lock guards need. */
 class SrwLock final {
 public:
+    /** Leaves the lock at SRWLOCK_INIT; no runtime setup call is needed. */
     constexpr explicit SrwLock() noexcept = default;
 
     SrwLock(const SrwLock&) = delete;

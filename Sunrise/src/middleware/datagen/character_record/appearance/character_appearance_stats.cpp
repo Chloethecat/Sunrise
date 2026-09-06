@@ -4,14 +4,13 @@
 #include "../../../../core/logging/log.h"
 #include "../../../../state/build_data/runtime.h"
 #include "../../../../state/equipment/light/definition.h"
-#include "../../../../state/progression/seasonal_experience.h"
+#include "../../../../state/runtime/runtime.h"
 #include "internal.h"
 
 namespace sunrise::middleware::datagen::character_record::appearance {
 namespace {
 
 namespace constants = state::build_data::constants;
-namespace seasonal = state::progression::seasonal_experience;
 
 /**
  * Sums one definition's declared contribution to a single stat row.
@@ -57,8 +56,7 @@ namespace seasonal = state::progression::seasonal_experience;
  * Collects every stat row one equipped item or its plugs declare.
  * @param equipped Effective plug lanes.
  * @param count Occupied entries, advanced per distinct row.
- * @return False for invalid stat rows
- * or insufficient storage.
+ * @return False for an invalid stat row or insufficient storage.
  */
 [[nodiscard]] bool
 collect_rows(const Equipped& equipped, std::span<std::uint8_t> rows, std::size_t& count) noexcept {
@@ -173,13 +171,12 @@ bool apply_stats(const family4::loadout::ResolvedInstances& instances,
         details::Definition detail{};
         Equipped equipped{};
         if (!resolve_equipped(instances.items[index], detail, equipped)
-            || detail.definitionHash != seasonal::kSeedOfSilverWingsHash
-            || detail.statCount == 0
+            || detail.definitionHash != state::kSeasonalArtifactItemHash || detail.statCount == 0
             || detail.stats.front().row == details::kEmptyStatRow) {
             continue;
         }
         append(detail.stats.front().row,
-               seasonal::artifact_power_bonus(),
+               state::artifact_power_bonus(),
                appearance.characterStats,
                written);
         break;

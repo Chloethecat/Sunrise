@@ -19,6 +19,7 @@ namespace sdk = state::activity_sdk;
 namespace format = state::activity_sdk::format;
 namespace scenes = activity_sdk_mission;
 
+// Every occurrence text id starts with this family prefix.
 constexpr std::string_view kOccurrencePrefix = "object-occurrence/";
 
 [[nodiscard]] const sdk::BoundView* context_view(const void* context) noexcept {
@@ -84,6 +85,7 @@ binding_locators(const sdk::BoundView& view) noexcept {
     return view != nullptr && view->catalog != nullptr ? binding_locators(*view).size() : 0;
 }
 
+/** Copies one 1-based binding locator of the bound activity. @return False when absent. */
 [[nodiscard]] bool
 resolve_activity_binding_locator(const void* context,
                                  std::uint32_t localRow,
@@ -806,6 +808,7 @@ template <typename Select>
 }
 
 [[nodiscard]] char hex_digit(std::uint8_t value) noexcept {
+    // Lowercase hex digits; every digest and byte field is spelled this way.
     constexpr char digits[] = "0123456789abcdef";
     return digits[value & 0xFU];
 }
@@ -846,6 +849,7 @@ bool activity_binding_definition(const sdk::Catalog& catalog,
     return true;
 }
 
+/** @return The binding tag span one kind names, or empty when the kind is unknown. */
 std::span<const format::ActivityBindingTag>
 activity_binding_tags(const sdk::Catalog& catalog,
                       const format::Activity& activity,
@@ -876,6 +880,7 @@ bool program_identity(const sdk::BoundView& view,
         || view.activityRow == (std::numeric_limits<std::uint32_t>::max)()) {
         return false;
     }
+    // The generated SDK build identity is spelled as this prefix and 64 hex digits.
     constexpr std::string_view prefix = "sha256:";
     std::copy(prefix.begin(), prefix.end(), output.sdkBuildId.begin());
     std::size_t cursor = prefix.size();

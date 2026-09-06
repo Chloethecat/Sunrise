@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <limits>
 #include <span>
 
@@ -128,7 +129,7 @@ std::array<DeferredPolicyRow, kDeferredPolicyCapacity> g_deferredPolicies{};
                                   std::size_t selectedCount) noexcept {
     selectedCount = (std::min)(selectedCount, session.selectedSquads.size());
     return std::any_of(session.selectedSquads.begin(),
-                       session.selectedSquads.begin() + selectedCount,
+                       session.selectedSquads.begin() + static_cast<std::ptrdiff_t>(selectedCount),
                        [&squad](const SelectedSquad& selected) {
                            return selected.registryKey == squad.registryKey
                                   && selected.slotType == squad.slotType
@@ -389,7 +390,7 @@ plan_policy(const mission::ActorCommandPolicyRequest& request, PolicyPlan& outpu
         const auto rolledBack = [&queuedTargets, queuedTargetCount](const OutputRow& row) {
             return std::any_of(
                 queuedTargets.begin(),
-                queuedTargets.begin() + queuedTargetCount,
+                queuedTargets.begin() + static_cast<std::ptrdiff_t>(queuedTargetCount),
                 [&row](const auto& target) { return same_token(row.target, target); });
         };
         for (OutputRow& row : session.outputs) {

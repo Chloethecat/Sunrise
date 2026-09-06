@@ -63,9 +63,8 @@ namespace socket_lists = build_data::socket_entry_lists;
         return false;
     }
 
-    // A clicked entry's table position does not say which ability slot it fills; only its resolved
-    // destination bucket does. A bundled pick can mix members across slots, so every member of the
-    // clicked entry's bundle is checked, not just the one clicked.
+    // Only the resolved destination bucket says which ability slot an entry fills, and a bundle
+    // can mix slots, so every member of the clicked bundle is checked.
     CharacterState after = before;
     // The picks belong to the equipped subclass item itself, not the character. So each owned
     // subclass remembers its own selection, instead of sharing one set across all of them.
@@ -102,9 +101,8 @@ namespace socket_lists = build_data::socket_entry_lists;
             }
         }
     };
-    // A click can land on any member of a bundle, not only the routable one: the other quadrants
-    // are passive nodes with no destination bucket. The bundle's start is found by scanning
-    // backward, then every member is routed from there, and only while the group is wide.
+    // A click can land on any bundle member, including passive nodes with no destination bucket,
+    // so scan backward to the bundle start and route every member from there.
     std::size_t groupPopulation = 0;
     for (std::size_t index = 0; index < entries.entries.size(); ++index) {
         if (entries.entries[index].group == requested.group) {
@@ -114,9 +112,8 @@ namespace socket_lists = build_data::socket_entry_lists;
     if (groupPopulation <= kMaxAttunementBundleSize) {
         route_entry(requestedEntry);
     } else {
-        // A wide group is several same-sized bundles competing for one pick, so only one bundle's
-        // fields stay set. A bundle that does not touch every field the group reaches must not
-        // leave an earlier bundle's value behind, so every bucket is reset before the pick writes.
+        // Only one bundle of a wide group stays set, so reset every bucket the group reaches
+        // before the pick writes or an earlier bundle's value survives.
         for (std::size_t index = 0; index < entries.entries.size(); ++index) {
             if (entries.entries[index].group != requested.group) {
                 continue;
@@ -419,9 +416,8 @@ bool prepare_equipment_swap(std::uint64_t requestedInstanceSoid,
     }
 
     if (previousInstanceSoid != 0) {
-        // The serial on an unequipped row is also the Client's ordering token for that bucket. A
-        // fresh greatest serial would move the displaced item to the first cell, so transfer the
-        // selected row's prior token instead and it keeps the cell the player clicked.
+        // The serial is also the Client's bucket ordering token, so hand the displaced item the
+        // clicked row's prior serial and it keeps the cell the player clicked.
         authored_inventory::Item& displaced = after.inventory.values[inventoryIndex];
         if (displaced.instanceSoid != previousInstanceSoid) {
             return false;
@@ -604,9 +600,8 @@ bool commit_equipment_swap(PendingEquipmentSwap& mutation) noexcept {
     runtime::storage::g_state.account = candidate;
     ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
 
-    // The published ability buckets resolve against whichever subclass is equipped, so swapping
-    // that item away makes the domain stale the same way an ability-entry pick does. It needs the
-    // same invalidation or the character screen keeps showing the previous resolution.
+    // The published ability buckets resolve against the equipped subclass, so swapping that item
+    // makes them stale and they need the same invalidation an ability-entry pick does.
     if (prepared.equipmentSlotIndex
         == static_cast<std::size_t>(authored_inventory::EquipmentSlot::subclass)) {
         build_data::invalidate_ability_buckets();

@@ -106,6 +106,7 @@ const char* status_name(Status value) noexcept {
     return "not_generated";
 }
 
+/** Records one validation result for an artifact tree. @return False when an input is bad. */
 bool remember(std::wstring_view artifactDirectory,
               const Digest& sourceFingerprint,
               const Result& result) noexcept {

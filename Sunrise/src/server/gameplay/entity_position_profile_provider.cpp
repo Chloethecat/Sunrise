@@ -9,7 +9,6 @@ namespace sunrise::server::gameplay {
 
 /**
  * The admitted activity selects immutable package bounds without reading the client runtime.
- * @param context Unused callback context.
  * @param source Admitted source generation.
  * @param cell Native entity cell index.
  * @param output Receives the selector grammar and any validated widths.
@@ -24,12 +23,14 @@ bool resolve_entity_position_profile(
     output.selectorPresent = true;
     state::activity::SessionBinding binding{};
     if (!state::activity::snapshot_binding(source.activitySessionId, binding)
-        || binding.createdRevision != source.activityRevision)
+        || binding.createdRevision != source.activityRevision) {
         return true;
+    }
     const auto& destination = binding.destination;
     if (destination.packageNameLength == 0
-        || destination.packageNameLength > destination.packageName.size())
+        || destination.packageNameLength > destination.packageName.size()) {
         return true;
+    }
     const std::string_view activity(reinterpret_cast<const char*>(destination.packageName.data()),
                                     destination.packageNameLength);
     output.hasWidths =

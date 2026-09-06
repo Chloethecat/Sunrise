@@ -20,18 +20,22 @@ namespace {
 namespace reader = middleware::content::packages::reader;
 namespace parallel = middleware::content::packages::reader::parallel;
 
+// Package class ids of the behavior graph nodes this pass reads.
 constexpr std::uint32_t kRootClass = 0x8080941EU;
 constexpr std::uint32_t kStorageChannelClass = 0x80802A6FU;
 constexpr std::uint32_t kConditionClass = 0x80804D7DU;
 constexpr std::uint32_t kFilterClass = 0x80804E3DU;
 constexpr std::uint32_t kTargetClass = 0x80804E10U;
 constexpr std::uint32_t kConditionGroupClass = 0x80809310U;
+// Extraction bounds; one malformed blob must not exhaust memory.
 constexpr std::uint32_t kMaximumRows = 1U << 20U;
 constexpr std::uint32_t kMaximumDepth = 256U;
+// Array header marker and the element classes it may carry.
 constexpr std::uint32_t kArrayMarker = 0x80809FBDU;
 constexpr std::uint32_t kBuildElementClass = 0x80809C04U;
 constexpr std::uint32_t kDescriptorElementClass = 0x80809C22U;
 constexpr std::uint32_t kMetadataElementClass = 0x80809C20U;
+// All-ones marks an absent row index in every extracted table.
 constexpr std::uint32_t kAbsentIndex = (std::numeric_limits<std::uint32_t>::max)();
 
 enum class InputRole : std::uint8_t {
@@ -48,6 +52,7 @@ struct NodeShape final {
     std::uint8_t expressionOffset{};
 };
 
+// Class id, blob size, root field offsets and expression offset of each node.
 constexpr std::array kNodeShapes{
     NodeShape{0x80804E0FU, 0x58, {}, 0, 0x10},
     NodeShape{0x80804E10U, 0x10},
@@ -589,19 +594,19 @@ struct BuildOwner final {
     }
     parallel::release();
     std::sort(
-        output.owners.begin(), output.owners.end(), [](const Owner& left, const Owner& right) {
-            return std::tie(left.programRow,
-                            left.actorClassIndex,
-                            left.configTag,
-                            left.configFieldOffset,
-                            left.buildOrdinal,
-                            left.descriptorOrdinal)
-                   < std::tie(right.programRow,
-                              right.actorClassIndex,
-                              right.configTag,
-                              right.configFieldOffset,
-                              right.buildOrdinal,
-                              right.descriptorOrdinal);
+        output.owners.begin(), output.owners.end(), [](const Owner& first, const Owner& second) {
+            return std::tie(first.programRow,
+                            first.actorClassIndex,
+                            first.configTag,
+                            first.configFieldOffset,
+                            first.buildOrdinal,
+                            first.descriptorOrdinal)
+                   < std::tie(second.programRow,
+                              second.actorClassIndex,
+                              second.configTag,
+                              second.configFieldOffset,
+                              second.buildOrdinal,
+                              second.descriptorOrdinal);
         });
     return true;
 }
@@ -722,8 +727,8 @@ bool build(const reader::Source& source,
                 parsed.push_back(std::move(row));
             }
         }
-        std::sort(parsed.begin(), parsed.end(), [](const auto& left, const auto& right) {
-            return left.program.rootTag < right.program.rootTag;
+        std::sort(parsed.begin(), parsed.end(), [](const auto& first, const auto& second) {
+            return first.program.rootTag < second.program.rootTag;
         });
         std::size_t parsedIndex = 0;
         for (const std::uint32_t tag : tags) {

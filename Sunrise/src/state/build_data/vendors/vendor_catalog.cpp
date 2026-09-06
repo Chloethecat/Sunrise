@@ -84,34 +84,17 @@ Table<InstalledRow, kInstalledRowCapacity> g_installedRows;
  * Checks the sale rows one definition owns.
  * @param definition Owning definition.
  * @param saleRows Complete flat sale bank.
- * @return True when every row is in place and names an installed row of this definition.
+ * @return True when every row names a category of this definition, or none at all.
  */
 [[nodiscard]] bool canonical_sale_rows(const Definition& definition,
                                        std::span<const SaleRow> saleRows) noexcept {
     for (std::size_t row = 0; row < definition.saleCount; ++row) {
         const SaleRow& value = saleRows[definition.saleRowOffset + row];
-        // Row +100 is bounded by the installed count before any reader strides with it.
+        // Row +100 is bounded by the category count before any reader strides with it.
         const bool selects =
             value.categoryIndex == kAbsentCategoryIndex
             || (value.categoryIndex >= 0 && value.categoryIndex < definition.installedCount);
-        if (value.vendorIndex != definition.index || value.rowIndex != row || !selects) {
-            return false;
-        }
-    }
-    return true;
-}
-
-/**
- * Checks the installed rows one definition owns.
- * @param definition Owning definition.
- * @param installedRows Complete flat installed bank.
- * @return True when every row is in place.
- */
-[[nodiscard]] bool canonical_installed_rows(const Definition& definition,
-                                            std::span<const InstalledRow> installedRows) noexcept {
-    for (std::size_t row = 0; row < definition.installedCount; ++row) {
-        const InstalledRow& value = installedRows[definition.installedRowOffset + row];
-        if (value.vendorIndex != definition.index || value.rowIndex != row) {
+        if (!selects) {
             return false;
         }
     }
@@ -179,8 +162,7 @@ bool valid(std::span<const IndexEntry> index,
             || definition.saleCount > saleRows.size() - saleOffset
             || definition.installedCount > installedRows.size() - installedOffset
             || (row != 0 && definitions[row - 1].index >= definition.index)
-            || !canonical_sale_rows(definition, saleRows)
-            || !canonical_installed_rows(definition, installedRows)) {
+            || !canonical_sale_rows(definition, saleRows)) {
             return false;
         }
         saleOffset += definition.saleCount;

@@ -18,20 +18,26 @@ struct Context {
 bool collect(void* opaque, std::uint32_t rsat) noexcept {
     auto& context = *static_cast<Context*>(opaque);
     try {
-        if (context.rows.size() >= types::kMaximumRows) return false;
+        if (context.rows.size() >= types::kMaximumRows) {
+            return false;
+        }
         std::vector<std::byte> resource, definition;
         std::uint32_t cls{}, backlink{}, forward{};
         if (!reader::read_tag(context.source, context.scratch, rsat, resource, cls)
-            || cls != kRsatClass || resource.size() < kReverseOffset + sizeof(std::uint32_t))
+            || cls != kRsatClass || resource.size() < kReverseOffset + sizeof(std::uint32_t)) {
             return false;
+        }
         std::memcpy(&backlink, resource.data() + kReverseOffset, sizeof backlink);
         if (!backlink || backlink == 0xFFFFFFFFU
             || !reader::read_tag(context.source, context.scratch, backlink, definition, cls)
-            || cls != kDefinitionClass || definition.size() <= kObjectTypeOffset)
+            || cls != kDefinitionClass || definition.size() <= kObjectTypeOffset) {
             return false;
+        }
         std::memcpy(&forward, definition.data() + kForwardOffset, sizeof forward);
         const auto objectType = std::to_integer<std::uint8_t>(definition[kObjectTypeOffset]);
-        if (forward != rsat || objectType > types::kMaximumObjectType) return false;
+        if (forward != rsat || objectType > types::kMaximumObjectType) {
+            return false;
+        }
         context.rows.push_back({rsat, backlink, objectType});
         return true;
     } catch (...) {
@@ -46,8 +52,9 @@ bool build(const reader::Source& source,
     try {
         Context context{source, scratch, {}};
         reader::ScanResult result{};
-        if (!reader::scan_class(source.directory, kRsatClass, &collect, &context, result))
+        if (!reader::scan_class(source.directory, kRsatClass, &collect, &context, result)) {
             return false;
+        }
         std::sort(context.rows.begin(), context.rows.end(), [](const auto& a, const auto& b) {
             return a.rsatTag < b.rsatTag;
         });

@@ -5,6 +5,7 @@
 namespace sunrise::state::activity_sdk::validation {
 namespace {
 
+/** @return True when one row range stays inside a section of `size` rows. */
 [[nodiscard]] constexpr bool range(format::Range value, std::size_t size) noexcept {
     return value.first <= size && value.count <= size - value.first;
 }

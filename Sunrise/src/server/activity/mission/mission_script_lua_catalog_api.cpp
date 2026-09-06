@@ -20,6 +20,7 @@ namespace {
         std::string_view key;
         CatalogCollectionKind kind;
     };
+    // Every runtime-pack collection a program may index, by its script-facing key.
     static constexpr std::array entries{
         Entry{"activities", CatalogCollectionKind::activities},
         Entry{"scenarios", CatalogCollectionKind::scenarios},
@@ -52,7 +53,9 @@ namespace {
     return true;
 }
 
+/** Pushes one 32-byte digest as 64 lowercase hex characters. */
 void push_digest(lua_State* state, const std::array<std::byte, 32>& value) {
+    // Lowercase hex digits; every digest and byte field is spelled this way.
     constexpr char digits[] = "0123456789abcdef";
     std::array<char, 64> text{};
     for (std::size_t index = 0; index < value.size(); ++index) {
@@ -387,6 +390,7 @@ void push_field(lua_State* state, const CatalogFieldDefinition& value) {
         lua_pushlstring(state, value.stringValue.data(), value.stringValue.size());
         return;
     case CatalogFieldKind::bytes: {
+        // Lowercase hex digits; every digest and byte field is spelled this way.
         constexpr char digits[] = "0123456789abcdef";
         std::array<char, 80> text{};
         if (value.valueCount > value.bytesValue.size()) {

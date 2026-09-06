@@ -78,8 +78,8 @@ private:
     [[nodiscard]] bool objective_values(std::span<std::int32_t> bank) noexcept;
     /** Fills the progression bank from authored values. */
     [[nodiscard]] bool progression_values(state::unlocks::ProgressionBank& bank) noexcept;
-    /** Parses the family-5 override group. Id and gate fields stay default. */
-    [[nodiscard]] bool investment(state::Family5State& output) noexcept;
+    /** Parses the investment group: family-5 overrides and the catalyst gate. */
+    [[nodiscard]] bool investment(Settings& output) noexcept;
     /** Fills the flag-override list from [slot, value] pairs, each within its bounds. */
     [[nodiscard]] bool unlock_flag_overrides(state::Family5State& output) noexcept;
     /** Fills the signed value-override list from [slot, value] pairs, each within its bounds. */
@@ -96,8 +96,6 @@ private:
     [[nodiscard]] bool profile_items(state::AccountState& output) noexcept;
     /** Parses the definition-driven ordinary-gear dismantle payout. */
     [[nodiscard]] bool dismantle_rewards(state::AccountState& output) noexcept;
-    /** Parses Triumph reward overrides keyed by record index. */
-    [[nodiscard]] bool record_rewards(state::AccountState& output) noexcept;
     /** Parses one character identity. The object must contain one nonzero SOID. */
     [[nodiscard]] bool character(state::CharacterState& output) noexcept;
 
@@ -116,8 +114,7 @@ private:
     [[nodiscard]] bool account_settings(state::account::settings::AccountSettings& output) noexcept;
 
     // --- Account setting groups ---------------------------------------------------------------
-    // Each takes stable Sunrise-owned names and writes bounded native value types. No group
-    // exposes a record offset.
+    // Each takes Sunrise-owned names and writes bounded value types. None exposes a record offset.
 
     /** Parses controller and mouse settings. */
     [[nodiscard]] bool controls_settings(state::account::settings::Controls& output) noexcept;

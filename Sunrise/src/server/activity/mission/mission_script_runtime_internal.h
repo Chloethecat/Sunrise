@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -14,11 +15,12 @@
 #include "../../../state/activity_sdk/generated_world/runtime.h"
 #include "../../../state/activity_sdk/runtime.h"
 #include "../host_runtime.h"
+#include "mission_script_runtime.h"
 #include "mission_script_vm.h"
 
-// What the four mission-runtime translation units share. One owns the instance table and the
-// service slice. One runs the delivery state machine. One fans one intent out to its adapter. One
-// derives the Sense and host-state edges.
+// What the seven mission-runtime translation units share: the instance table and service slice,
+// the attach pipeline, the two Host feeds and the VM callback, the panel rows, the delivery state
+// machine, the intent fan-out, and the Sense and host-state edges.
 
 namespace sunrise::server::activity::mission {
 
@@ -42,6 +44,29 @@ enum class DeliveryStage : std::uint8_t {
     awaitingTransport,
     awaitingCancel,
 };
+
+/** Stable result classes bound repeated attach logs. */
+enum class AttachResult : std::uint8_t {
+    none,
+    catalogUnavailable,
+    noActivityLink,
+    sdkStatus,
+    generatedWorldStatus,
+    capacity,
+    noScript,
+    scriptFileError,
+    sourceTooLarge,
+    programError,
+    ready,
+};
+
+/** Copies text into a fixed buffer, truncating it, and always leaves it terminated. */
+template <std::size_t Capacity>
+void copy_text(std::array<char, Capacity>& output, std::string_view value) noexcept {
+    output = {};
+    const std::size_t length = (std::min)(value.size(), output.size() - 1);
+    std::copy_n(value.data(), length, output.data());
+}
 
 /** Watched trigger volumes retained per instance. */
 constexpr std::size_t kTriggerOccupancyCapacity = 32;
@@ -275,5 +300,101 @@ void report_intent_status(RuntimeInstance& instance,
 
 /** Raises one queued intent, or advances the delivery already in flight. */
 void dispatch_intent(RuntimeInstance& instance, std::uint64_t now) noexcept;
+
+// The runtime unit owns the instance table too. Every other unit reaches it through these.
+
+extern std::array<RuntimeInstance, host::kInstanceCapacity> g_instances;
+
+/** @return The open slot for one exact binding, or null. */
+[[nodiscard]] RuntimeInstance*
+find_instance(const state::activity::SessionBinding& binding) noexcept;
+/** @return One unused slot, or null when every slot is open. */
+[[nodiscard]] RuntimeInstance* free_instance() noexcept;
+/** Frees one slot; its queued events are retired unless the caller keeps them for a reattach. */
+void clear_instance(RuntimeInstance& instance, bool clearPending = true) noexcept;
+/** Retains the last VM stage and status shown on the panel. */
+void note_vm_status(RuntimeInstance& instance,
+                    std::string_view stage,
+                    std::string_view status) noexcept;
+/** Commits the VM's phase/revision/start transaction into exact server-owned State. */
+[[nodiscard]] bool commit_mission_state(RuntimeInstance& instance,
+                                        bool started,
+                                        std::uint64_t nextInputSequence) noexcept;
+
+// The attach unit owns these. The service slice and the lifecycle entry points call into them.
+
+/** Resolves the script root and the SDK Lua search path. Logs its own refusal. */
+[[nodiscard]] bool resolve_script_paths() noexcept;
+/** Clears the script buffer, both paths and every reload authorization. */
+void clear_script_paths() noexcept;
+/** @return False when no authorization slot is free, so the reload cannot replace this program. */
+[[nodiscard]] bool authorize_reload(const RuntimeInstance& instance) noexcept;
+/** Drops slots that no longer match, publishes the roster, and attaches active host instances. */
+void synchronize_instances(std::uint64_t now) noexcept;
+/** Advances fresh programs only when their declared state roster has reached transport output. */
+void service_pending_starts(std::uint64_t now) noexcept;
+
+// The diagnostics unit owns these. The attach unit and the panel snapshot call into them.
+
+/** @return Stable panel-facing class for one retained attach result. */
+[[nodiscard]] const char* attach_result_name(AttachResult value) noexcept;
+/**
+ * Reports an attach result when it changes for the binding.
+ * @param name Stable result token written to the log.
+ * @param activityRow Zero-based SDK row, or the absent sentinel before one resolves.
+ */
+void report_attach_result(
+    const state::activity::SessionBinding& binding,
+    AttachResult result,
+    std::string_view name,
+    std::uint32_t activityRow = format::kAbsentIndex,
+    sdk::Status sdkStatus = sdk::Status::notReady,
+    generated::BindStatus generatedWorldStatus = generated::BindStatus::invalidBoundView) noexcept;
+/** @return True when the Host still reports this binding as active. */
+[[nodiscard]] bool is_active(const host::DiagnosticsSnapshot& diagnostics,
+                             const state::activity::SessionBinding& binding) noexcept;
+/** Drops results after their exact bindings leave the active Host set. */
+void retire_attach_diagnostics(const host::DiagnosticsSnapshot& diagnostics) noexcept;
+/** Clears every retained attach result. */
+void clear_attach_diagnostics() noexcept;
+/** Copies one instance and its VM counters into the panel-facing diagnostics row. */
+void copy_diagnostics(const RuntimeInstance& instance, InstanceDiagnostics& output) noexcept;
+/** Copies every retained attach result into the panel-facing snapshot. */
+void snapshot_attach_diagnostics(DiagnosticsSnapshot& output) noexcept;
+
+// The feed unit owns these. The service slice and the lifecycle entry points call into them.
+
+/** Retires every queued mission event that belongs to one binding. */
+void clear_all_pending_events() noexcept;
+/** Keeps accepted values but removes every VM- and ActivityClient-generation-local decision. */
+void reset_pending_events_for_reattach(const state::activity::SessionBinding& binding) noexcept;
+/** Retires rows as soon as authoritative State no longer owns their exact binding. */
+void retire_unbound_pending_events() noexcept;
+/** @return Queued rows still owed to one exact binding. */
+[[nodiscard]] std::size_t
+pending_event_count(const state::activity::SessionBinding& binding) noexcept;
+/** @return True when one queued accepted row is still owed to this instance. */
+[[nodiscard]] bool has_pending_host_input(const RuntimeInstance& instance) noexcept;
+/** Points both Host cursors at the current feed heads and replays retained accepted inputs. */
+void reset_feed_cursors() noexcept;
+/** Clears both Host cursors. */
+void clear_feed_cursors() noexcept;
+/** Reads new host events, advances delivery, and queues only the lifecycle rows for scripts. */
+void consume_delivery_events(std::uint64_t now) noexcept;
+/** Reads the ordered mission-input feed and drains the queue. */
+void consume_mission_inputs(std::uint64_t now) noexcept;
+/**
+ * Runs one event through the VM, commits what it changed, and faults on a script failure.
+ * @param sense Values owned by a Sense row, or null.
+ * @param clientMessage Envelope snapshot owned by a client-message row, or null.
+ * @param firstAttempt True on the first delivery attempt, which is the one that counts it.
+ * @return The VM call status; `inactive` when no callback could take the event.
+ */
+[[nodiscard]] lua_vm::CallStatus dispatch_event(RuntimeInstance& instance,
+                                                const host::Event& event,
+                                                const host::SenseObservationSnapshot* sense,
+                                                const host::ClientMessageSnapshot* clientMessage,
+                                                bool firstAttempt,
+                                                std::uint64_t now) noexcept;
 
 } // namespace sunrise::server::activity::mission

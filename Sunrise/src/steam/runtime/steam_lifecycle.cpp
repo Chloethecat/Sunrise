@@ -22,6 +22,7 @@ namespace {
 /** The only delay-loaded module allowed to start the platform Client group. */
 constexpr wchar_t kNetworkingModuleName[] = L"steamnetworkingsockets.dll";
 
+/** One-shot activation receipts, so each Client group is stood up exactly once per run. */
 struct Lifecycle {
     bool mainActivationDone{};
     bool mainActivationResult{};
@@ -138,9 +139,7 @@ bool activate_main_once() noexcept {
             lifecycle.mainActivationDone = true;
             lifecycle.mainActivationResult = client::activate_main_once();
         }
-
-        const bool result = lifecycle.mainActivationResult;
-        return result;
+        return lifecycle.mainActivationResult;
     });
 }
 
@@ -172,7 +171,6 @@ void activate_platform_once(const void* callerAddress) noexcept {
     g_lifecycle.lock_write([callerModule](Lifecycle& lifecycle) {
         if (!lifecycle.platformActivationAttempted
             && g_initialized.load(std::memory_order_acquire)) {
-
             lifecycle.platformActivationAttempted = true;
             (void)client::activate_platform_once(callerModule);
         }

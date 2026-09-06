@@ -25,7 +25,9 @@ namespace manifest = state::activity_sdk::generated_world::manifest;
            && api.validate(api.context, generation);
 }
 
+/** Pushes one 32-byte digest as 64 lowercase hex characters. */
 void push_digest(lua_State* state, const std::array<std::byte, 32>& value) {
+    // Lowercase hex digits; every digest and byte field is spelled this way.
     constexpr char digits[] = "0123456789abcdef";
     std::array<char, 64> text{};
     for (std::size_t index = 0; index < value.size(); ++index) {

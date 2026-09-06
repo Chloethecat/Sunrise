@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
-#include <numeric>
 #include <utility>
 #include <vector>
 
@@ -15,6 +14,7 @@ namespace {
 namespace catalog = state::build_data::scriptables;
 namespace evidence = state::build_data::scriptables::inline_name_evidence;
 
+// Inline strings: the package class id and the header bytes before the text.
 constexpr std::uint32_t kInlineStringClass = 0x80800065U;
 constexpr std::size_t kInlineStringHeaderBytes = 12;
 
@@ -50,6 +50,7 @@ read_value(std::span<const std::byte> blob, std::size_t offset, Value& output) n
 /** Appends one encountered tuple for one linear sort and dedupe after all package reads. */
 [[nodiscard]] bool
 append_candidate(catalog::Snapshot& output, std::uint32_t hash, std::span<const std::byte> bytes) {
+    // Candidate rows and byte offsets are published as u32.
     constexpr std::size_t kMaximumOffset = (std::numeric_limits<std::uint32_t>::max)();
     if (output.inlineNameCandidates.size() >= kMaximumOffset
         || output.inlineNameBytes.size() > kMaximumOffset
@@ -124,7 +125,9 @@ bool collect_inline_name_evidence(catalog::Snapshot& output,
 bool canonicalize_inline_name_evidence(catalog::Snapshot& output) noexcept {
     try {
         std::vector<std::size_t> order(output.inlineNameCandidates.size());
-        std::iota(order.begin(), order.end(), 0);
+        for (std::size_t index = 0; index < order.size(); ++index) {
+            order[index] = index;
+        }
         for (const catalog::InlineNameCandidate& row : output.inlineNameCandidates) {
             std::span<const std::byte> bytes{};
             if (!candidate_bytes(output, row, bytes)) {

@@ -19,10 +19,8 @@ namespace sunrise::state::activity::destination {
 
 /**
  * Finds the slice set the type-17 spawn override must name for one spawn-set hash.
- * The override is a pair, and the Client searches for the hash inside the slice set the pair
- * names. Naming the arrival works only while the arrival bubble is one the set is declared in;
- * anywhere else the search finds nothing and the player never receives a spawn point. A set the
- * catalog cannot place leaves the arrival standing, which is the previous behaviour.
+ * The Client searches for the hash only inside the slice set the override names, so naming a
+ * slice set the spawn set is not declared in yields no spawn point at all.
  * @param selection Committed destination.
  * @param spawnSetHash Hash the override will carry.
  * @param arrivalSliceSet Slice set the destination arrives in.

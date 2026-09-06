@@ -2,7 +2,6 @@
 
 #include <Windows.h>
 
-#include <cstdint>
 #include <cstring>
 
 namespace sunrise::core::path {
@@ -106,41 +105,6 @@ bool append(Buffer& path, std::wstring_view suffix) noexcept {
     std::memcpy(path.chars.data() + path.length, suffix.data(), suffix.size() * sizeof(wchar_t));
     path.length += suffix.size();
     path.chars[path.length] = L'\0';
-    return true;
-}
-
-/** Reads one Sunrise-owned text file whole, into caller storage, terminated. */
-bool read_artifact_text(std::wstring_view relative, std::span<char> text) noexcept {
-    if (text.empty()) {
-        return false;
-    }
-    text[0] = '\0';
-    Buffer file{};
-    if (!artifact_file(relative, file)) {
-        return false;
-    }
-    const HANDLE handle = CreateFileW(file.chars.data(), GENERIC_READ, FILE_SHARE_READ, nullptr,
-                                      OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (handle == INVALID_HANDLE_VALUE) {
-        return false;
-    }
-    // The size is measured before anything is read, so a file too large for the caller's storage
-    // is refused outright rather than read in part. Half a rule would parse as a whole one, which
-    // is worse than having no rule at all. One byte is kept for the terminator, so a file that
-    // exactly fills the rest still reads whole.
-    LARGE_INTEGER size{};
-    DWORD read = 0;
-    const bool measured = GetFileSizeEx(handle, &size) != FALSE;
-    const bool fits = measured && size.QuadPart >= 0
-                      && static_cast<std::uint64_t>(size.QuadPart) < text.size();
-    const bool ok = fits
-                    && ReadFile(handle, text.data(), static_cast<DWORD>(text.size() - 1), &read,
-                                nullptr) != FALSE;
-    (void)CloseHandle(handle);
-    if (!ok || read == 0) {
-        return false;
-    }
-    text[read] = '\0';
     return true;
 }
 

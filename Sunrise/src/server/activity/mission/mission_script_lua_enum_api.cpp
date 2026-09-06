@@ -96,6 +96,7 @@ using Channel = scriptable_auth::Type23Channel;
     return 1;
 }
 
+/** Lua index for one lifetime state: `value`, else nil. */
 [[nodiscard]] int lifetime_state_index(lua_State* state) {
     const auto* const handle =
         static_cast<const LifetimeStateHandle*>(luaL_checkudata(state, 1, kLifetimeStateMetatable));
@@ -137,6 +138,7 @@ using Channel = scriptable_auth::Type23Channel;
 
 } // namespace
 
+/** @return The script-facing name of one device channel, or "unknown". */
 std::string_view device_channel_name(std::uint8_t channel) noexcept {
     switch (static_cast<Channel>(channel)) {
     case Channel::devicePosition:

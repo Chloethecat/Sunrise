@@ -12,8 +12,9 @@
 #include <vector>
 
 #include "../../../core/ui/components/section/ui_section_component.h"
-#include "../../../middleware/content/packages/tables/slot_type.h"
 #include "../../activity/activity_sdk_mission_runtime.h"
+#include "activity_host_sdk_behavior_view.h"
+#include "activity_host_sdk_mission_text.h"
 #include "activity_host_table_layout.h"
 
 namespace sunrise::server::ui::activity_host::sdk_mission_view {
@@ -22,12 +23,6 @@ namespace {
 namespace mission = server::activity::activity_sdk_mission;
 namespace sdk = state::activity_sdk;
 namespace section = core::ui::components::section;
-namespace slot_tables = middleware::content::packages::tables;
-
-constexpr ImGuiTableFlags kSceneTableFlags =
-    ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX
-    | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit;
-
 std::array<char, 256> g_search{};
 std::uint64_t g_actionGeneration{};
 std::uint32_t g_actionScenario{sdk::format::kAbsentIndex};
@@ -40,14 +35,6 @@ std::uint32_t g_dialogueActionSlot{sdk::format::kAbsentIndex};
 std::uint16_t g_dialogueActionCue{};
 mission::SceneStatus g_dialogueActionStatus{mission::SceneStatus::ready};
 bool g_hasDialogueActionStatus{};
-std::uint32_t g_taskActionOccurrence{sdk::format::kAbsentIndex};
-std::uint32_t g_taskActionSlot{sdk::format::kAbsentIndex};
-mission::SceneStatus g_taskActionStatus{mission::SceneStatus::ready};
-bool g_hasTaskActionStatus{};
-std::uint32_t g_behaviorActionOccurrence{sdk::format::kAbsentIndex};
-std::uint32_t g_behaviorActionSlot{sdk::format::kAbsentIndex};
-mission::SceneStatus g_behaviorActionStatus{mission::SceneStatus::ready};
-bool g_hasBehaviorActionStatus{};
 std::uint32_t g_directiveActionOccurrence{sdk::format::kAbsentIndex};
 std::uint32_t g_directiveActionSlot{sdk::format::kAbsentIndex};
 std::uint32_t g_directiveActionHash{};
@@ -62,49 +49,6 @@ struct SceneBrowserRow final {
 };
 
 std::vector<SceneBrowserRow> g_visibleScenes{};
-
-/** @return A generated string or a stable missing marker. */
-[[nodiscard]] std::string_view display_text(const sdk::Catalog& catalog,
-                                            sdk::format::StringRef value) noexcept {
-    const std::string_view text = catalog.string(value);
-    return text.empty() ? std::string_view("-") : text;
-}
-
-/** @return A string length bounded for printf-style rendering. */
-[[nodiscard]] int print_length(std::string_view value) noexcept {
-    return static_cast<int>((std::min)(value.size(), static_cast<std::size_t>(INT_MAX)));
-}
-
-/** ASCII case-insensitive substring match for stable generated IDs and numeric search text. */
-[[nodiscard]] bool contains_folded(std::string_view value, std::string_view query) noexcept {
-    if (query.empty()) {
-        return true;
-    }
-    if (query.size() > value.size()) {
-        return false;
-    }
-    for (std::size_t start = 0; start <= value.size() - query.size(); ++start) {
-        bool equal = true;
-        for (std::size_t index = 0; index < query.size(); ++index) {
-            const auto left = static_cast<unsigned char>(value[start + index]);
-            const auto right = static_cast<unsigned char>(query[index]);
-            equal = equal && std::tolower(left) == std::tolower(right);
-        }
-        if (equal) {
-            return true;
-        }
-    }
-    return false;
-}
-
-/** @return Search text without trailing zero storage. */
-[[nodiscard]] std::string_view search_text() noexcept {
-    std::size_t length = 0;
-    while (length < g_search.size() && g_search[length] != '\0') {
-        ++length;
-    }
-    return {g_search.data(), length};
-}
 
 /** @return The global row of one borrowed slot or the absent marker. */
 [[nodiscard]] std::uint32_t global_slot_row(const sdk::Catalog& catalog,
@@ -445,8 +389,10 @@ void draw_dialogues(const sdk::BoundView& view, const mission::Snapshot& snapsho
                                     display_text(catalog, object.id).data(),
                                     static_cast<unsigned>(occurrenceRow),
                                     static_cast<unsigned>(slot.slotIndex));
-                for (std::uint16_t cue = 0; cue < slot.reserved; ++cue) {
-                    ImGui::PushID(static_cast<int>(cue));
+                for (std::uint32_t cueRow = 0; cueRow < slot.reserved; ++cueRow) {
+                    // The cue index is a 16-bit wire field, so the row is narrowed once here.
+                    const auto cue = static_cast<std::uint16_t>(cueRow);
+                    ImGui::PushID(static_cast<int>(cueRow));
                     const mission::SceneStatus available =
                         mission::dialogue_cue_availability(view, occurrenceRow, slotRow, cue);
                     ImGui::BeginDisabled(available != mission::SceneStatus::ready);
@@ -614,312 +560,6 @@ void draw_directives(const sdk::BoundView& view, const mission::Snapshot& snapsh
     }
 }
 
-/** The two action families the behavior inventory draws, one page each. */
-enum class BehaviorFamily : std::uint8_t {
-    objectives,
-    cinematics,
-};
-
-/** @return True when one slot type belongs to the named family's page. */
-[[nodiscard]] bool behavior_slot(std::uint32_t type, BehaviorFamily family) noexcept {
-    // Scenes, dialogue and HUD directives own their own pages. Engagement telemetry is an
-    // observation, not an action, and belongs on no action page.
-    return family == BehaviorFamily::objectives ? type == 3U || type == 38U
-                                                : type == 5U || type == 6U;
-}
-
-/** Describes the proved server surface without offering a guessed mutation. */
-[[nodiscard]] const char* behavior_support(const sdk::Catalog& catalog,
-                                           const sdk::format::Slot& slot) noexcept {
-    switch (slot.slotType) {
-    case 3U:
-        return "objective reset action; progress remains client-owned";
-    case 38U:
-        return sdk::slot_task_targets(catalog, slot).empty() ? "task target unresolved"
-                                                             : "authored objective advance action";
-    case 5U:
-        return "authored sequence action";
-    case 6U:
-        return "authored cinematic action";
-    case sdk::format::kAuthoredSceneSlotType:
-        return "scene generation action";
-    case sdk::format::kDialogueSlotType:
-        return (slot.flags & sdk::format::kSlotDialogueCuesExact) != 0 ? "dialogue cue action"
-                                                                       : "dialogue list unresolved";
-    default:
-        return "unsupported behavior action";
-    }
-}
-
-/** Lists every state-local authored behavior row, including explicitly unsupported surfaces. */
-void draw_behavior_inventory(const sdk::BoundView& view,
-                             const mission::Snapshot& snapshot,
-                             BehaviorFamily family) noexcept {
-    if (view.catalog == nullptr) {
-        return;
-    }
-    const sdk::Catalog& catalog = *view.catalog;
-    const auto occurrences = catalog.occurrences();
-    const auto objects = catalog.objects();
-    const std::string_view query = search_text();
-    std::size_t rows = 0;
-    if (!ImGui::BeginTable("##sdk_behavior_inventory", 5, kSceneTableFlags)) {
-        return;
-    }
-    ImGui::TableSetupColumn("behavior", ImGuiTableColumnFlags_WidthStretch);
-    ImGui::TableSetupColumn("object", ImGuiTableColumnFlags_WidthStretch);
-    ImGui::TableSetupColumn("slot");
-    ImGui::TableSetupColumn("Auth schema");
-    ImGui::TableSetupColumn("support", ImGuiTableColumnFlags_WidthStretch);
-    table_layout::frozen_headers();
-    for (std::uint32_t occurrenceRow = 0; occurrenceRow < occurrences.size(); ++occurrenceRow) {
-        const sdk::format::Occurrence& occurrence = occurrences[occurrenceRow];
-        if (occurrence.scenarioIndex != view.scenarioRow
-            || occurrence.stateIndex != snapshot.plan.stateRow
-            || occurrence.objectIndex >= objects.size()) {
-            continue;
-        }
-        const sdk::format::Object& object = objects[occurrence.objectIndex];
-        for (const sdk::format::Slot& slot : sdk::object_slots(catalog, object)) {
-            const std::uint32_t slotRow =
-                static_cast<std::uint32_t>(&slot - catalog.slots().data());
-            if (!behavior_slot(slot.slotType, family)) {
-                continue;
-            }
-            const char* const typeName =
-                slot_tables::slot_type_name(static_cast<std::uint16_t>(slot.slotType));
-            const char* const support = behavior_support(catalog, slot);
-            if (!query.empty() && !contains_folded(catalog.string(slot.name), query)
-                && !contains_folded(catalog.string(slot.id), query)
-                && !contains_folded(catalog.string(object.id), query)
-                && !contains_folded(typeName, query) && !contains_folded(support, query)) {
-                continue;
-            }
-            ++rows;
-            table_layout::next_row();
-            ImGui::TableNextColumn();
-            ImGui::Text("%s\n%.*s",
-                        typeName,
-                        print_length(display_text(catalog, slot.name)),
-                        display_text(catalog, slot.name).data());
-            ImGui::TableNextColumn();
-            ImGui::Text("%.*s\noccurrence %u",
-                        print_length(display_text(catalog, object.id)),
-                        display_text(catalog, object.id).data(),
-                        static_cast<unsigned>(occurrenceRow));
-            ImGui::TableNextColumn();
-            ImGui::Text("%u / type %u",
-                        static_cast<unsigned>(slot.slotIndex),
-                        static_cast<unsigned>(slot.slotType));
-            ImGui::TableNextColumn();
-            ImGui::Text("0x%08X", static_cast<unsigned>(slot.authSchema));
-            ImGui::TableNextColumn();
-            if (slot.slotType == sdk::format::kObjectiveSlotType) {
-                const mission::SceneStatus availability =
-                    mission::objective_reset_availability(view, occurrenceRow, slotRow);
-                ImGui::PushID(static_cast<int>(occurrenceRow));
-                ImGui::PushID(static_cast<int>(slotRow));
-                ImGui::BeginDisabled(availability != mission::SceneStatus::ready);
-                if (ImGui::Button("Reset all objectives")) {
-                    g_behaviorActionOccurrence = occurrenceRow;
-                    g_behaviorActionSlot = slotRow;
-                    g_behaviorActionStatus =
-                        mission::reset_objectives(view, occurrenceRow, slotRow);
-                    g_hasBehaviorActionStatus = true;
-                }
-                ImGui::EndDisabled();
-                ImGui::SameLine();
-                ImGui::TextDisabled("%s", mission::status_name(availability));
-                if (g_hasBehaviorActionStatus && g_behaviorActionOccurrence == occurrenceRow
-                    && g_behaviorActionSlot == slotRow) {
-                    ImGui::Text("Last action  %s", mission::status_name(g_behaviorActionStatus));
-                }
-                ImGui::PopID();
-                ImGui::PopID();
-            } else if (slot.slotType == sdk::format::kSequenceSlotType) {
-                const mission::SceneStatus availability =
-                    mission::sequence_availability(view, occurrenceRow, slotRow);
-                ImGui::PushID(static_cast<int>(occurrenceRow));
-                ImGui::PushID(static_cast<int>(slotRow));
-                ImGui::BeginDisabled(availability != mission::SceneStatus::ready);
-                if (ImGui::Button("Play sequence")) {
-                    g_behaviorActionOccurrence = occurrenceRow;
-                    g_behaviorActionSlot = slotRow;
-                    g_behaviorActionStatus = mission::play_sequence(view, occurrenceRow, slotRow);
-                    g_hasBehaviorActionStatus = true;
-                }
-                ImGui::EndDisabled();
-                ImGui::SameLine();
-                ImGui::TextDisabled("%s", mission::status_name(availability));
-                if (g_hasBehaviorActionStatus && g_behaviorActionOccurrence == occurrenceRow
-                    && g_behaviorActionSlot == slotRow) {
-                    ImGui::Text("Last action  %s", mission::status_name(g_behaviorActionStatus));
-                }
-                ImGui::PopID();
-                ImGui::PopID();
-            } else if (slot.slotType == sdk::format::kCinematicSlotType) {
-                const mission::SceneStatus availability =
-                    mission::cinematic_availability(view, occurrenceRow, slotRow);
-                ImGui::PushID(static_cast<int>(occurrenceRow));
-                ImGui::PushID(static_cast<int>(slotRow));
-                ImGui::BeginDisabled(availability != mission::SceneStatus::ready);
-                if (ImGui::Button("Play cinematic")) {
-                    g_behaviorActionOccurrence = occurrenceRow;
-                    g_behaviorActionSlot = slotRow;
-                    g_behaviorActionStatus =
-                        mission::set_cinematic_active(view, occurrenceRow, slotRow, true);
-                    g_hasBehaviorActionStatus = true;
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Stop")) {
-                    g_behaviorActionOccurrence = occurrenceRow;
-                    g_behaviorActionSlot = slotRow;
-                    g_behaviorActionStatus =
-                        mission::set_cinematic_active(view, occurrenceRow, slotRow, false);
-                    g_hasBehaviorActionStatus = true;
-                }
-                ImGui::EndDisabled();
-                ImGui::SameLine();
-                ImGui::TextDisabled("%s", mission::status_name(availability));
-                if (g_hasBehaviorActionStatus && g_behaviorActionOccurrence == occurrenceRow
-                    && g_behaviorActionSlot == slotRow) {
-                    ImGui::Text("Last action  %s", mission::status_name(g_behaviorActionStatus));
-                }
-                ImGui::PopID();
-                ImGui::PopID();
-            } else if (slot.slotType == sdk::format::kTaskSlotType) {
-                const auto targets = sdk::slot_task_targets(catalog, slot);
-                if (!targets.empty()) {
-                    const sdk::format::TaskTarget& target = targets.front();
-                    const sdk::format::Slot* const objective =
-                        sdk::task_linked_objective_slot(catalog, target);
-                    const mission::SceneStatus availability =
-                        mission::task_availability(view, occurrenceRow, slotRow);
-                    ImGui::TextWrapped(
-                        "objective %.*s  bit %u",
-                        objective != nullptr ? print_length(display_text(catalog, objective->name))
-                                             : 1,
-                        objective != nullptr ? display_text(catalog, objective->name).data() : "-",
-                        static_cast<unsigned>(target.bitIndex));
-                    ImGui::PushID(static_cast<int>(occurrenceRow));
-                    ImGui::PushID(static_cast<int>(slotRow));
-                    ImGui::BeginDisabled(availability != mission::SceneStatus::ready);
-                    if (ImGui::Button("Advance objective")) {
-                        g_taskActionOccurrence = occurrenceRow;
-                        g_taskActionSlot = slotRow;
-                        g_taskActionStatus = mission::activate_task(view, occurrenceRow, slotRow);
-                        g_hasTaskActionStatus = true;
-                    }
-                    ImGui::EndDisabled();
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("%s", mission::status_name(availability));
-                    if (g_hasTaskActionStatus && g_taskActionOccurrence == occurrenceRow
-                        && g_taskActionSlot == slotRow) {
-                        ImGui::Text("Last action  %s", mission::status_name(g_taskActionStatus));
-                    }
-                    ImGui::PopID();
-                    ImGui::PopID();
-                } else {
-                    ImGui::TextWrapped("%s", support);
-                }
-            } else {
-                ImGui::TextWrapped("%s", support);
-            }
-        }
-    }
-    ImGui::EndTable();
-    if (rows == 0) {
-        ImGui::TextDisabled("No row matches.");
-    }
-}
-
-/** Lists every installed compiled root. A root tag is not a callable wire action. */
-void draw_compiled_behavior_roots(const sdk::Catalog& catalog) noexcept {
-    const auto programs = catalog.behavior_programs();
-    const auto owners = catalog.behavior_owners();
-    const auto bindings = catalog.behavior_activity_bindings();
-    const std::string_view query = search_text();
-    std::vector<std::uint32_t> visible{};
-    std::vector<std::uint32_t> ownerCounts{};
-    std::vector<std::uint32_t> bindingCounts{};
-    std::vector<std::uint32_t> activeCounts{};
-    try {
-        visible.reserve(programs.size());
-        ownerCounts.resize(programs.size());
-        bindingCounts.resize(programs.size());
-        activeCounts.resize(programs.size());
-        for (const sdk::format::BehaviorOwner& owner : owners) {
-            if (owner.programIndex < programs.size()) {
-                ++ownerCounts[owner.programIndex];
-                if (owner.submissionKind == sdk::format::BehaviorSubmissionKind::activeNative) {
-                    ++activeCounts[owner.programIndex];
-                }
-            }
-        }
-        for (const sdk::format::BehaviorActivityBinding& binding : bindings) {
-            if (binding.ownerIndex < owners.size()
-                && owners[binding.ownerIndex].programIndex < programs.size()) {
-                ++bindingCounts[owners[binding.ownerIndex].programIndex];
-            }
-        }
-        std::array<char, 11> tagText{};
-        for (std::uint32_t row = 0; row < programs.size(); ++row) {
-            const sdk::format::BehaviorProgram& program = programs[row];
-            const int written = std::snprintf(
-                tagText.data(), tagText.size(), "0x%08X", static_cast<unsigned>(program.rootTag));
-            if (query.empty()
-                || (written > 0
-                    && contains_folded(
-                        std::string_view(tagText.data(), static_cast<std::size_t>(written)),
-                        query))) {
-                visible.push_back(row);
-            }
-        }
-    } catch (...) {
-        ImGui::TextDisabled("Compiled behavior list did not fit.");
-        return;
-    }
-    ImGui::Text("%zu listed of %zu installed roots", visible.size(), programs.size());
-    if (!ImGui::BeginTable("##sdk_compiled_behavior_roots", 8, kSceneTableFlags)) {
-        return;
-    }
-    ImGui::TableSetupColumn("root");
-    ImGui::TableSetupColumn("nodes");
-    ImGui::TableSetupColumn("expressions");
-    ImGui::TableSetupColumn("inputs");
-    ImGui::TableSetupColumn("writes");
-    ImGui::TableSetupColumn("owners");
-    ImGui::TableSetupColumn("active");
-    ImGui::TableSetupColumn("paths");
-    table_layout::frozen_headers();
-    ImGuiListClipper clipper{};
-    clipper.Begin(static_cast<int>(visible.size()));
-    while (clipper.Step()) {
-        for (int index = clipper.DisplayStart; index < clipper.DisplayEnd; ++index) {
-            const sdk::format::BehaviorProgram& row =
-                programs[visible[static_cast<std::size_t>(index)]];
-            table_layout::next_row();
-            ImGui::TableNextColumn();
-            ImGui::Text("0x%08X", static_cast<unsigned>(row.rootTag));
-            ImGui::TableNextColumn();
-            ImGui::Text("%u", static_cast<unsigned>(row.nodeCount));
-            ImGui::TableNextColumn();
-            ImGui::Text("%u", static_cast<unsigned>(row.expressionCount));
-            ImGui::TableNextColumn();
-            ImGui::Text("%u", static_cast<unsigned>(row.inputs.count));
-            ImGui::TableNextColumn();
-            ImGui::Text("%u", static_cast<unsigned>(row.channelWrites.count));
-            ImGui::TableNextColumn();
-            ImGui::Text("%u", static_cast<unsigned>(ownerCounts[visible[index]]));
-            ImGui::TableNextColumn();
-            ImGui::Text("%u", static_cast<unsigned>(activeCounts[visible[index]]));
-            ImGui::TableNextColumn();
-            ImGui::Text("%u", static_cast<unsigned>(bindingCounts[visible[index]]));
-        }
-    }
-    ImGui::EndTable();
-}
-
 /** Keeps action feedback tied to the exact generation that produced it. */
 void sync_action_generation(const sdk::BoundView& view,
                             const mission::Snapshot& snapshot) noexcept {
@@ -931,12 +571,52 @@ void sync_action_generation(const sdk::BoundView& view,
     g_actionScenario = view.scenarioRow;
     g_hasSceneActionStatus = false;
     g_hasDialogueActionStatus = false;
-    g_hasTaskActionStatus = false;
-    g_hasBehaviorActionStatus = false;
+    reset_behavior_action_status();
     g_hasDirectiveActionStatus = false;
 }
-
 } // namespace
+/** @return A generated string or a stable missing marker. */
+[[nodiscard]] std::string_view display_text(const sdk::Catalog& catalog,
+                                            sdk::format::StringRef value) noexcept {
+    const std::string_view text = catalog.string(value);
+    return text.empty() ? std::string_view("-") : text;
+}
+
+/** @return A string length bounded for printf-style rendering. */
+[[nodiscard]] int print_length(std::string_view value) noexcept {
+    return static_cast<int>((std::min)(value.size(), static_cast<std::size_t>(INT_MAX)));
+}
+
+/** ASCII case-insensitive substring match for stable generated IDs and numeric search text. */
+[[nodiscard]] bool contains_folded(std::string_view value, std::string_view query) noexcept {
+    if (query.empty()) {
+        return true;
+    }
+    if (query.size() > value.size()) {
+        return false;
+    }
+    for (std::size_t start = 0; start <= value.size() - query.size(); ++start) {
+        bool equal = true;
+        for (std::size_t index = 0; index < query.size(); ++index) {
+            const auto left = static_cast<unsigned char>(value[start + index]);
+            const auto right = static_cast<unsigned char>(query[index]);
+            equal = equal && std::tolower(left) == std::tolower(right);
+        }
+        if (equal) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** @return Search text without trailing zero storage. */
+[[nodiscard]] std::string_view search_text() noexcept {
+    std::size_t length = 0;
+    while (length < g_search.size() && g_search[length] != '\0') {
+        ++length;
+    }
+    return {g_search.data(), length};
+}
 
 /** Draws the automatically selected state-0 roster plan. */
 void draw(const sdk::BoundView& view, const sdk::format::Scenario& scenario) noexcept {

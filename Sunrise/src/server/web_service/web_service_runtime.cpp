@@ -7,7 +7,6 @@
 #include <cstdio>
 
 #include "../../core/logging/log.h"
-#include "../../middleware/encoding/bit_reader.h"
 #include "../../middleware/web_service/messages/opcode1801.h"
 #include "../../middleware/web_service/messages/opcode1821.h"
 #include "../../middleware/web_service/messages/opcode1901.h"
@@ -22,12 +21,12 @@
 #include "../../middleware/web_service/messages/opcode702.h"
 #include "../../middleware/web_service/messages/opcode801.h"
 #include "../../middleware/web_service/messages/opcode901/opcode901_codec.h"
-#include "../../middleware/web_service/messages/opcode904/opcode904_codec.h"
 #include "../../middleware/web_service/messages/opcode903.h"
+#include "../../middleware/web_service/messages/opcode904/opcode904_codec.h"
 #include "../../middleware/web_service/web_service_envelope.h"
 #include "../../state/account/account_state.h"
 #include "../../state/activity/membership/activity_membership_query.h"
-#include "../../state/progression/seasonal_experience.h"
+#include "../../state/build_data/runtime.h"
 #include "../../state/runtime/runtime.h"
 #include "opcode_routes.h"
 #include "web_service_actions.h"
@@ -51,20 +50,22 @@ constexpr std::uint16_t kItemAcquisitionOpcode = 1820;
  */
 constexpr std::int32_t kRefusedStatus = 1;
 
+/**
+ * Opcodes whose reply may name a resident the client no longer holds.
+ * Kept sorted; the lookup below is a binary search.
+ */
 constexpr auto kResidentDependentOpcodes =
     std::to_array<std::uint16_t>({402, 403, 404, 406, 504, 903, 1801, 1820, 1901, 2400});
 
 /** One refusal line carries both request indices, the clock presence, and the clock verdict. */
 constexpr std::size_t kPurchaseLineCapacity = 128;
 constexpr std::size_t kEchoLineCapacity = 64;
-/**
- * Status code answered to a purchase request.
- * Any non-zero value refuses. Zero is the success code, so it must not be used here.
- */
-constexpr std::int32_t kPurchaseRefusedCode = 1;
 /** Season of Arrivals artifact vendor row in the installed build's vendor index. */
 constexpr std::int16_t kArtifactVendorIndex = 430;
+/** Glimmer the artifact vendor charges to reset its mods, as retail charges. */
 constexpr std::int32_t kArtifactResetGlimmerCost = 20'000;
+/** The artifact vendor's reset row. Every lower row unlocks one mod tier. */
+constexpr std::uint16_t kArtifactResetSaleIndex = 5;
 
 /**
  * Reads the server's own clock for the purchase clock rule.
@@ -77,7 +78,7 @@ constexpr std::int32_t kArtifactResetGlimmerCost = 20'000;
 }
 
 /** Issues a strictly increasing family-5 clock, including multiple requests in one second. */
-[[nodiscard]] std::uint64_t next_family5_clock() noexcept {
+std::uint64_t next_family5_clock() noexcept {
     static std::atomic<std::uint64_t> issued{0};
     const auto wall = static_cast<std::uint64_t>(server_clock_seconds());
     std::uint64_t previous = issued.load(std::memory_order_relaxed);
@@ -146,11 +147,11 @@ void note_character_writeback(const middleware::web_service::Message& message) n
                                "ev=ws901 stage=purchase result=refuse reason=parse");
     if (length > 0) {
         core::log::write(core::log::Channel::server,
-                         core::log::Level::error,
+                         core::log::Level::warn,
                          {line.data(), static_cast<std::size_t>(length)});
     }
     middleware::web_service::StatusResponse status{};
-    status.code = kPurchaseRefusedCode;
+    status.code = kRefusedStatus;
     // The trailing bool drives a local action effect on the client, so it stays clear.
     status.trailingBool = false;
     return middleware::web_service::encode_response(
@@ -171,12 +172,11 @@ void note_character_writeback(const middleware::web_service::Message& message) n
     if (!purchase_codec::parse_request(message, purchase)
         || purchase.vendorIndex != kArtifactVendorIndex || purchase.saleIndex < 0
         || purchase.saleIndex
-               >= static_cast<std::int16_t>(
-                   state::progression::seasonal_experience::kArtifactSaleCount)) {
+               >= static_cast<std::int16_t>(state::build_data::kArtifactSaleRowCapacity)) {
         return false;
     }
     const auto saleIndex = static_cast<std::uint16_t>(purchase.saleIndex);
-    if (saleIndex == 5) {
+    if (saleIndex == kArtifactResetSaleIndex) {
         state::ArtifactResetResult reset{};
         if (!state::reset_artifact(kArtifactResetGlimmerCost, reset)) {
             return false;
@@ -201,12 +201,11 @@ void note_character_writeback(const middleware::web_service::Message& message) n
         return false;
     }
     std::array<char, kPurchaseLineCapacity> line{};
-    const int length =
-        std::snprintf(line.data(),
-                      line.size(),
-                      "ev=ws901 stage=artifact result=ok vendor=%d sale=%d",
-                      static_cast<int>(purchase.vendorIndex),
-                      static_cast<int>(purchase.saleIndex));
+    const int length = std::snprintf(line.data(),
+                                     line.size(),
+                                     "ev=ws901 stage=artifact result=ok vendor=%d sale=%d",
+                                     static_cast<int>(purchase.vendorIndex),
+                                     static_cast<int>(purchase.saleIndex));
     if (length > 0) {
         core::log::write(core::log::Channel::server,
                          core::log::Level::info,
@@ -221,6 +220,8 @@ void note_character_writeback(const middleware::web_service::Message& message) n
         response,
         written);
     if (!encoded) {
+        // The purchase was written when it was prepared, so a refused reply undoes it.
+        (void)state::replace_artifact_mod_mask(mutation->afterMask, mutation->beforeMask);
         clear_mutation(outcome);
         return false;
     }
@@ -252,122 +253,14 @@ bool encode_echo(const middleware::web_service::Message& message,
         message, ws::ResponseShape::generic, ws::StatusResponse{}, response, written);
 }
 
-/** Narrow semantic result from the prefix of reflected WS-701 schema 0x80807603. */
-struct ProfileSetupMarker {
-    bool present{};
-    bool completed{};
-};
-
-/** Reads the presence bit that precedes every optional WS-701 schema node. */
-[[nodiscard]] bool read_ws701_presence(middleware::encoding::bits::Reader& reader,
-                                       bool& present) noexcept {
-    std::uint64_t value = 0;
-    if (!reader.read(1, value)) {
-        return false;
-    }
-    present = value != 0;
-    return true;
-}
-
-/** Consumes one optional fixed-width field without retaining it. */
-[[nodiscard]] bool skip_ws701_optional(middleware::encoding::bits::Reader& reader,
-                                       std::size_t widthBits) noexcept {
-    bool present = false;
-    return read_ws701_presence(reader, present) && (!present || reader.skip(widthBits));
-}
-
 /**
- * Reads only enough of WS-701 schema 0x80807603 to reach preference path 0.1.1.0.
- *
- * PR #71 maps that first preference scalar as the one-bit profile-setup marker. Everything after
- * it belongs to the broader settings-write implementation and is deliberately left to that work.
- * This function therefore validates the complete prefix, not the remainder of the request.
+ * Encodes the refusal reply for a request whose answer may name a resident the client dropped.
+ * @param request Whole decrypted svc-10 body.
+ * @param response Svc-11 response-body storage owned by the caller.
+ * @param written Gets the encoded response-body size; zero when the opcode is not refused here.
+ * @param refused Gets true when the opcode is one of the resident-dependent set.
+ * @return False when neither the refusal nor the bare echo could be encoded.
  */
-[[nodiscard]] bool parse_profile_setup_marker(const middleware::web_service::Message& message,
-                                              ProfileSetupMarker& output) noexcept {
-    output = {};
-    if (message.opcode != middleware::web_service::messages::opcode701::kOpcode) {
-        return false;
-    }
-
-    middleware::encoding::bits::Reader reader(message.payload);
-    bool present = false;
-
-    // 0.0? client metadata.
-    if (!read_ws701_presence(reader, present)) {
-        return false;
-    }
-    if (present) {
-        // 0.0.0? [128] optional 64-bit publicity expiries.
-        bool publicityPresent = false;
-        if (!read_ws701_presence(reader, publicityPresent)) {
-            return false;
-        }
-        if (publicityPresent) {
-            for (std::size_t index = 0; index < 128; ++index) {
-                if (!skip_ws701_optional(reader, 64)) {
-                    return false;
-                }
-            }
-        }
-
-        // 0.0.1? [13] required 32-bit seen-message values.
-        bool seenMessagesPresent = false;
-        if (!read_ws701_presence(reader, seenMessagesPresent)
-            || (seenMessagesPresent && !reader.skip(13U * 32U))) {
-            return false;
-        }
-    }
-
-    // 0.1? account data.
-    bool accountPresent = false;
-    if (!read_ws701_presence(reader, accountPresent)) {
-        return false;
-    }
-    if (!accountPresent) {
-        return true;
-    }
-
-    // 0.1.0? [2] optional calibration vectors, each containing two required real32 values.
-    bool calibrationPresent = false;
-    if (!read_ws701_presence(reader, calibrationPresent)) {
-        return false;
-    }
-    if (calibrationPresent) {
-        for (std::size_t index = 0; index < 2; ++index) {
-            bool vectorPresent = false;
-            if (!read_ws701_presence(reader, vectorPresent)
-                || (vectorPresent && !reader.skip(2U * 32U))) {
-                return false;
-            }
-        }
-    }
-
-    // 0.1.1? preference record.
-    bool preferencesPresent = false;
-    if (!read_ws701_presence(reader, preferencesPresent)) {
-        return false;
-    }
-    if (!preferencesPresent) {
-        return true;
-    }
-
-    // 0.1.1.0? one-bit profile-setup marker.
-    if (!read_ws701_presence(reader, output.present)) {
-        return false;
-    }
-    if (!output.present) {
-        return true;
-    }
-
-    std::uint64_t completed = 0;
-    if (!reader.read(1, completed)) {
-        return false;
-    }
-    output.completed = completed != 0;
-    return true;
-}
-
 bool encode_resident_dependent_refusal(std::span<const std::byte> request,
                                        std::span<std::byte> response,
                                        std::size_t& written,
@@ -504,24 +397,7 @@ bool consume(std::span<const std::byte> request,
     } else if (message.opcode == middleware::web_service::messages::opcode701::kOpcode) {
         const state::SettingsUpdateDisposition disposition = mutate_settings(message, outcome);
         acceptedWithoutMutation = disposition == state::SettingsUpdateDisposition::acceptedNoChange;
-        // The completion marker is applied here. The shared status path below reports the result.
-        ProfileSetupMarker marker{};
-        const bool parsed = parse_profile_setup_marker(message, marker);
-        if (!parsed) {
-            // Preserve Sunrise's existing WS-701 success behavior outside this narrow feature.
-            // PR #71 owns complete settings-write validation and can later subsume this prefix.
-            core::log::write(core::log::Channel::server,
-                             core::log::Level::warn,
-                             "ev=ws701 stage=profile_setup result=ignored reason=prefix_parse");
-        } else if (marker.present && marker.completed) {
-            if (!state::complete_profile_setup()) {
-                profileSetupRefused = true;
-            } else {
-                core::log::write(core::log::Channel::server,
-                                 core::log::Level::info,
-                                 "ev=ws701 stage=profile_setup result=complete marker=1");
-            }
-        }
+        profileSetupRefused = outcome.profileSetupRefused;
     } else if (message.opcode == kItemAcquisitionOpcode) {
         acquire_item(message, outcome);
     } else if (message.opcode == middleware::web_service::messages::opcode2400::kOpcode) {
@@ -539,6 +415,10 @@ bool consume(std::span<const std::byte> request,
     middleware::web_service::ResponseShape shape{};
     resolve_response_shape(message.opcode, shape);
     middleware::web_service::StatusResponse status{};
+    if (awaits_family4_version(message.opcode)) {
+        // Nothing is published from here. A staged mutation re-encodes this with its own revision.
+        status.value = middleware::web_service::kNoFamily4Publication;
+    }
     if ((dispatched && !prepared && !acceptedWithoutMutation) || profileSetupRefused) {
         status.code = kRefusedStatus;
     }

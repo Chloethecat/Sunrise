@@ -8,6 +8,7 @@ namespace sunrise::state::build_data::scriptables::inline_name_evidence {
 
 /** @return The authored 32-bit FNV-1 hash of one exact byte string. */
 [[nodiscard]] inline std::uint32_t hash(std::span<const std::byte> bytes) noexcept {
+    // FNV-1 32-bit offset basis and prime, as the packages hash their names.
     constexpr std::uint32_t kBasis = 0x811C9DC5U;
     constexpr std::uint32_t kPrime = 0x01000193U;
     std::uint32_t output = kBasis;

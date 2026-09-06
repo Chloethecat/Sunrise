@@ -4,7 +4,6 @@
 #include <cstring>
 #include <limits>
 #include <span>
-#include <tuple>
 
 #include "mission_script_sdk_bridge.h"
 
@@ -98,7 +97,7 @@ checked_view(const void* context, const lua_vm::CatalogGenerationIdentity& gener
 template <std::size_t Size>
 [[nodiscard]] bool field_bytes(lua_vm::CatalogFieldDefinition& output,
                                const std::array<std::byte, Size>& value) noexcept {
-    static_assert(Size <= std::tuple_size_v<decltype(output.bytesValue)>);
+    static_assert(Size <= lua_vm::kCatalogFieldByteCapacity);
     output = {};
     output.kind = lua_vm::CatalogFieldKind::bytes;
     std::copy(value.begin(), value.end(), output.bytesValue.begin());
@@ -502,6 +501,7 @@ template <typename Row>
     return true;
 }
 
+/** @return The activity range this owned kind names, or null when the kind is unknown. */
 [[nodiscard]] const format::Range*
 activity_owned_range(const format::Activity& activity,
                      lua_vm::CatalogActivityOwnedKind kind) noexcept {
@@ -518,6 +518,11 @@ activity_owned_range(const format::Activity& activity,
     return nullptr;
 }
 
+/**
+ * Bounds-checks one owned activity range against the section it indexes.
+ * @param output Receives the range; cleared when the generation is stale or the range is invalid.
+ * @return False when the row, the kind or the range does not fit the bound catalog.
+ */
 [[nodiscard]] bool
 resolve_activity_owned_range(const void* context,
                              const lua_vm::CatalogGenerationIdentity& generation,

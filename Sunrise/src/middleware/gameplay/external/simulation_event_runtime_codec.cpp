@@ -29,6 +29,7 @@ constexpr std::size_t kSecondaryDraftCapacity = 16;
 
 /** @return True when one event row's flags match its two schema handles. */
 [[nodiscard]] bool valid_event_definition(const format::SimulationEventDefinition& event) noexcept {
+    /** Only these three flags are understood; any other flag refuses the row. */
     constexpr std::uint32_t kAllowedFlags = format::kSimulationEventDefinitionExact
                                             | format::kSimulationEventPrimaryAbsent
                                             | format::kSimulationEventSecondaryAbsent;

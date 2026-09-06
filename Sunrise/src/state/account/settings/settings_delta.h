@@ -86,11 +86,8 @@ struct SocialDelta {
 
 /**
  * Sparse account-settings writeback plus binding-table routing information.
- *
- * Every scalar uses optional presence so zero and false remain ordinary authored values. The
- * keybinding source is both an authored setting and routing input for the binding-table merge.
- * The keybinding table is one optional fixed-size object; individual slots cannot be partially
- * published by the decoder or committed by State.
+ * Optional presence keeps zero and false as ordinary values. The binding table is one optional
+ * whole object, so no single slot can be published or committed on its own.
  */
 struct SettingsDelta {
     ControlsDelta controls;

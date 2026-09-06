@@ -250,7 +250,7 @@ public:
 
 private:
     friend bool build_executable_registry(std::span<const MessageIdentity> messages,
-                                          std::span<const RouteIdentity> routes,
+                                          std::span<const RouteIdentity> routeIdentities,
                                           ExecutableRegistry& output) noexcept;
 
     std::array<ExecutableRoute, kRouteCount> entries_{};
@@ -270,7 +270,7 @@ private:
  * Any extent, message, name, path, direction, or policy mismatch denies the whole registry.
  */
 [[nodiscard]] bool build_executable_registry(std::span<const MessageIdentity> messages,
-                                             std::span<const RouteIdentity> routes,
+                                             std::span<const RouteIdentity> routeIdentities,
                                              ExecutableRegistry& output) noexcept;
 
 /** @return Schema identity for the data-only SDK and Lua projection. */

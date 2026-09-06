@@ -33,6 +33,7 @@ namespace scriptable_auth = middleware::bap::activity_message::scriptable_auth;
 namespace mission_state = state::activity::mission;
 namespace sdk = state::activity_sdk;
 
+/** One shared table style, so every table on this page reads the same. */
 constexpr ImGuiTableFlags kTableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
                                         | ImGuiTableFlags_SizingStretchProp
                                         | ImGuiTableFlags_ScrollY;

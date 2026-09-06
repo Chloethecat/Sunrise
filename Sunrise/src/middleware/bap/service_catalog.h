@@ -135,6 +135,7 @@ struct Service final {
     std::size_t completeEncryptedFrameMaximum{kAbsentBodyExtent};
 };
 
+/** Every BAP service Sunrise answers. A service outside this table is refused. */
 inline constexpr std::array<Service, 7> kServices{{
     Service{"bap.activity_host_manager.v1",
             static_cast<std::uint16_t>(RequestService::activityHostManager),

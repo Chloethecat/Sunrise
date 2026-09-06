@@ -6,10 +6,8 @@
 #include <limits>
 #include <optional>
 
-#include "../../../../state/build_data/nodes/node_catalog.h"
 #include "../../../../state/build_data/runtime.h"
-#include "../../../../state/progression/seasonal_experience.h"
-#include "../../../../state/record_claims/record_claims.h"
+#include "../../../../state/unlocks/unlocks_records.h"
 #include "../../../../state/unlocks/unlocks_runtime.h"
 #include "../../character_record/layout.h"
 #include "../instance/layout.h"
@@ -38,6 +36,7 @@ struct CollectibleQuest {
     /** Lore completion flag which consumes this quest; zero keeps the prerequisite authored. */
     std::uint16_t completionFlag{};
 };
+/** One row per supported collectible quest; a claimed completion flag drops the row. */
 constexpr std::array<CollectibleQuest, 4> kCollectibleQuests{{
     {0x57C4540AU, 0U},
     {0x85CC476EU, 10762U},
@@ -62,6 +61,11 @@ constexpr std::size_t kBitsPerFlagByte = 8;
 /** Character-object watermark for an occupied inventory row. */
 constexpr std::int32_t kOccupiedRowWatermark = 1;
 
+/**
+ * Places every authored stack into the first free row of its character bucket.
+ * @param object Receives the row, its new-item flag bit and its progress watermark.
+ * @return False when a stack fails validation or its bucket has no free row.
+ */
 [[nodiscard]] bool place_character_stacks(const state::CharacterState& state,
                                           layout::Object& object) noexcept {
     if (!state::account::inventory::valid(state.stacks)) {
@@ -118,8 +122,8 @@ constexpr std::int32_t kOccupiedRowWatermark = 1;
     std::size_t rowLimit = 0;
     for (const CollectibleQuest& quest : kCollectibleQuests) {
         if (quest.completionFlag != 0
-            && (state::record_claims::claimed(quest.completionFlag)
-                || state::record_claims::claimable(quest.completionFlag))) {
+            && (state::unlocks::records::claimed(quest.completionFlag)
+                || state::unlocks::records::claimable(quest.completionFlag))) {
             continue;
         }
         state::build_data::items::Definition item{};
@@ -232,12 +236,11 @@ summary_matches_loadout(const loadout::ResolvedLoadout& resolvedLoadout,
 
 } // namespace
 
-/** Encodes one selected-character object from authored State and resolved installed mappings. */
+/** Encodes one selected-character object from live State and resolved installed mappings. */
 bool encode(const state::CharacterState& state,
             const loadout::ResolvedLoadout& resolvedLoadout,
             const state::equipment::light::Evaluation& lightEvaluation,
-            std::span<std::byte> output,
-            const state::record_claims::PendingClaim* pendingClaim) noexcept {
+            std::span<std::byte> output) noexcept {
     if (!valid(state) || !valid(resolvedLoadout)
         || !summary_matches_loadout(resolvedLoadout, lightEvaluation)
         || output.size() < layout::kObjectSize) {
@@ -275,29 +278,18 @@ bool encode(const state::CharacterState& state,
     for (layout::ItemStackRow& stack : object.itemStacks) {
         stack.selector = kEmptyItemStackSelector;
     }
-    // Acquired flags and objective progress are authored policy, published once per process.
+    // Acquired flags and objective progress are live world state, written by the request that
+    // changed them.
     const state::unlocks::Table& unlocks = state::unlocks::get();
     for (std::size_t index = 0; index < object.acquiredFlags.size(); ++index) {
         object.acquiredFlags[index] = static_cast<std::byte>(
             index < unlocks.characterObjectFlags.size() ? unlocks.characterObjectFlags[index]
                                                         : std::uint8_t{});
     }
-    // The authored bank is laid down first. It used to be copied in after the node pass below,
-    // which overwrote every element the pass had just written -- so the character-scoped node
-    // progress never reached the client at all.
     for (std::size_t index = 0; index < object.objectiveValues.size(); ++index) {
         object.objectiveValues[index] =
             index < unlocks.characterObjectValues.size() ? unlocks.characterObjectValues[index] : 0;
     }
-    if (!state::progression::seasonal_experience::apply_artifact_character_state(
-            object.acquiredFlags, object.objectiveValues)) {
-        return false;
-    }
-    // One lore book counts in the character bank rather than the account one.
-    (void)state::record_claims::apply_character_node_progress(object.objectiveValues, pendingClaim);
-
-    // One lore book's gate is character scoped rather than account scoped.
-    (void)state::build_data::nodes::apply_character_visibility(object.acquiredFlags);
     if (!build_equipment_summary(lightEvaluation, object.equipmentSummary)) {
         return false;
     }

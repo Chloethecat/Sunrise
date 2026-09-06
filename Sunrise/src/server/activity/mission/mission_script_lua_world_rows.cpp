@@ -41,6 +41,7 @@ void push_u32(lua_State* state, std::uint32_t value) {
 
 /** Pushes one byte field as lowercase hex. Errors when it exceeds its declared bound. */
 void push_bytes(lua_State* state, std::span<const std::byte> value) {
+    // Lowercase hex digits; every digest and byte field is spelled this way.
     constexpr char digits[] = "0123456789abcdef";
     std::array<char, 32> text{};
     if (value.size() * 2U > text.size()) {
@@ -94,6 +95,7 @@ void push_geometry_id(lua_State* state,
     std::array<char, 96> text{};
     char* cursor = text.data();
     char* const end = text.data() + text.size();
+    // Every generated-world text id starts with this family prefix.
     constexpr std::string_view prefix = "world/";
     const std::string_view family =
         kind == GeometryKind::vertices ? "trigger-vertex" : "trigger-triangle";
@@ -445,6 +447,7 @@ void push_geometry_id(lua_State* state,
     return 1;
 }
 
+/** Reads one catalog-backed world row key. Raises a Lua error when the generation is stale. */
 [[nodiscard]] int
 catalog_index(lua_State* state, const WorldRowHandle& handle, std::string_view key) {
     if (key == "id") {

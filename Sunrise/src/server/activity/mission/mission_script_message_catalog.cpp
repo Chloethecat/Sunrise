@@ -24,6 +24,7 @@ namespace communication = wire::communication;
            && sdk::bound_scenario(*view) != nullptr;
 }
 
+/** @return The value as an unsigned row, or the absent index when it is negative. */
 [[nodiscard]] constexpr std::uint32_t unsigned_or_absent(std::int64_t value) noexcept {
     return value < 0 ? format::kAbsentIndex : static_cast<std::uint32_t>(value);
 }

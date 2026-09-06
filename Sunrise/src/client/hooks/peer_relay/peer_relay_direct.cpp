@@ -35,6 +35,7 @@ using patterns::signature_length;
 constexpr std::string_view kConnectSignatureText =
     "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 41 0F B6 F9 49 63 D8 8B F2 E8 ? ? ? ? 4C 69 C3 "
     "F0 41 00 00 49 81 C0 A8 00 00 00 4C 03 C0 41 F6 80 68 30 00 00 01";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kConnectSignature =
     signature<signature_length(kConnectSignatureText)>(kConnectSignatureText);
 

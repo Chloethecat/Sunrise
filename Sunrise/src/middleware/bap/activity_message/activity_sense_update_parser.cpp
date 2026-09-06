@@ -7,12 +7,15 @@
 namespace sunrise::middleware::bap::activity_message::sense_update {
 namespace {
 
+/** Field widths of the first object header, in bits. */
 constexpr std::uint8_t kPresenceWidth = 1;
 constexpr std::uint8_t kKeyWidth = 32;
 constexpr std::uint8_t kSlotTypeWidth = 7;
 constexpr std::uint8_t kSlotIndexWidth = 16;
+/** The slot type and index are sent unsigned, biased so their absent value is zero. */
 constexpr std::uint32_t kSlotTypeBias = 1;
 constexpr std::uint32_t kSlotIndexBias = 32768;
+/** Bits the first object header spends before the Sense body starts. */
 constexpr std::size_t kFirstObjectHeaderBits =
     kPresenceWidth + kKeyWidth + kSlotTypeWidth + kSlotIndexWidth;
 

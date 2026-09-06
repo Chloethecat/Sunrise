@@ -21,10 +21,7 @@ void clear() noexcept {
 
 /**
  * Checks the rows are dense and fit.
- *
- * The table has no index column: a row's position is its identity, which is what makes the wire's
- * target index meaningful. So there is nothing to cross-check a row against, and the only thing
- * worth asserting is the shape.
+ * A row's position is its identity, so shape is the only thing this table can assert.
  */
 bool valid(std::span<const Definition> definitions) noexcept {
     return !definitions.empty() && definitions.size() <= kDefinitionCapacity;

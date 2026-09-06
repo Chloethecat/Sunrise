@@ -77,6 +77,7 @@ namespace {
     return 1;
 }
 
+/** Pushes the slot at one 1-based list row. Raises a Lua error when the row is out of range. */
 [[nodiscard]] int object_ref_list_at(lua_State* state) {
     const auto* const handle =
         static_cast<const ObjectRefListHandle*>(luaL_checkudata(state, 1, kObjectRefListMetatable));
@@ -249,6 +250,7 @@ void register_bounded_metatables(lua_State* state) {
     register_metatable(state, kWorldPositionMetatable, &world_position_index);
 }
 
+/** Pushes one bounded-lane ActivityView member. @return False when the key is not ours. */
 bool push_bounded_activity_member(lua_State* state, std::string_view key) {
     if (key == "bounded_lanes") {
         push_handle(state, kBoundedLaneCollectionMetatable, BoundedLaneCollectionHandle{});

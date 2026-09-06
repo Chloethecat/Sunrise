@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <cctype>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -50,243 +49,31 @@ namespace topology = ::sunrise::client::content::activity::sdk_generation::topol
 namespace lua = ::sunrise::client::content::activity::sdk_generation::lua_artifacts;
 namespace worker = worker_internal;
 
+// Generated artifact paths below the scenario root.
 constexpr std::wstring_view kSdkDirectorySuffix = L"\\sdk";
 constexpr std::wstring_view kScenarioDirectorySuffix = L"\\sdk\\scenarios";
 constexpr std::wstring_view kCatalogFileSuffix = L"\\sdk\\catalog.bin";
 constexpr std::wstring_view kPackFileSuffix = L"\\activity_sdk.pack";
 constexpr std::wstring_view kShardExtension = L".pack";
+// Wait this long before probing package data again.
 constexpr ULONGLONG kPackageWaitMs = 1'000;
-/** Parallel readers divide one pass-wide cache budget instead of multiplying it per core. */
-constexpr std::size_t kParallelBlockCacheBudget = 256;
-constexpr std::size_t kParallelTableCacheBudget = 16;
-constexpr std::size_t kMaximumScenarioWorkers = 12;
-constexpr std::size_t kScenarioChunkSize = 1;
 /** A small batch bounds complete snapshots retained while parallel work finishes. */
 constexpr std::size_t kScenarioBatchSize = 24;
-/** Holds one step token plus the builder's own 96-byte refusal text. */
-constexpr std::size_t kDetailCapacity = 160;
-
-/** @return One selected hash name, or an empty view when the name is unresolved. */
-[[nodiscard]] std::string_view selected_name(const catalog::Snapshot& snapshot,
-                                             std::uint32_t row) noexcept {
-    if (row >= snapshot.names.size()) {
-        return {};
-    }
-    const catalog::Name& name = snapshot.names[row];
-    if (name.selectedCandidate >= snapshot.nameCandidates.size()) {
-        return {};
-    }
-    const catalog::NameCandidate& candidate = snapshot.nameCandidates[name.selectedCandidate];
-    return {candidate.value.data(), candidate.length};
-}
-
-/** @return One selected package tag name, or an empty view when it is unresolved. */
-[[nodiscard]] std::string_view selected_tag_name(const catalog::Snapshot& snapshot,
-                                                 std::uint32_t row) noexcept {
-    if (row >= snapshot.tagNames.size()) {
-        return {};
-    }
-    const catalog::TagName& name = snapshot.tagNames[row];
-    if (name.selectedCandidate >= snapshot.nameCandidates.size()) {
-        return {};
-    }
-    const catalog::NameCandidate& candidate = snapshot.nameCandidates[name.selectedCandidate];
-    return {candidate.value.data(), candidate.length};
-}
-
-/** Appends a deterministic Lua string literal. */
-void append_lua_string(std::string& output, std::string_view value) {
-    output.push_back('"');
-    constexpr char digits[] = "0123456789ABCDEF";
-    for (const unsigned char byte : value) {
-        if (byte == '\\' || byte == '"') {
-            output.push_back('\\');
-            output.push_back(static_cast<char>(byte));
-        } else if (byte == '\n') {
-            output.append("\\n");
-        } else if (byte < 0x20U || byte == 0x7FU) {
-            output.append("\\x");
-            output.push_back(digits[byte >> 4U]);
-            output.push_back(digits[byte & 0xFU]);
-        } else {
-            output.push_back(static_cast<char>(byte));
-        }
-    }
-    output.push_back('"');
-}
-
-void append_format(std::string& output, const char* format, auto... values) {
-    std::array<char, 512> buffer{};
-    const int length = std::snprintf(buffer.data(), buffer.size(), format, values...);
-    if (length > 0) {
-        output.append(buffer.data(),
-                      (std::min)(static_cast<std::size_t>(length), buffer.size() - 1));
-    }
-}
-
-/** Converts an extracted trigger name into a declaration key. */
-[[nodiscard]] std::string lua_constant(std::string_view value) {
-    std::string output;
-    bool separator = false;
-    for (const unsigned char byte : value) {
-        if (std::isalnum(byte) != 0) {
-            if (separator && !output.empty()) {
-                output.push_back('_');
-            }
-            output.push_back(static_cast<char>(std::toupper(byte)));
-            separator = false;
-        } else {
-            separator = true;
-        }
-    }
-    if (output.empty()) {
-        output = "UNNAMED";
-    }
-    if (std::isdigit(static_cast<unsigned char>(output.front())) != 0) {
-        output.insert(output.begin(), '_');
-    }
-    return output;
-}
-
-/** Emits transparent positional trigger declarations for one mission module. */
-[[nodiscard]] bool build_world_source(const catalog::Snapshot& snapshot,
-                                      lua::ScenarioWorldSource& result) {
-    result = {};
-    result.scenarioTag = snapshot.scenarioTag;
-    std::string source = "\n---@type SunriseTriggerVolume[]\n"
-                         "mission.trigger_volumes = {\n";
-    std::vector<std::pair<std::string, std::uint32_t>> constants;
-    std::vector<std::string_view> names;
-    std::uint32_t emitted = 0;
-    for (const catalog::TriggerVolumeOwner& owner : snapshot.triggerVolumeOwners) {
-        if (owner.tableRow >= snapshot.triggerVolumeTables.size()
-            || owner.objectRow >= snapshot.objects.size()) {
-            continue;
-        }
-        const catalog::TriggerVolumeTable& table = snapshot.triggerVolumeTables[owner.tableRow];
-        const std::size_t first = table.firstInstance;
-        const std::size_t count = table.instanceCount;
-        if (first > snapshot.triggerVolumeInstances.size()
-            || count > snapshot.triggerVolumeInstances.size() - first) {
-            continue;
-        }
-        names.clear();
-        const std::size_t incomingFirst = owner.firstIncomingReference;
-        const std::size_t incomingCount = owner.incomingReferenceCount;
-        if (incomingFirst <= snapshot.triggerVolumeIncomingReferences.size()
-            && incomingCount <= snapshot.triggerVolumeIncomingReferences.size() - incomingFirst) {
-            for (std::size_t offset = 0; offset < incomingCount; ++offset) {
-                const auto& incoming =
-                    snapshot.triggerVolumeIncomingReferences[incomingFirst + offset];
-                if (incoming.sourceSlotRow < snapshot.slots.size()) {
-                    const std::string_view name =
-                        selected_name(snapshot, snapshot.slots[incoming.sourceSlotRow].nameRow);
-                    if (!name.empty()
-                        && std::find(names.begin(), names.end(), name) == names.end()) {
-                        names.push_back(name);
-                    }
-                }
-            }
-        }
-        if (names.empty() && owner.slotRow < snapshot.slots.size()) {
-            const std::string_view name =
-                selected_name(snapshot, snapshot.slots[owner.slotRow].nameRow);
-            if (!name.empty()) {
-                names.push_back(name);
-            }
-        }
-        if (names.empty()) {
-            const catalog::Object& object = snapshot.objects[owner.objectRow];
-            constexpr std::size_t kFallbackCount = 3;
-            const std::array<std::uint32_t, kFallbackCount> fallbackRows{
-                table.configNameRow, object.objectNameRow, object.registryNameRow};
-            for (const std::uint32_t row : fallbackRows) {
-                const std::string_view name = selected_tag_name(snapshot, row);
-                if (!name.empty() && std::find(names.begin(), names.end(), name) == names.end()) {
-                    names.push_back(name);
-                }
-            }
-        }
-        for (std::size_t offset = 0; offset < count; ++offset) {
-            const catalog::TriggerVolumeInstance& instance =
-                snapshot.triggerVolumeInstances[first + offset];
-            if (!instance.complete) {
-                continue;
-            }
-            std::vector<std::string_view> instanceNames = names;
-            if (instanceNames.empty()) {
-                const std::array<std::uint32_t, 2> fallbackRows{instance.classDefinitionNameRow,
-                                                                instance.shapeResourceNameRow};
-                for (const std::uint32_t row : fallbackRows) {
-                    const std::string_view name = selected_tag_name(snapshot, row);
-                    if (!name.empty()
-                        && std::find(instanceNames.begin(), instanceNames.end(), name)
-                               == instanceNames.end()) {
-                        instanceNames.push_back(name);
-                    }
-                }
-            }
-            ++emitted;
-            source.append("    { names = {");
-            for (const std::string_view name : instanceNames) {
-                append_lua_string(source, name);
-                source.append(", ");
-            }
-            append_format(source,
-                          "}, registry_key = 0x%08X, slot_type = %u, slot_index = %u, "
-                          "position = { x = %.9g, y = %.9g, z = %.9g }, "
-                          "minimum = { x = %.9g, y = %.9g, z = %.9g }, "
-                          "maximum = { x = %.9g, y = %.9g, z = %.9g }, "
-                          "shape_tag = 0x%08X, shape_index = %u, active = %u },\n",
-                          table.registryKey,
-                          static_cast<unsigned>(table.slotType),
-                          static_cast<unsigned>(table.slotIndex),
-                          static_cast<double>(instance.position[0]),
-                          static_cast<double>(instance.position[1]),
-                          static_cast<double>(instance.position[2]),
-                          static_cast<double>(instance.minimum[0]),
-                          static_cast<double>(instance.minimum[1]),
-                          static_cast<double>(instance.minimum[2]),
-                          static_cast<double>(instance.maximum[0]),
-                          static_cast<double>(instance.maximum[1]),
-                          static_cast<double>(instance.maximum[2]),
-                          instance.shapeResourceTag,
-                          instance.shapeIndex,
-                          static_cast<unsigned>(instance.active));
-            for (const std::string_view name : instanceNames) {
-                std::string key = lua_constant(name);
-                const std::string base = key;
-                std::uint32_t suffix = 1;
-                while (std::any_of(constants.begin(), constants.end(), [&key](const auto& entry) {
-                    return entry.first == key;
-                })) {
-                    key = base;
-                    append_format(key, "_%u", suffix++);
-                }
-                constants.emplace_back(std::move(key), emitted);
-            }
-        }
-    }
-    source.append("}\nmission.TriggerVolume = {\n");
-    for (const auto& [key, index] : constants) {
-        source.append("    ");
-        source.append(key);
-        append_format(source, " = mission.trigger_volumes[%u],\n", index);
-    }
-    source.append("}\n");
-    result.source = std::move(source);
-    return true;
-}
 
 using worker::binding_ready;
 using worker::build_inventory;
+using worker::build_scenarios;
+using worker::build_world_source;
 using worker::convert_binding_completeness;
 using worker::find_record;
+using worker::kDetailCapacity;
 using worker::load_full_record;
 using worker::load_record;
 using worker::publish_estate;
+using worker::publish_progress;
 using worker::record_name_matches;
 using worker::Scenario;
+using worker::ScenarioBuildResult;
 using worker::shard_path;
 using worker::Work;
 
@@ -323,22 +110,6 @@ void* g_offlineProgressContext{};
         return true;
     }
     return g_cancel.load(std::memory_order_relaxed);
-}
-
-/** Sends one worker event to the selected live or offline observer. */
-void publish_progress(state::activity_sdk::generation::Status status,
-                      std::uint32_t current,
-                      std::uint32_t total,
-                      std::uint32_t scenarioTag,
-                      std::string_view detail,
-                      bool determinate = true) noexcept {
-    if (g_offlineProgress != nullptr) {
-        g_offlineProgress(g_offlineProgressContext, {status, current, total, scenarioTag, detail});
-        return;
-    }
-    core::ui::busy::set_progress(
-        core::ui::busy::Task::sdkGeneration, current, total, detail, determinate);
-    state::activity_sdk::generation::internal::publish(status, current, total, scenarioTag, detail);
 }
 
 /** Emits one timing row for the two user-visible generation stages. */
@@ -440,363 +211,6 @@ void log_stage_duration(std::string_view stage,
 /** Adapts the process-wide cancellation flag to the inventory builder callback. */
 [[nodiscard]] bool inventory_cancelled(void*) noexcept {
     return cancelled();
-}
-
-/** Counts the rows behind a refused shard, which the coverage verdict alone cannot name. */
-void report_shard_diagnostics(const Scenario& scenario,
-                              const catalog::Snapshot& snapshot) noexcept {
-    std::size_t incompleteObjects = 0;
-    std::size_t incompleteSafety = 0;
-    std::size_t leaves = 0;
-    std::size_t bareTargets = 0;
-    for (const catalog::Object& object : snapshot.objects) {
-        if (!object.complete) {
-            ++incompleteObjects;
-        }
-        if (object.safety == catalog::GroupSafety::incomplete) {
-            ++incompleteSafety;
-        }
-        leaves += object.placedLeafCount;
-        bareTargets += object.bareTargetCount;
-    }
-    std::size_t unresolvedStates = 0;
-    for (const catalog::State& state : snapshot.states) {
-        if (!state.resolved) {
-            ++unresolvedStates;
-        }
-    }
-    const catalog::ContainerPlacementDiagnostics& placements =
-        snapshot.containerPlacementDiagnostics;
-    std::array<char, 1024> line{};
-    const int written =
-        std::snprintf(line.data(),
-                      line.size(),
-                      "ev=sdk_shard_diag scenario=0x%08X objects=%zu "
-                      "obj_incomplete=%zu obj_safety_incomplete=%zu leaves=%zu "
-                      "bare=%zu states_unresolved=%zu "
-                      "unresolved_reads=%llu spatial_ctx=%u spatial_na=%u spatial_complete=%u "
-                      "spatial_unresolved=%llu spatial_dropped=%llu spatial_semantic=%llu "
-                      "spatial_tables=%zu spatial_owners=%zu spatial_instances=%zu "
-                      "cp_ctx=%u cp_na=%u cp_complete=%u cp_owner_complete=%u "
-                      "cp_unresolved=%llu cp_semantic=%llu cp_dropped=%llu/%llu/%llu/%llu/%llu "
-                      "cp_rows=%zu/%zu/%zu/%zu/%zu",
-                      static_cast<unsigned>(scenario.tag),
-                      snapshot.objects.size(),
-                      incompleteObjects,
-                      incompleteSafety,
-                      leaves,
-                      bareTargets,
-                      unresolvedStates,
-                      static_cast<unsigned long long>(snapshot.unresolvedReads),
-                      snapshot.staticSpatialContextResolved ? 1U : 0U,
-                      snapshot.staticSpatialNotApplicable ? 1U : 0U,
-                      snapshot.staticSpatialComplete ? 1U : 0U,
-                      static_cast<unsigned long long>(snapshot.staticSpatialUnresolvedReads),
-                      static_cast<unsigned long long>(snapshot.staticSpatialDropped),
-                      static_cast<unsigned long long>(snapshot.staticSpatialSemanticUnresolved),
-                      snapshot.staticSpatialTables.size(),
-                      snapshot.staticSpatialOwners.size(),
-                      snapshot.staticSpatialInstances.size(),
-                      placements.contextResolved ? 1U : 0U,
-                      placements.contextNotApplicable ? 1U : 0U,
-                      placements.complete ? 1U : 0U,
-                      placements.identityOwnerInventoryComplete ? 1U : 0U,
-                      static_cast<unsigned long long>(placements.unresolvedReads),
-                      static_cast<unsigned long long>(placements.semanticUnresolved),
-                      static_cast<unsigned long long>(placements.droppedLists),
-                      static_cast<unsigned long long>(placements.droppedOwners),
-                      static_cast<unsigned long long>(placements.droppedPlacements),
-                      static_cast<unsigned long long>(placements.droppedConfigs),
-                      static_cast<unsigned long long>(placements.droppedComponents),
-                      snapshot.containerPlacementLists.size(),
-                      snapshot.containerPlacementOwners.size(),
-                      snapshot.containerPlacements.size(),
-                      snapshot.containerPlacementConfigs.size(),
-                      snapshot.containerPlacementComponents.size());
-    if (written > 0) {
-        core::log::write(
-            core::log::Channel::client,
-            core::log::Level::error,
-            {line.data(), (std::min)(static_cast<std::size_t>(written), line.size() - 1)});
-    }
-}
-
-/** Writes one new shard under its deterministic digest name. */
-[[nodiscard]] bool build_record(const Work& work,
-                                const package_reader::Source& source,
-                                const builder::ContainerIndex& containers,
-                                package_reader::Scratch& scratch,
-                                builder::ScenarioAnalysisCache& analyses,
-                                const Scenario& scenario,
-                                manifest::Record& record,
-                                std::shared_ptr<const catalog::Snapshot>& output,
-                                std::array<char, kDetailCapacity>& detailScratch,
-                                const char*& detail) {
-    // Every arm below reported the same word, so a failure named the step it reached and nothing
-    // about which of five things went wrong. Each one now says which.
-    const std::string_view name(scenario.name.data(), scenario.nameLength);
-    const auto snapshot = builder::build_scenario_catalog(
-        source, containers, scratch, analyses, scenario.tag, name, &cancelled);
-    if (cancelled()) {
-        detail = "shard_cancelled";
-        return false;
-    }
-    if (!snapshot) {
-        detail = "shard_catalog_null";
-        return false;
-    }
-    if (snapshot->status != catalog::BuildStatus::ready) {
-        const char* stage = "shard_catalog_not_ready";
-        switch (snapshot->status) {
-        case catalog::BuildStatus::failed:
-            stage = "shard_catalog_failed";
-            break;
-        case catalog::BuildStatus::idle:
-            stage = "shard_catalog_idle";
-            break;
-        case catalog::BuildStatus::queued:
-            stage = "shard_catalog_queued";
-            break;
-        case catalog::BuildStatus::building:
-            stage = "shard_catalog_building";
-            break;
-        default:
-            break;
-        }
-        report_shard_diagnostics(scenario, *snapshot);
-        // The builder already names its own refusal. Carry that text out instead of dropping it.
-        const char* reason = snapshot->detail[0] != '\0' ? snapshot->detail.data() : "no detail";
-        detailScratch = {};
-        (void)std::snprintf(detailScratch.data(), detailScratch.size(), "%s:%s", stage, reason);
-        detail = detailScratch.data();
-        return false;
-    }
-    generated::PreparedShard prepared{};
-    if (!generated::prepare(work.sourceFingerprint, *snapshot, prepared)) {
-        detail = "shard_prepare_failed";
-        return false;
-    }
-    const generated::Digest payload = prepared.payload_sha256();
-    std::wstring finalPath;
-    generated::Digest written{};
-    if (!shard_path(work.scenarioDirectory, scenario.tag, payload, finalPath)) {
-        detail = "shard_path_failed";
-        return false;
-    }
-    if (!generated::publish(finalPath.c_str(), std::move(prepared), written)) {
-        detail = "shard_write_failed";
-        return false;
-    }
-    record = {};
-    record.scenarioTag = scenario.tag;
-    record.scenarioName = scenario.name;
-    record.scenarioNameLength = scenario.nameLength;
-    record.shardPayloadSha256 = payload;
-    output = snapshot;
-    return true;
-}
-
-/** Rewrites one loaded cache hit into an isolated output tree. */
-[[nodiscard]] bool
-materialize_cached_record(const Work& work,
-                          const Scenario& scenario,
-                          const manifest::Record& record,
-                          const std::shared_ptr<const catalog::Snapshot>& cached,
-                          std::shared_ptr<const catalog::Snapshot>& output) noexcept {
-    if (cached == nullptr) {
-        return false;
-    }
-    if (work.cacheScenarioDirectory == work.scenarioDirectory) {
-        output = cached;
-        return true;
-    }
-    std::wstring finalPath;
-    generated::Digest written{};
-    if (!shard_path(work.scenarioDirectory, scenario.tag, record.shardPayloadSha256, finalPath)
-        || !generated::write(finalPath.c_str(), work.sourceFingerprint, *cached, written)) {
-        return false;
-    }
-    output = cached;
-    return true;
-}
-
-/** One indexed result keeps parallel work deterministic when threads finish out of order. */
-struct ScenarioBuildResult final {
-    manifest::Record record{};
-    std::shared_ptr<const catalog::Snapshot> snapshot{};
-    std::array<char, kDetailCapacity> detail{};
-    bool attempted{};
-    bool ready{};
-    bool reused{};
-};
-
-/** Shared immutable inputs and atomic scheduling state for one scenario batch. */
-struct ScenarioBuildBatch final {
-    const Work* work{};
-    const package_reader::Source* source{};
-    const builder::ContainerIndex* containers{};
-    const manifest::Catalog* prior{};
-    std::vector<ScenarioBuildResult>* results{};
-    std::atomic_size_t next{};
-    std::atomic_size_t completed{};
-    SRWLOCK progressLock = SRWLOCK_INIT;
-    std::size_t progressPublished{};
-    std::size_t firstScenario{};
-    std::size_t blockCacheSlots{};
-    std::size_t tableCacheSlots{};
-    bool priorReady{};
-};
-
-/** Caps workers while leaving cores for the game and the server. */
-[[nodiscard]] std::size_t scenario_worker_count(std::size_t scenarios) noexcept {
-    SYSTEM_INFO info{};
-    GetSystemInfo(&info);
-    const std::size_t processors = static_cast<std::size_t>(info.dwNumberOfProcessors);
-    const std::size_t available = processors > 2U ? processors - 2U : 1U;
-    return (std::min)(scenarios, (std::min)(available, kMaximumScenarioWorkers));
-}
-
-/** Divides one cache budget across active workers without leaving a worker uncached. */
-[[nodiscard]] std::size_t worker_cache_slots(std::size_t budget, std::size_t workers) noexcept {
-    return (std::max)(std::size_t{1}, (budget + workers - 1U) / workers);
-}
-
-/** Publishes only increasing completion counts from out-of-order workers. */
-void publish_parallel_progress(ScenarioBuildBatch& batch, const Scenario& scenario) noexcept {
-    const std::size_t complete = batch.completed.fetch_add(1U) + 1U;
-    AcquireSRWLockExclusive(&batch.progressLock);
-    if (complete <= batch.progressPublished) {
-        ReleaseSRWLockExclusive(&batch.progressLock);
-        return;
-    }
-    batch.progressPublished = complete;
-    publish_progress(state::activity_sdk::generation::Status::building,
-                     static_cast<std::uint32_t>(complete),
-                     static_cast<std::uint32_t>(batch.work->scenarios.size()),
-                     scenario.tag,
-                     std::string_view(scenario.name.data(), scenario.nameLength));
-    ReleaseSRWLockExclusive(&batch.progressLock);
-}
-
-/** Builds one worker's contiguous chunks with private package and analysis caches. */
-void run_scenario_worker(ScenarioBuildBatch& batch) noexcept {
-    std::unique_ptr<package_reader::Scratch> scratch(new (std::nothrow) package_reader::Scratch());
-    if (scratch == nullptr) {
-        return;
-    }
-    if (!package_reader::prepare_blocks(*scratch, batch.blockCacheSlots)) {
-        (void)package_reader::prepare_blocks(*scratch, 0);
-    }
-    if (!package_reader::prepare_tables(*scratch, batch.tableCacheSlots)) {
-        (void)package_reader::prepare_tables(*scratch, 0);
-    }
-    builder::ScenarioAnalysisCache analyses{};
-    while (!cancelled()) {
-        const std::size_t begin = batch.next.fetch_add(kScenarioChunkSize);
-        if (begin >= batch.results->size()) {
-            break;
-        }
-        const std::size_t end = (std::min)(begin + kScenarioChunkSize, batch.results->size());
-        for (std::size_t index = begin; index < end && !cancelled(); ++index) {
-            const Scenario& scenario = batch.work->scenarios[batch.firstScenario + index];
-            ScenarioBuildResult& result = (*batch.results)[index];
-            result.attempted = true;
-            try {
-                const manifest::Record* existing =
-                    batch.priorReady ? find_record(*batch.prior, scenario.tag) : nullptr;
-                bool kept = existing != nullptr
-                            && load_full_record(batch.work->cacheScenarioDirectory,
-                                                batch.work->sourceFingerprint,
-                                                scenario,
-                                                *existing,
-                                                result.snapshot);
-                if (kept
-                    && !materialize_cached_record(
-                        *batch.work, scenario, *existing, result.snapshot, result.snapshot)) {
-                    kept = false;
-                }
-                if (kept) {
-                    result.record = *existing;
-                    result.reused = true;
-                    result.ready = true;
-                } else {
-                    const char* detail = "shard_build_failed";
-                    std::array<char, kDetailCapacity> scratchDetail{};
-                    result.ready = build_record(*batch.work,
-                                                *batch.source,
-                                                *batch.containers,
-                                                *scratch,
-                                                analyses,
-                                                scenario,
-                                                result.record,
-                                                result.snapshot,
-                                                scratchDetail,
-                                                detail);
-                    if (!result.ready) {
-                        (void)std::snprintf(
-                            result.detail.data(), result.detail.size(), "%s", detail);
-                    }
-                }
-            } catch (...) {
-                result.ready = false;
-                (void)std::snprintf(result.detail.data(),
-                                    result.detail.size(),
-                                    "%s",
-                                    "unexpected scenario build exception");
-            }
-            publish_parallel_progress(batch, scenario);
-        }
-    }
-    package_reader::close_files(*scratch);
-}
-
-/** Adapts one batch worker to the Windows thread ABI. */
-DWORD WINAPI scenario_thread_main(void* opaque) noexcept {
-    run_scenario_worker(*static_cast<ScenarioBuildBatch*>(opaque));
-    return 0;
-}
-
-/** Builds all scenario snapshots in parallel while retaining scenario-order output. */
-[[nodiscard]] bool build_scenarios(Work& work,
-                                   const package_reader::Source& source,
-                                   const builder::ContainerIndex& containers,
-                                   const manifest::Catalog& prior,
-                                   bool priorReady,
-                                   std::size_t firstScenario,
-                                   std::size_t scenarioCount,
-                                   std::vector<ScenarioBuildResult>& results) {
-    results.clear();
-    results.resize(scenarioCount);
-    ScenarioBuildBatch batch{};
-    batch.work = &work;
-    batch.source = &source;
-    batch.containers = &containers;
-    batch.prior = &prior;
-    batch.results = &results;
-    batch.completed.store(firstScenario);
-    batch.progressPublished = firstScenario;
-    batch.firstScenario = firstScenario;
-    batch.priorReady = priorReady;
-    const std::size_t workers = scenario_worker_count(results.size());
-    if (workers == 0) {
-        return false;
-    }
-    batch.blockCacheSlots = worker_cache_slots(kParallelBlockCacheBudget, workers);
-    batch.tableCacheSlots = worker_cache_slots(kParallelTableCacheBudget, workers);
-    std::vector<HANDLE> threads;
-    threads.reserve(workers - 1U);
-    for (std::size_t index = 1; index < workers; ++index) {
-        const HANDLE thread = CreateThread(nullptr, 0, &scenario_thread_main, &batch, 0, nullptr);
-        if (thread != nullptr) {
-            threads.push_back(thread);
-        }
-    }
-    run_scenario_worker(batch);
-    for (const HANDLE thread : threads) {
-        (void)WaitForSingleObject(thread, INFINITE);
-        (void)CloseHandle(thread);
-    }
-    return !cancelled();
 }
 
 /** Copies one terminal pass result before worker-owned storage is released. */
@@ -1017,6 +431,22 @@ DWORD WINAPI thread_main(void* opaque) noexcept {
 /** Adapts the selected live or offline cancellation source to shared stages. */
 bool worker_internal::cancel_requested() noexcept {
     return cancelled();
+}
+
+/** Sends one worker event to the selected live or offline observer. */
+void worker_internal::publish_progress(state::activity_sdk::generation::Status status,
+                                       std::uint32_t current,
+                                       std::uint32_t total,
+                                       std::uint32_t scenarioTag,
+                                       std::string_view detail,
+                                       bool determinate) noexcept {
+    if (g_offlineProgress != nullptr) {
+        g_offlineProgress(g_offlineProgressContext, {status, current, total, scenarioTag, detail});
+        return;
+    }
+    core::ui::busy::set_progress(
+        core::ui::busy::Task::sdkGeneration, current, total, detail, determinate);
+    state::activity_sdk::generation::internal::publish(status, current, total, scenarioTag, detail);
 }
 
 /** Runs one synchronous package pass into an isolated artifact tree. */

@@ -7,6 +7,7 @@
 
 namespace sunrise::middleware::bap::activity_message::start_activity_host_response {
 
+/** Message type the client accepts, and the fixed field sizes of its body. */
 inline constexpr std::uint32_t kMessageType = 10;
 inline constexpr std::size_t kSessionIdBytes = 8;
 inline constexpr std::size_t kHostInstanceNameBytes = 128;

@@ -87,6 +87,37 @@ namespace sunrise::state::build_data::cache::records {
 [[nodiscard]] bool decode(const ProgressionRecord& record,
                           progressions::Definition& value) noexcept;
 
+[[nodiscard]] bool encode(const progressions::Step& value, ProgressionStepRecord& record) noexcept;
+[[nodiscard]] bool decode(const ProgressionStepRecord& record, progressions::Step& value) noexcept;
+
+[[nodiscard]] bool encode(const season_pass::Reward& value,
+                          SeasonPassRewardRecord& record) noexcept;
+[[nodiscard]] bool decode(const SeasonPassRewardRecord& record,
+                          season_pass::Reward& value) noexcept;
+
+[[nodiscard]] bool encode(const season_pass::Package& value,
+                          SeasonPassPackageRecord& record) noexcept;
+[[nodiscard]] bool decode(const SeasonPassPackageRecord& record,
+                          season_pass::Package& value) noexcept;
+
+[[nodiscard]] bool encode(const bounties::Definition& value, BountyRecord& record) noexcept;
+[[nodiscard]] bool decode(const BountyRecord& record, bounties::Definition& value) noexcept;
+
+[[nodiscard]] bool encode(const build_data::records::Objective& value,
+                          RecordObjectiveRecord& record) noexcept;
+[[nodiscard]] bool decode(const RecordObjectiveRecord& record,
+                          build_data::records::Objective& value) noexcept;
+
+[[nodiscard]] bool encode(const build_data::records::Interval& value,
+                          RecordIntervalRecord& record) noexcept;
+[[nodiscard]] bool decode(const RecordIntervalRecord& record,
+                          build_data::records::Interval& value) noexcept;
+
+[[nodiscard]] bool encode(const build_data::records::Reward& value,
+                          RecordRewardRecord& record) noexcept;
+[[nodiscard]] bool decode(const RecordRewardRecord& record,
+                          build_data::records::Reward& value) noexcept;
+
 [[nodiscard]] bool encode(const build_data::records::Definition& value,
                           RecordDefinitionRecord& record) noexcept;
 [[nodiscard]] bool decode(const RecordDefinitionRecord& record,

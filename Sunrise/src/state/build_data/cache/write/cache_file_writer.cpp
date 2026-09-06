@@ -42,7 +42,14 @@ namespace {
            && domains.vendorSaleRows.size() <= kMaximumCount
            && domains.vendorInstalledRows.size() <= kMaximumCount
            && domains.positionProfiles.size() <= kMaximumCount
-           && domains.objectTypes.size() <= kMaximumCount;
+           && domains.objectTypes.size() <= kMaximumCount
+           && domains.recordObjectives.size() <= kMaximumCount
+           && domains.recordIntervals.size() <= kMaximumCount
+           && domains.recordRewards.size() <= kMaximumCount
+           && domains.progressionSteps.size() <= kMaximumCount
+           && domains.seasonPassRewards.size() <= kMaximumCount
+           && domains.seasonPassPackages.size() <= kMaximumCount
+           && domains.bounties.size() <= kMaximumCount;
 }
 
 /** @return True when the requested final-name rule is one of the declared values. */

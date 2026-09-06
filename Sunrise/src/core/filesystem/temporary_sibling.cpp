@@ -177,6 +177,7 @@ parse_owner(std::wstring_view finalName, std::wstring_view candidate, DWORD& pro
                                              const wchar_t* finalPath) noexcept {
     const std::wstring_view final(finalPath);
     const std::size_t fileNameBytes = final.size() * sizeof(wchar_t);
+    // FILE_RENAME_INFO stores its name inline, after the header and before a terminator.
     constexpr std::size_t kPrefixSize = offsetof(FILE_RENAME_INFO, FileName);
     constexpr std::size_t kTerminatorSize = sizeof(wchar_t);
     if (fileNameBytes > (std::numeric_limits<DWORD>::max)() - kPrefixSize - kTerminatorSize

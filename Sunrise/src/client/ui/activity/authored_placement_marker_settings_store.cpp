@@ -21,7 +21,9 @@
 namespace sunrise::client::ui::activity::authored_placement_marker::settings_store {
 namespace {
 
+// Marker presentation is stored in this file below the artifact root.
 constexpr std::wstring_view kFileSuffix = L"\\world_markers.json";
+// Fixed read and token buffers; a larger file or token is refused.
 constexpr std::size_t kFileCapacity = 4'096;
 constexpr std::size_t kScalarCapacity = 64;
 
@@ -244,6 +246,7 @@ void parse(std::string_view text, Options& output) noexcept {
     color_for(text, "\"sdk_squad_color\"", output.sourceColors.sdkSquadAnchor);
 }
 
+/** @return The settings-file name of one display scope. */
 [[nodiscard]] const char* display_scope_name(DisplayScope scope) noexcept {
     switch (scope) {
     case DisplayScope::selectedRows:

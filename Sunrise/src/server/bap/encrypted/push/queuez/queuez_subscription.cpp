@@ -2,7 +2,6 @@
 #include <limits>
 
 #include "../../../../../core/logging/log.h"
-#include "../../../../../middleware/secure_channel/runtime.h"
 #include "../../../../../state/runtime/runtime.h"
 #include "../../queuez/queuez_state_validation.h"
 #include "../snapshot/snapshot.h"
@@ -53,20 +52,12 @@ namespace {
     if (!recorded) {
         staged = before;
     }
-    if (!queuez_frame::append(scratch,
-                              prepared.family,
-                              prepared.rawClearSize,
-                              prepared.compressedClearSize,
-                              key,
-                              nonce,
-                              response,
-                              written)) {
+    if (!queuez_frame::append_prepared_frame(scratch, prepared, key, nonce, response, written)) {
         core::log::write(core::log::Channel::server,
                          core::log::Level::warn,
                          "ev=queuez stage=companion result=fail reason=frame");
         return false;
     }
-    middleware::secure_channel::advance_nonce(nonce);
     after = staged;
     return true;
 }
@@ -98,18 +89,10 @@ bool append_account_resync_notification(
         || !queuez::stage_family4_refresh(before, prepared.family, after)) {
         return false;
     }
-    if (!queuez_frame::append(scratch,
-                              prepared.family,
-                              prepared.rawClearSize,
-                              prepared.compressedClearSize,
-                              key,
-                              nonce,
-                              response,
-                              written)) {
+    if (!queuez_frame::append_prepared_frame(scratch, prepared, key, nonce, response, written)) {
         after = before;
         return false;
     }
-    middleware::secure_channel::advance_nonce(nonce);
     return true;
 }
 
@@ -140,9 +123,8 @@ void append_queuez_notification(Scratch& scratch,
     after = before;
     armsRepush = false;
     armsBannerRepush = false;
-    // Ahead of the dispatch below, not inside one family's builder: family zero reads the account
-    // directly and family three is built before the family-four companion, so a migration run any
-    // later would leave the three images describing different accounts.
+    // Runs ahead of the dispatch below; inside one family's builder it would leave the other
+    // families describing a different account.
     ensure_account_canonical();
     if (subscription.familyType == queuez::kAccountFamilyType && before.family4Active
         && before.family4Version != queuez::kInitialFamilyVersion) {
@@ -224,28 +206,10 @@ void append_queuez_notification(Scratch& scratch,
         after = stagedAfter;
         return;
     }
-    if (subscription.familyType == queuez::kRosterFamilyType
-        && (!stagedAfter.family3Active || stagedAfter.family3RootSoid != subscription.familyRootSoid
-            || stagedAfter.family3Version != queuez::kInitialFamilyVersion
-            || prepared.family.type != queuez::kRosterFamilyType
-            || prepared.family.rootSoid != stagedAfter.family3RootSoid
-            || prepared.family.version != stagedAfter.family3Version
-            || prepared.family.flags != middleware::queuez::kFullSnapshotFlag)) {
-        queuez_report::subscription_failure("family3_ladder");
-        return;
-    }
-    if (!queuez_frame::append(scratch,
-                              prepared.family,
-                              prepared.rawClearSize,
-                              prepared.compressedClearSize,
-                              key,
-                              nonce,
-                              response,
-                              written)) {
+    if (!queuez_frame::append_prepared_frame(scratch, prepared, key, nonce, response, written)) {
         queuez_report::subscription_failure("frame");
         return;
     }
-    middleware::secure_channel::advance_nonce(nonce);
     after = stagedAfter;
     // The client sends its subscribe just before it writes the record state, so this first copy
     // arrives while the record still reads its previous state and is refused. Family zero has

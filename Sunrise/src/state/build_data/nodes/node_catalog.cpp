@@ -2,9 +2,9 @@
 
 #include <shared_mutex>
 
-#include "../../record_claims/objective_slot_table.h"
-#include "../../record_claims/record_claims.h"
 #include "../../unlocks/definition.h"
+#include "../../unlocks/unlocks_records.h"
+#include "../records/definition.h"
 #include "../table.h"
 #include "core/threading/srw_lock.h"
 
@@ -18,11 +18,12 @@ Table<Definition, kDefinitionCapacity> g_definitions;
 
 /** Clears every generated node definition under the catalog lock. */
 void clear() noexcept {
+    // Drop the catalog lock first: the derived publish reads this catalog under the bank lock.
     {
         const std::lock_guard guard(g_lock);
         g_definitions.clear();
     }
-    record_claims::invalidate_build_data_cache();
+    unlocks::records::republish();
 }
 
 /** Checks that the definitions are dense and in native index order. */
@@ -50,7 +51,7 @@ bool replace(std::span<const Definition> definitions) noexcept {
         replaced = g_definitions.replace(definitions);
     }
     if (replaced) {
-        record_claims::invalidate_build_data_cache();
+        unlocks::records::republish();
     }
     return replaced;
 }
@@ -80,8 +81,7 @@ std::size_t apply_visibility(std::span<std::uint8_t> accountFlags) noexcept {
     const std::shared_lock guard(g_lock);
     std::size_t set = 0;
     for (const Definition& node : g_definitions.rows()) {
-        if (node.definitionIndex < kLoreNodeFirst || node.definitionIndex > kLoreNodeLast
-            || node.visibilityFlagIndex == kUnavailableFlagIndex
+        if (!node.loreBook || node.visibilityFlagIndex == kUnavailableFlagIndex
             || static_cast<std::size_t>(node.visibilityFlagIndex) >= accountFlags.size()) {
             continue;
         }
@@ -96,7 +96,7 @@ std::size_t apply_category_gates(std::span<std::int32_t> objectiveValues) noexce
     const std::shared_lock guard(g_lock);
     std::size_t set = 0;
     for (const Definition& node : g_definitions.rows()) {
-        if (node.definitionIndex < kLoreNodeFirst || node.definitionIndex > kLoreNodeLast) {
+        if (!node.loreBook) {
             continue;
         }
         // Flag-gated books are handled by apply_visibility.
@@ -109,8 +109,7 @@ std::size_t apply_category_gates(std::span<std::int32_t> objectiveValues) noexce
             continue;
         }
         // Some node indices alias record objectives and must remain untouched.
-        if (static_cast<std::int32_t>(node.valueIndex)
-            >= record_claims::objective_slot_table::kRecordObjectiveRangeStart) {
+        if (node.valueIndex >= records::kObjectiveValueIndexBase) {
             continue;
         }
         // -1 satisfies NOT_ZERO without appearing as one collected chapter on shared bars.
@@ -127,8 +126,7 @@ std::size_t apply_character_visibility(std::span<std::byte> characterFlags) noex
     const std::shared_lock guard(g_lock);
     std::size_t set = 0;
     for (const Definition& node : g_definitions.rows()) {
-        if (node.definitionIndex < kLoreNodeFirst || node.definitionIndex > kLoreNodeLast
-            || node.visibilityCharacterFlagIndex == kUnavailableFlagIndex
+        if (!node.loreBook || node.visibilityCharacterFlagIndex == kUnavailableFlagIndex
             || static_cast<std::size_t>(node.visibilityCharacterFlagIndex)
                    >= characterFlags.size()) {
             continue;

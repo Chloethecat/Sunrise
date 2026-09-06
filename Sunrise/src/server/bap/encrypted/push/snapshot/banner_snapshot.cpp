@@ -15,9 +15,6 @@ namespace {
 
 namespace character_record = middleware::datagen::character_record;
 
-/** The anchor and the record it names are the two objects every family-zero frame upserts. */
-constexpr std::size_t kBannerUpsertCount = 2;
-
 } // namespace
 
 /** Builds the family-zero banner anchor and the record for the character it names. */
@@ -121,7 +118,6 @@ bool prepare_banner(Scratch& scratch,
         middleware::queuez::kFullSnapshotFlag,
         std::span(staged.objects).first(objectCount),
     };
-    static_assert(kBannerUpsertCount == 2);
     return commit(staged, prepared);
 }
 

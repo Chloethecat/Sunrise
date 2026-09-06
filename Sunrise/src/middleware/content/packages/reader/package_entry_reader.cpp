@@ -114,10 +114,12 @@ void release_caches() noexcept {
 /** @param scratch Reader whose own files are closed and whose held tables are dropped. */
 void close_files(Scratch& scratch) noexcept {
     handle_cache::close(scratch);
-    scratch.packageLocations.clear();
+    release_locations(scratch);
     scratch.packageDirectory = {};
     scratch.packageDirectoryLength = 0;
     scratch.packageLocationFallback = {};
+    // Dropped slots stay chained otherwise, and the next hold would chain one slot twice.
+    clear_slot_index(scratch.tableIndex);
     for (TableSlot& slot : scratch.tables) {
         slot.occupied = false;
         slot.entryCount = 0;

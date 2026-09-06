@@ -1,5 +1,5 @@
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <limits>
 
@@ -16,6 +16,7 @@
 #include "../../../../state/activity/membership/activity_membership_query.h"
 #include "../../../../state/runtime/runtime.h"
 #include "../../../gameplay/group/group_host_sessions.h"
+#include "../../../web_service/opcode_routes.h"
 #include "../../../web_service/web_service_runtime.h"
 #include "../activity_host_manager/activity_host_manager_route.h"
 #include "../activity_message/activity_message_route.h"
@@ -33,10 +34,12 @@ std::atomic<std::uint64_t> g_translatedIdentity{0};
 [[nodiscard]] bool refuse_web_action(const middleware::web_service::Message& message,
                                      std::span<std::byte> output,
                                      std::size_t& written) noexcept {
+    // The refusal is the same record as the success, so it takes the opcode's own shape.
+    middleware::web_service::ResponseShape shape{};
+    sunrise::server::web_service::resolve_response_shape(message.opcode, shape);
     middleware::web_service::StatusResponse status{};
     status.code = 1;
-    return middleware::web_service::encode_response(
-        message, middleware::web_service::ResponseShape::statusPair, status, output, written);
+    return middleware::web_service::encode_response(message, shape, status, output, written);
 }
 
 /** Accepts only the first account-translation identity and its retries. */
@@ -170,14 +173,13 @@ bool process(const ServiceRoute& route,
         }
         bool hasMutation = false;
         state::PendingCurrentActivity currentActivity{};
-        const bool encoded = matchmaking::encode_response(
-            matchmakingContext,
-            requestBody,
-            output,
-            written,
-            *mutation,
-            hasMutation,
-            currentActivity);
+        const bool encoded = matchmaking::encode_response(matchmakingContext,
+                                                          requestBody,
+                                                          output,
+                                                          written,
+                                                          *mutation,
+                                                          hasMutation,
+                                                          currentActivity);
         if (!hasMutation) {
             clear_transaction(outcome);
         }
@@ -469,7 +471,6 @@ bool process(const ServiceRoute& route,
             }
             transaction->pending =
                 web_service::take_mutation<state::PendingItemAcquisition>(webOutcome);
-            transaction->answeredVendor = webOutcome.answeredVendor;
         }
         if (profileItemAcquisition != nullptr) {
             // Actionable profile stacks may add a resident in the same revision.
@@ -504,7 +505,6 @@ bool process(const ServiceRoute& route,
             }
             transaction->pending =
                 web_service::take_mutation<state::PendingProfileItemAcquisition>(webOutcome);
-            transaction->answeredVendor = webOutcome.answeredVendor;
         }
         if (itemDismantle != nullptr) {
             // Promise the revision carrying the character update and resident release.
@@ -563,25 +563,23 @@ bool process(const ServiceRoute& route,
                                  "ev=ws1801 stage=reward_preflight result=fail");
                 clear_transaction(outcome);
                 return refuse_web_action(message, output, written);
-            } else {
-                middleware::web_service::StatusResponse status{};
-                status.value = transaction->update.after.family4Version;
-                if (!middleware::web_service::encode_response(
-                        message,
-                        middleware::web_service::ResponseShape::statusPair,
-                        status,
-                        output,
-                        written)) {
-                    core::log::write(core::log::Channel::server,
-                                     core::log::Level::warn,
-                                     "ev=ws1801 stage=reward_response result=fail");
-                    clear_transaction(outcome);
-                    return refuse_web_action(message, output, written);
-                } else {
-                    transaction->pending =
-                        web_service::take_mutation<state::PendingRecordRewardGrant>(webOutcome);
-                }
             }
+            middleware::web_service::StatusResponse status{};
+            status.value = transaction->update.after.family4Version;
+            if (!middleware::web_service::encode_response(
+                    message,
+                    middleware::web_service::ResponseShape::statusPair,
+                    status,
+                    output,
+                    written)) {
+                core::log::write(core::log::Channel::server,
+                                 core::log::Level::warn,
+                                 "ev=ws1801 stage=reward_response result=fail");
+                clear_transaction(outcome);
+                return refuse_web_action(message, output, written);
+            }
+            transaction->pending =
+                web_service::take_mutation<state::PendingRecordRewardGrant>(webOutcome);
         }
         if (seasonPassReward != nullptr) {
             auto* transaction = emplace_transaction<SeasonPassRewardTransaction>(outcome);

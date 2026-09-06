@@ -51,6 +51,7 @@ void draw_options(marker::State& state) noexcept {
         ImGui::SetTooltip("Draw positions and trigger shapes.");
     }
 
+    // Combo entries in DisplayScope order; the index is stored as the option value.
     constexpr std::array<const char*, 3> displayScopes{"Ticked rows", "All rows", "Within radius"};
     int displayScope = static_cast<int>(options.displayScope);
     ImGui::SameLine();
@@ -87,6 +88,7 @@ void draw_options(marker::State& state) noexcept {
         }
         commit = ImGui::IsItemDeactivatedAfterEdit() || commit;
 
+        // Combo entries in WorldGlyph order; the index is stored as the option value.
         constexpr std::array<const char*, 4> worldGlyphs{
             "Position cross", "XYZ axes", "Diagnostic box", "Diagnostic sphere"};
         int worldGlyph = static_cast<int>(options.worldGlyph);

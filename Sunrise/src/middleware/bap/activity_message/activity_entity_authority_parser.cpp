@@ -83,7 +83,9 @@ bool parse_request_purge(std::span<const std::byte> payload, PurgeRequest& reque
         return false;
     }
     parsed.reason = static_cast<std::int32_t>(stored) - kReasonBias;
-    if (!entity_slots::read_mask(reader, parsed.mask)) return false;
+    if (!entity_slots::read_mask(reader, parsed.mask)) {
+        return false;
+    }
     if (!finish_padding(reader)) {
         return false;
     }
@@ -128,7 +130,9 @@ bool parse_query_answer(std::uint32_t messageType,
         offset += kSelectorSize;
     }
 
-    if (!entity_slots::decode_entity_slots(payload.subspan(offset), parsed.mask)) return false;
+    if (!entity_slots::decode_entity_slots(payload.subspan(offset), parsed.mask)) {
+        return false;
+    }
     parsed.hasMask = true;
     answer = parsed;
     return true;

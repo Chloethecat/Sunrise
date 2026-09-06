@@ -10,6 +10,7 @@
 
 namespace sunrise::server::activity::mission::lua_vm::detail {
 
+// Metatable names that lock the key, timer and variable userdata shapes a program may hold.
 inline constexpr char kRequestKeyMetatable[] = "sunrise.mission.request_key";
 inline constexpr char kTimerRefMetatable[] = "sunrise.mission.timer_ref";
 inline constexpr char kTimerRefCollectionMetatable[] = "sunrise.mission.timers";

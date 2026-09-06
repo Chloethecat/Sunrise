@@ -12,8 +12,8 @@ namespace {
 using Field = std::pair<std::string_view, std::string_view>;
 
 void sort_keys(Value::Object& value) {
-    std::sort(value.begin(), value.end(), [](const auto& left, const auto& right) {
-        return left.first < right.first;
+    std::sort(value.begin(), value.end(), [](const auto& first, const auto& second) {
+        return first.first < second.first;
     });
 }
 

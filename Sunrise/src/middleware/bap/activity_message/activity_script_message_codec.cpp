@@ -9,13 +9,16 @@ namespace {
 
 namespace bits = encoding::bits;
 
+/** Field widths of the message-40 record and the message-41 event, in bits. */
 constexpr std::uint8_t kHashBits = 32;
 constexpr std::uint8_t kOffsetBits = 32;
 constexpr std::uint8_t kBlobLengthBits = 32;
 constexpr std::uint8_t kKindBits = 2;
 constexpr std::uint8_t kEventLengthBits = 9;
 constexpr std::uint8_t kByteBits = 8;
+/** The signed record offset is sent unsigned, biased by the signed 32-bit sign. */
 constexpr std::uint32_t kSigned32Sign = 0x80000000U;
+/** Value range the two-bit biased kind field can carry. */
 constexpr std::int8_t kMinimumKind = -1;
 constexpr std::int8_t kMaximumKind = 2;
 

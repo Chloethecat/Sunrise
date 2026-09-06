@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <span>
 
@@ -15,8 +16,6 @@ namespace sunrise::server::bap::encrypted::push::snapshot {
 
 /** Initial family snapshots start at version zero. */
 inline constexpr std::int32_t kInitialFamilyVersion = 0;
-/** Family two carries the social roster the Roster and Fireteam panels draw. */
-inline constexpr std::uint32_t kSocialRosterFamilyType = 2;
 /** Family three carries the account roster selected by Web Service subscription. */
 inline constexpr std::uint32_t kRosterFamilyType = 3;
 /** Family four carries account and selected-character investment state. */
@@ -41,6 +40,20 @@ inline constexpr std::size_t kFirstItemObjectIndex = kFamily4IdentityObjectCount
  * The account object is then the only descriptor ahead of them.
  */
 inline constexpr std::size_t kFirstItemObjectIndexUnselected = kAccountObjectIndex + 1;
+
+/** @return True when one change record is unwritten, which is how every snapshot encodes it. */
+inline constexpr auto kChangeRecordIsZero = [](const auto& record) noexcept {
+    return record.sequence == 0 && record.reserved == 0 && record.mutationSerial == 0
+           && record.kind == 0 && record.reservedKind == 0 && record.flags == 0;
+};
+
+/**
+ * The change ring the account observer reads. A gain it does not name draws no pickup feedback.
+ * Local to one incremental upsert; an ordinary snapshot encodes it empty.
+ */
+inline constexpr std::uint8_t kChangeKind = 1;
+/** Clear policy bits leave the record enabled; the observer skips any other pair. */
+inline constexpr std::uint16_t kChangeFlags = 0;
 
 /** Pins feed-referenced item identities to their published character rows. */
 [[nodiscard]] bool apply_acquisition_presentation(
@@ -213,7 +226,6 @@ prepare_item_state(Scratch& scratch,
     Scratch& scratch,
     const queuez::ItemAcquisition& acquisition,
     const state::PendingItemAcquisition& mutation,
-    std::optional<std::uint16_t> pendingSeasonReward,
     std::span<const queuez::AcquisitionPresentationRow> acquisitionPresentationRows,
     Prepared& prepared) noexcept;
 
@@ -226,7 +238,6 @@ prepare_item_state(Scratch& scratch,
 prepare_profile_item_acquisition(Scratch& scratch,
                                  const queuez::ProfileItemAcquisition& acquisition,
                                  const state::PendingProfileItemAcquisition& mutation,
-                                 std::optional<std::uint16_t> pendingSeasonReward,
                                  Prepared& prepared) noexcept;
 
 /** Builds a transient XP inventory-row acquisition and the account progression after-image. */
@@ -253,7 +264,6 @@ prepare_profile_item_acquisition(Scratch& scratch,
     const queuez::SessionState& before,
     const queuez::RecordRewardGrant& update,
     const state::PendingRecordRewardGrant& mutation,
-    std::optional<std::uint16_t> pendingSeasonReward,
     std::span<const queuez::AcquisitionPresentationRow> acquisitionPresentationRows,
     Prepared& prepared) noexcept;
 

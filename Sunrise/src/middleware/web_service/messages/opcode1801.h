@@ -16,12 +16,8 @@ struct Request {
 
 /**
  * Parses the exact reflected opcode-1801 record claim descriptor.
- *
- * The record is an optional native field, so the descriptor carries a presence bit before its
- * fifteen-bit row, exactly as the Collections pull does. A request naming no record is not a claim
- * and is refused here. The row is not range-checked against the installed record table: that is the
- * caller's decision, not the codec's.
- *
+ * The record is optional, so a presence bit precedes the fifteen-bit row and a request naming no
+ * record is refused. The row is not range-checked here.
  * @param message Parsed Web Service envelope.
  * @param request Receives the named record row.
  * @return True only for the complete canonical three-byte request naming a record.

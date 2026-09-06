@@ -44,6 +44,7 @@ inline constexpr std::size_t kAuthoredProfileBitCount = 13;
            + kRequestedCountBitCount * counts + kNameHashBitCount;
 }
 
+/** Buffer one squad body needs at the full requested-count length. */
 inline constexpr std::size_t kMaximumBitCount = exact_body_bit_count(kMaximumRequestedCountLength);
 inline constexpr std::size_t kMaximumByteCount = (kMaximumBitCount + 7) / 8;
 /** Spawn generation is an unsigned logical value stored in a 31-bit field. */

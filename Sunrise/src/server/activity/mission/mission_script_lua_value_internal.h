@@ -10,6 +10,7 @@
 
 namespace sunrise::server::activity::mission::lua_vm::detail {
 
+// Metatable names that lock the value userdata shapes a program may hold.
 inline constexpr char kUnitScalarMetatable[] = "sunrise.sdk.unit_scalar";
 inline constexpr char kSquadModeMetatable[] = "sunrise.sdk.squad_mode";
 inline constexpr char kSquadModeCollectionMetatable[] = "sunrise.sdk.squad_modes";

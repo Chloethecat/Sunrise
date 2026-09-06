@@ -26,6 +26,18 @@ inline constexpr std::uint32_t kMaximumInlineNameBankBytes =
 /** Version-seven and later authored placements retain every stable package-row field. */
 inline constexpr std::size_t kAuthoredPlacementStride = 136;
 
+/** Fixed packed byte sizes make producer and consumer ABI drift fail at compile time. */
+inline constexpr std::size_t kSectionSize = 16;
+inline constexpr std::size_t kFamilyCoverageDiagnosticSize = 2;
+inline constexpr std::size_t kInlineNameCandidateSize = 12;
+inline constexpr std::size_t kHeaderSize = 664;
+inline constexpr std::size_t kScalarsSize = 507;
+inline constexpr std::size_t kAuthoredSquadConfigContextSize = 40;
+inline constexpr std::size_t kAuthoredSquadPlacementContextSize = 120;
+inline constexpr std::size_t kAuthoredSquadPointContextSize = 36;
+inline constexpr std::size_t kAuthoredSquadPointPlacementMatchSize = 56;
+inline constexpr std::size_t kAuthoredSquadEdgeContextSize = 12;
+
 /** Fixed order of every vector owned by `scriptables::Snapshot`. */
 enum class SectionIndex : std::size_t {
     bubbles,
@@ -66,6 +78,7 @@ enum class SectionIndex : std::size_t {
     count,
 };
 
+/** Every shard header carries one section row per snapshot vector. */
 inline constexpr std::size_t kSectionCount = static_cast<std::size_t>(SectionIndex::count);
 static_assert(kSectionCount == 35);
 
@@ -185,17 +198,18 @@ struct Header final {
 static_assert(std::endian::native == std::endian::little);
 static_assert(sizeof(std::size_t) == sizeof(std::uint64_t));
 static_assert(sizeof(bool) == sizeof(std::uint8_t));
-static_assert(sizeof(Section) == 16);
-static_assert(sizeof(FamilyCoverageDiagnostic) == 2);
-static_assert(sizeof(catalog::InlineNameCandidate) == 12);
-static_assert(sizeof(Header) == 664);
-static_assert(sizeof(Scalars) == 507);
+static_assert(sizeof(Section) == kSectionSize);
+static_assert(sizeof(FamilyCoverageDiagnostic) == kFamilyCoverageDiagnosticSize);
+static_assert(sizeof(catalog::InlineNameCandidate) == kInlineNameCandidateSize);
+static_assert(sizeof(Header) == kHeaderSize);
+static_assert(sizeof(Scalars) == kScalarsSize);
 static_assert(sizeof(catalog::AuthoredPlacement) == kAuthoredPlacementStride);
-static_assert(sizeof(catalog::AuthoredSquadConfigContext) == 40);
-static_assert(sizeof(catalog::AuthoredSquadPlacementContext) == 120);
-static_assert(sizeof(catalog::AuthoredSquadPointContext) == 36);
-static_assert(sizeof(catalog::AuthoredSquadPointPlacementMatch) == 56);
-static_assert(sizeof(catalog::AuthoredSquadEdgeContext) == 12);
+static_assert(sizeof(catalog::AuthoredSquadConfigContext) == kAuthoredSquadConfigContextSize);
+static_assert(sizeof(catalog::AuthoredSquadPlacementContext) == kAuthoredSquadPlacementContextSize);
+static_assert(sizeof(catalog::AuthoredSquadPointContext) == kAuthoredSquadPointContextSize);
+static_assert(sizeof(catalog::AuthoredSquadPointPlacementMatch)
+              == kAuthoredSquadPointPlacementMatchSize);
+static_assert(sizeof(catalog::AuthoredSquadEdgeContext) == kAuthoredSquadEdgeContextSize);
 static_assert(std::is_trivially_copyable_v<Header> && std::is_standard_layout_v<Header>);
 static_assert(std::is_trivially_copyable_v<Scalars> && std::is_standard_layout_v<Scalars>);
 

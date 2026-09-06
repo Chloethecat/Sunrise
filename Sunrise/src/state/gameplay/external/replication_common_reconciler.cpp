@@ -128,14 +128,18 @@ bool Reconciler::advance_host_epoch(std::uint8_t expected, std::uint8_t next) no
 bool Reconciler::qualify_entities(const middleware::gameplay::external::CommonState* common,
                                   std::uint64_t packetOrdinal,
                                   bool hasPacketOrdinal) noexcept {
-    if (phase_ != Phase::ready) return false;
+    if (phase_ != Phase::ready) {
+        return false;
+    }
     if (common) {
         if (validate(*common) != ObserveResult::ready
-            || common->entries[0].reconciliationGeneration != requestedGeneration_)
+            || common->entries[0].reconciliationGeneration != requestedGeneration_) {
             return false;
+        }
         if (hasPacketOrdinal) {
-            if (!entityEpochConfirmed_ || packetOrdinal < firstEntityEpochOrdinal_)
+            if (!entityEpochConfirmed_ || packetOrdinal < firstEntityEpochOrdinal_) {
                 firstEntityEpochOrdinal_ = packetOrdinal;
+            }
             entityEpochConfirmed_ = true;
         }
         return true;

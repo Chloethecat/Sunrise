@@ -8,12 +8,14 @@
 
 namespace sunrise::server::activity::mission::lua_vm::detail::manifest_api {
 
+// Metatable names that lock the manifest userdata shapes a program may hold.
 inline constexpr char kManifestMetatable[] = "sunrise.sdk.manifest";
 inline constexpr char kManifestCollectionMetatable[] = "sunrise.sdk.manifest_collection";
 inline constexpr char kManifestRowMetatable[] = "sunrise.sdk.manifest_row";
 inline constexpr char kManifestTagCollectionMetatable[] = "sunrise.sdk.manifest_tag_collection";
 inline constexpr char kManifestLocatorCollectionMetatable[] =
     "sunrise.sdk.manifest_locator_collection";
+// One binding locator row of a manifest variant.
 inline constexpr char kManifestLocatorMetatable[] = "sunrise.sdk.manifest_locator";
 
 struct ManifestHandle final {

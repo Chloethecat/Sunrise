@@ -7,6 +7,7 @@ namespace {
 
 using enum Family;
 
+// Short domain aliases keep the descriptor rows below the column limit.
 constexpr Domain kSourceIdentity = Domain::sourceIdentity;
 constexpr Domain kActivityGraph = Domain::activityGraph;
 constexpr Domain kWorldGraph = Domain::worldGraph;
@@ -16,6 +17,7 @@ constexpr Domain kBehaviorGraph = Domain::behaviorGraph;
 constexpr Domain kApiPolicy = Domain::apiPolicy;
 constexpr Domain kValidation = Domain::validation;
 
+// One row per family: the family, its stable report name, and its domain.
 constexpr std::array<Descriptor, kFamilyCount> kDescriptors{{
     {sources, "sources", kSourceIdentity},
     {buildProfile, "build_profile", kSourceIdentity},
@@ -279,6 +281,7 @@ std::string_view stable_name(Projection projection) noexcept {
     return {};
 }
 
+/** @return The stable report name of one coverage status. */
 std::string_view stable_name(Status status) noexcept {
     switch (status) {
     case Status::unresolved:

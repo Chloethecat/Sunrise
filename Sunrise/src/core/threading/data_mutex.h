@@ -10,8 +10,7 @@
 
 namespace sunrise::core::threading {
 
-/** A combination of Mutex + Data. This allows Data types to be written as if they're single
- * threaded as you'll only have access when the mutex is locked. */
+/** Data reachable only while its mutex is held; nothing else can name it. */
 template <typename Data, typename Mutex = SrwLock> class DataMutex {
 public:
     explicit DataMutex() noexcept
@@ -22,20 +21,30 @@ public:
         requires std::constructible_from<Data, Args...>
     explicit DataMutex(std::in_place_t, Args&&... args) : data_(std::forward<Args>(args)...) {}
 
-    /** Locks the mutex and calls the given Func */
+    /**
+     * Runs func under the exclusive lock.
+     * @param func Called with the guarded data.
+     * @return Whatever func returns; the type must be Sendable so no reference escapes.
+     */
     template <std::invocable<Data&> Func, Sendable Return = std::invoke_result_t<Func, Data&>>
     [[nodiscard]] Return lock(Func&& func) noexcept {
         const std::lock_guard lock(mutex_);
         return std::invoke(std::forward<Func>(func), data_);
     }
 
-    /** Tries to loc the mutex, only calls the given Func if successful */
-    template <std::invocable<Data&> Func> void try_lock(Func&& func) noexcept {
+    /**
+     * Runs func under the exclusive lock only when it is free; skips func otherwise.
+     * @param func Called with the guarded data, or not at all.
+     * @return False when the lock was held, so the caller can report the skipped work.
+     */
+    template <std::invocable<Data&> Func> [[nodiscard]] bool try_lock(Func&& func) noexcept {
         std::unique_lock lock(mutex_, std::try_to_lock);
 
-        if (lock.owns_lock()) {
-            std::invoke(std::forward<Func>(func), data_);
+        if (!lock.owns_lock()) {
+            return false;
         }
+        std::invoke(std::forward<Func>(func), data_);
+        return true;
     }
 
 private:
@@ -43,8 +52,7 @@ private:
     Data data_;
 };
 
-/** Similar to the above but also allows for multple readers. Readers are passed a const Data&,
- * making accidental writes impossible */
+/** DataMutex that also admits concurrent readers; a reader only sees a const Data&. */
 template <typename Data, typename SharedMutex = SrwLock> class SharedDataMutex {
 public:
     explicit SharedDataMutex() noexcept
@@ -56,8 +64,11 @@ public:
     explicit SharedDataMutex(std::in_place_t, Args&&... args)
         : data_(std::forward<Args>(args)...) {}
 
-    /** Locks the mutex for reading and calls the given Func. Multiple readers can be active at
-     * once */
+    /**
+     * Runs func under the shared lock; other readers may run at the same time.
+     * @param func Called with the guarded data.
+     * @return Whatever func returns; the type must be Sendable so no reference escapes.
+     */
     template <std::invocable<const Data&> Func,
               Sendable Return = std::invoke_result_t<Func, const Data&>>
     [[nodiscard]] Return lock_read(Func&& func) const noexcept {
@@ -65,8 +76,11 @@ public:
         return std::invoke(std::forward<Func>(func), data_);
     }
 
-    /** Locks the mutex for writing and calls the given Func. This is an exclusive lock and
-     * guarantees there are no other readers or writers */
+    /**
+     * Runs func under the exclusive lock; no other reader or writer is active.
+     * @param func Called with the guarded data.
+     * @return Whatever func returns; the type must be Sendable so no reference escapes.
+     */
     template <std::invocable<Data&> Func, Sendable Return = std::invoke_result_t<Func, Data&>>
     [[nodiscard]] Return lock_write(Func&& func) noexcept {
         const std::lock_guard lock(mutex_);

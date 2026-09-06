@@ -13,15 +13,14 @@ inline constexpr std::uint16_t kOpcode = 701;
 /** Semantic result decoded from one schema-0x80807603 request. */
 struct Request {
     state::account::settings::SettingsDelta settings;
+    /** Preference path 0.1.1.0; false when the body leaves that preference absent. */
+    bool profileSetupCompleted{};
 };
 
 /**
  * Decodes the complete presence-driven opcode-701 request body.
- *
- * Unsupported schema branches are still traversed so every later field is read at its actual
- * wire position. Output is cleared on entry; decoded values replace it only after the entire
- * schema, optional outer blobs, and zero terminal padding validate.
- *
+ * Unsupported branches are still traversed so later fields read at their real wire position.
+ * Output is replaced only after the whole schema, the outer blobs and the padding validate.
  * @param message Parsed Web Service envelope whose payload begins at schema bit zero.
  * @param output Receives supported fields, the authored binding source, and the atomic table.
  * @return True only when opcode and complete request encoding are valid.

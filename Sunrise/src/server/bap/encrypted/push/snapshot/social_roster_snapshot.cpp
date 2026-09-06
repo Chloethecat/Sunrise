@@ -1,16 +1,7 @@
 /**
  * Family-two social roster snapshot: the directory and the member record it links to.
- *
- * The Roster and Fireteam panels draw a name and a blank emblem because family two is answered
- * with an empty snapshot. The panel row resolves the emblem with two lookups, not one, and both
- * objects have to be resident at the same time for the pair to resolve:
- *
- *     lookup 1: slot 0, keyed by the account soid, gives the directory
- *     lookup 2: slot 1, keyed by the qword at directory +8, gives the member record
- *     then the emblem definition index is read from member +36 and its variant from member +38
- *
- * A full snapshot prunes every object it does not name, so publishing one slot per message can
- * never satisfy that chain whichever slot is chosen. Both go out in one message.
+ * The panel resolves the emblem through both objects, and a full snapshot prunes every object it
+ * does not name, so the pair goes out in one message.
  */
 
 #include <algorithm>
@@ -38,28 +29,18 @@ constexpr std::size_t kEmblemDefinitionOffset = 36;
 constexpr std::size_t kEmblemVariantOffset = 38;
 
 /**
- * A missing definition index is every bit set, and the variant is always sent empty.
- *
- * The reader tries the variant first and falls back to the definition index when the variant is
- * the empty sentinel. Sending a real number there resolves art against a bogus variant entry: a
- * light value written to +38 drew a grey placeholder, and a large value stalled the client outright
- * because the field indexes a table.
+ * Absent definition index. The variant field always takes it, because a real value there indexes
+ * a table the client then walks with a bogus entry.
  */
 constexpr std::uint16_t kEmptyDefinitionIndex = 0xFFFFU;
 
 /**
  * Resolves the selected character's equipped emblem to a native definition index.
- *
- * This has to track the live loadout rather than publish a constant. The client resolves this
- * account-keyed object as the account's emblem rather than as roster decoration, so a fixed index
- * here pins the emblem globally: character select, inventory and orbit all stop reflecting an equip
- * while the equip itself keeps succeeding. Publishing what the player actually has on makes that
- * harmless.
- *
+ * The client reads this object as the account's emblem, so it must track the live loadout.
  * @param account Account snapshot, already read under the lock by the caller.
  * @param index Receives the native definition index of the equipped emblem.
- * @return False when nothing is selected, the emblem slot is empty, or the hash is unknown. Every
- *         one of those cases publishes the empty sentinel rather than a guess.
+ * @param definitionHash Receives the equipped emblem hash.
+ * @return False when nothing is selected, the emblem slot is empty, or the hash is unknown.
  */
 [[nodiscard]] bool selected_emblem_definition_index(const state::AccountState& account,
                                                     std::uint16_t& index,
@@ -100,6 +81,7 @@ bool prepare_social_roster(Scratch& scratch,
         return report_failure("social_roster_state");
     }
     const auto destination = std::span(scratch.plaintext).subspan(reservation.rawWriteOffset);
+    // The body is the directory record followed by the member record.
     constexpr std::size_t kTotal = middleware::datagen::kSocialRosterDirectorySize
                                    + middleware::datagen::kSocialRosterMemberSize;
     if (destination.size() < kTotal) {
@@ -119,14 +101,8 @@ bool prepare_social_roster(Scratch& scratch,
 
     /**
      * Writes one object and stages it.
-     *
-     * The two bodies are not interchangeable, because both lookups match on the object's first
-     * qword. The directory leads with the account soid the row searches by and carries the link at
-     * +8; the member record leads with that same link so the second lookup finds it. The account
-     * soid serves as the link because it is already proven to route.
-     *
-     * Only the member record carries the emblem. The directory is read for two flag bits and
-     * nothing else, so a copy of the pair there changes nothing.
+     * Both lookups match on the first qword, so the directory leads with the account soid and
+     * repeats it at +8 as the link the member record leads with. Only the member has the emblem.
      */
     const auto emit = [&](std::size_t size, std::uint32_t id, bool directory) noexcept {
         if (objectCount >= staged.objects.size() || size < kEmblemVariantOffset + sizeof emblem) {

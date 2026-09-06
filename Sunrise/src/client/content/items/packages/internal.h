@@ -12,6 +12,7 @@
 #include "../../../../middleware/content/packages/tables/definition_index_table.h"
 #include "../../../../middleware/content/packages/tables/items.h"
 #include "../../../../state/build_data/abilities/definition.h"
+#include "../../../../state/build_data/bounties/definition.h"
 #include "../../../../state/build_data/collectibles/collectible_catalog.h"
 #include "../../../../state/build_data/constants/definition.h"
 #include "../../../../state/build_data/inventory/buckets/definition.h"
@@ -21,6 +22,8 @@
 #include "../../../../state/build_data/material_requirements/material_requirement_catalog.h"
 #include "../../../../state/build_data/progressions/definition.h"
 #include "../../../../state/build_data/runtime.h"
+#include "../../../../state/build_data/season_pass/definition.h"
+#include "../../../../state/build_data/sobjects/sobject_catalog.h"
 
 namespace sunrise::client::content::items::packages {
 
@@ -63,6 +66,27 @@ struct Storage {
     std::array<state::build_data::records::Definition,
                state::build_data::records::kDefinitionCapacity>
         recordRows{};
+    /** Flat objective, interval and reward banks the record rows name by range. */
+    std::array<state::build_data::records::Objective,
+               state::build_data::records::kObjectiveCapacity>
+        recordObjectives{};
+    std::array<state::build_data::records::Interval, state::build_data::records::kIntervalCapacity>
+        recordIntervals{};
+    std::array<state::build_data::records::Reward, state::build_data::records::kRewardCapacity>
+        recordRewards{};
+    std::size_t nodeCount{};
+    std::size_t recordCount{};
+    std::size_t recordObjectiveCount{};
+    std::size_t recordIntervalCount{};
+    std::size_t recordRewardCount{};
+    /** Objective and record display tables, held while the record pass joins them. */
+    std::vector<std::byte> objectiveTable{};
+    std::vector<std::byte> displayTable{};
+    /** Progression, item index, per-item strings and unlock slot tables, held across one join. */
+    std::vector<std::byte> progressionTable{};
+    std::vector<std::byte> itemIndexTable{};
+    std::vector<std::byte> itemStringsTable{};
+    std::vector<std::byte> unlockSlotTable{};
     std::vector<std::byte> container{};
     std::vector<std::byte> child{};
     std::vector<std::byte> root{};
@@ -100,6 +124,26 @@ struct Storage {
     std::array<state::build_data::progressions::Definition,
                state::build_data::progressions::kDefinitionCapacity>
         progressionRows{};
+    std::array<state::build_data::progressions::Step,
+               state::build_data::progressions::kStepCapacity>
+        progressionSteps{};
+    std::size_t progressionStepCount{};
+    /** Season pass reward rows, their raw claim slots, and the wrapper items they grant. */
+    std::array<state::build_data::season_pass::Reward,
+               state::build_data::season_pass::kRewardCapacity>
+        seasonPassRewards{};
+    std::array<std::uint16_t, state::build_data::season_pass::kRewardCapacity>
+        seasonPassClaimSlots{};
+    std::array<state::build_data::season_pass::Package,
+               state::build_data::season_pass::kPackageCapacity>
+        seasonPassPackages{};
+    std::size_t seasonPassRewardCount{};
+    std::size_t seasonPassPackageCount{};
+    /** Repeatable bounty rows, keyed by the item-type pair their pool shares. */
+    std::array<state::build_data::bounties::Definition,
+               state::build_data::bounties::kDefinitionCapacity>
+        bountyRows{};
+    std::size_t bountyCount{};
     std::array<state::build_data::collectibles::Definition,
                state::build_data::collectibles::kDefinitionCapacity>
         collectibleRows{};
@@ -108,6 +152,10 @@ struct Storage {
         materialRequirementRows{};
     std::array<state::build_data::items::Definition, state::build_data::items::kDefinitionCapacity>
         rows{};
+    /** Incident-target rows held until the sobject table is published. */
+    std::array<state::build_data::sobjects::Definition,
+               state::build_data::sobjects::kDefinitionCapacity>
+        sobjectRows{};
 };
 
 /**
@@ -131,6 +179,9 @@ struct Storage {
 
 /** Publishes parsed inventory buckets after applying the extracted item-slot relation. */
 [[nodiscard]] bool publish_buckets(Storage& storage) noexcept;
+
+/** @return True when the catalyst catalog is published or cannot exist on this executable. */
+[[nodiscard]] bool exotic_catalysts_settled() noexcept;
 
 /** Adds one native definition index to the deduplicated request set. */
 void request(std::uint16_t definitionIndex, DetailRequests& requested) noexcept;
@@ -246,29 +297,58 @@ read_investment_constants(const reader::Source& source,
     std::array<std::uint8_t, state::build_data::socket_entry_lists::kEntryCapacity>&
         output) noexcept;
 
-/** Reads nodes and resolves their value slots and owned records. */
+/**
+ * Reads nodes and resolves their value slots, owned records and lore parent bars.
+ * The record rows must already be built: a node's lore-book flag and parent bar come from them.
+ * @param source Package source.
+ * @param storage Pass storage holding the record rows and the objective bank.
+ * @param root Investment root bytes.
+ * @return True when the node table read and produced at least one row.
+ */
 [[nodiscard]] bool build_nodes(const reader::Source& source,
-                               reader::Scratch& scratch,
-                               std::span<const std::byte> root,
-                               std::vector<std::byte>& blob,
-                               std::span<state::build_data::nodes::Definition> output,
-                               std::size_t& count) noexcept;
+                               Storage& storage,
+                               std::span<const std::byte> root) noexcept;
 
-/** Reads records and resolves their completion-flag indices. */
+/**
+ * Reads records and resolves their flags, objectives, intervals and rewards.
+ * @param source Package source.
+ * @param storage Pass storage receiving the record rows and all three flat banks.
+ * @param root Investment root bytes.
+ * @return True when the record table read and produced at least one row.
+ */
 [[nodiscard]] bool build_records(const reader::Source& source,
-                                 reader::Scratch& scratch,
-                                 std::span<const std::byte> root,
-                                 std::vector<std::byte>& blob,
-                                 std::span<state::build_data::records::Definition> output,
-                                 std::size_t& count) noexcept;
+                                 Storage& storage,
+                                 std::span<const std::byte> root) noexcept;
 
-/** Reads progression definitions and resolves their replicated-object slots. */
+/**
+ * Reads progression definitions, their rank steps, and their replicated-object slots.
+ * @param source Package source.
+ * @param scratch Reader scratch.
+ * @param root Investment root bytes.
+ * @param blob Scratch storage for the progression table.
+ * @param output Definition storage.
+ * @param count Receives the definitions read.
+ * @param steps Flat step bank storage the definitions name by range.
+ * @param stepCount Receives the steps read.
+ * @return True when the table read and produced at least one row.
+ */
 [[nodiscard]] bool build_progressions(const reader::Source& source,
                                       reader::Scratch& scratch,
                                       std::span<const std::byte> root,
                                       std::vector<std::byte>& blob,
                                       std::span<state::build_data::progressions::Definition> output,
-                                      std::size_t& count) noexcept;
+                                      std::size_t& count,
+                                      std::span<state::build_data::progressions::Step> steps,
+                                      std::size_t& stepCount) noexcept;
+
+/** Reads the season pass reward list and the wrapper items it grants. */
+[[nodiscard]] bool build_season_pass(const reader::Source& source,
+                                     Storage& storage,
+                                     std::span<const std::byte> root) noexcept;
+
+/** Reads the item-type of every repeatable bounty, which is what groups a vendor pool. */
+[[nodiscard]] bool
+build_bounties(const reader::Source& source, Storage& storage, std::size_t itemCount) noexcept;
 
 /**
  * Copies the block key material this pass borrows.

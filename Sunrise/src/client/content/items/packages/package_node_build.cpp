@@ -1,16 +1,17 @@
-#include <algorithm>
 #include <array>
 #include <cstdio>
-#include <unordered_map>
-#include <vector>
+#include <cstring>
 
 #include "../../../../core/logging/log.h"
-#include "../../../../state/build_data/runtime.h"
 #include "../../../../middleware/content/packages/tables/unlock_expression.h"
+#include "../../../../state/build_data/runtime.h"
 #include "internal.h"
 
 namespace sunrise::client::content::items::packages {
 namespace {
+
+namespace domain = state::build_data::nodes;
+namespace record_domain = state::build_data::records;
 
 /** Reports where the node pass stopped, so a silent miss cannot look like a stuck progress bar. */
 void report(const char* stage, unsigned long long detail) noexcept {
@@ -24,143 +25,171 @@ void report(const char* stage, unsigned long long detail) noexcept {
     }
 }
 
-} // namespace
+/** A slot is a signed 16-bit value, so the widest addressable slot space is this. */
+constexpr std::size_t kSlotSpace = 32768;
+
+/** Unlock slot to bank mapping row, indexed by slot. The first mapping row of a slot wins. */
+using SlotMap = std::array<std::uint16_t, kSlotSpace>;
+
+/** The four maps one node pass reads. 256 KiB together, so they never sit on the caller stack. */
+struct SlotMaps {
+    SlotMap accountFlag{};
+    SlotMap characterFlag{};
+    SlotMap accountValue{};
+    SlotMap characterValue{};
+};
+
+/** Held here because the pass owns the build-data lock and runs once per process. */
+SlotMaps g_slotMaps{};
+
+/** Clears one map so every slot reads as unavailable. */
+void clear_slot_map(SlotMap& output) noexcept {
+    output.fill(domain::kUnavailableValueIndex);
+}
+
+/** Clears all four so an unread table cannot leave a prior pass's indexes addressable. */
+void clear_slot_maps(SlotMaps& maps) noexcept {
+    clear_slot_map(maps.accountFlag);
+    clear_slot_map(maps.characterFlag);
+    clear_slot_map(maps.accountValue);
+    clear_slot_map(maps.characterValue);
+}
 
 /**
- * Reads the presentation node table and resolves each node's value slot and owned records.
- *
- * A node's progress bar shows a value slot named by its own expression, and the records it owns sit
- * at row `+136` as a row and a gate. Both are read here so a claim never has to walk the node table.
+ * Reads one unlock mapping table into a slot-to-index map.
+ * @param blob Blob holding the mapping table.
+ * @param descriptor Array descriptor of the mapping table inside that blob.
+ * @param output Receives one bank index per addressable slot, or the unavailable index.
+ * @return True when the table resolves and every row fits the blob.
  */
-bool build_nodes(const reader::Source& source,
-                 reader::Scratch& scratch,
-                 std::span<const std::byte> root,
-                 std::vector<std::byte>& blob,
-                 std::span<state::build_data::nodes::Definition> output,
-                 std::size_t& count) noexcept {
-    namespace domain = state::build_data::nodes;
-    count = 0;
-
-    // The account flag mapping table, read first. A category's gate names a flag slot, and a slot
-    // is not an index: the byte that feeds it sits at the row whose destination is that slot.
-    std::uint32_t flagMapTag = 0;
-    tables::Array flagMapRows{};
-    std::unordered_map<std::int16_t, std::uint16_t> flagIndexBySlot{};
-    if (tables::slot_tag(root, tables::kUnlockFlagMapTableSlot, flagMapTag) && flagMapTag != 0
-        && tables::package_of(flagMapTag) != tables::kAbsentPackageId
-        && reader::read_tag(source, scratch, flagMapTag, blob)
-        && tables::find_array_at(
-            std::span<const std::byte>{blob}, tables::kAccountFlagMapDescriptor, flagMapRows)
-        && flagMapRows.count != 0
-        && flagMapRows.dataOffset
-                   + static_cast<std::size_t>(flagMapRows.count) * tables::kUnlockMapRowStride
-               <= blob.size()) {
-        for (std::uint64_t row = 0; row < flagMapRows.count && row <= domain::kUnavailableFlagIndex;
-             ++row) {
-            std::int16_t slot = 0;
-            std::memcpy(&slot,
-                        blob.data() + flagMapRows.dataOffset
-                            + static_cast<std::size_t>(row) * tables::kUnlockMapRowStride
-                            + tables::kUnlockMapDestinationSlotOffset,
-                        sizeof slot);
-            flagIndexBySlot.emplace(slot, static_cast<std::uint16_t>(row));
+[[nodiscard]] bool
+read_slot_map(std::span<const std::byte> blob, std::size_t descriptor, SlotMap& output) noexcept {
+    clear_slot_map(output);
+    tables::Array rows{};
+    if (!tables::find_array_at(blob, descriptor, rows) || rows.count == 0
+        || rows.dataOffset + static_cast<std::size_t>(rows.count) * tables::kUnlockMapRowStride
+               > blob.size()) {
+        return false;
+    }
+    for (std::uint64_t row = 0; row < rows.count && row <= domain::kUnavailableValueIndex; ++row) {
+        std::int16_t slot = 0;
+        std::memcpy(&slot,
+                    blob.data() + rows.dataOffset
+                        + static_cast<std::size_t>(row) * tables::kUnlockMapRowStride
+                        + tables::kUnlockMapDestinationSlotOffset,
+                    sizeof slot);
+        // An expression operand is never negative, so a negative destination addresses nothing.
+        if (slot < 0) {
+            continue;
+        }
+        std::uint16_t& existing = output[static_cast<std::size_t>(slot)];
+        if (existing == domain::kUnavailableValueIndex) {
+            existing = static_cast<std::uint16_t>(row);
         }
     }
+    return true;
+}
 
+/** @param map Slot map. @param slot Raw unlock slot. @return Bank index, or the unavailable one. */
+[[nodiscard]] std::uint16_t bank_index(const SlotMap& map, std::int16_t slot) noexcept {
+    if (slot < 0) {
+        return domain::kUnavailableValueIndex;
+    }
+    return map[static_cast<std::size_t>(slot)];
+}
 
-    tables::Array characterFlagMapRows{};
-    std::unordered_map<std::int16_t, std::uint16_t> characterFlagIndexBySlot{};
-    if (flagMapTag != 0
-        && tables::find_array_at(std::span<const std::byte>{blob},
-                                 tables::kCharacterFlagMapDescriptor,
-                                 characterFlagMapRows)
-        && characterFlagMapRows.count != 0
-        && characterFlagMapRows.dataOffset
-                   + static_cast<std::size_t>(characterFlagMapRows.count)
-                         * tables::kUnlockMapRowStride
-               <= blob.size()) {
-        for (std::uint64_t row = 0;
-             row < characterFlagMapRows.count && row <= domain::kUnavailableFlagIndex; ++row) {
-            std::int16_t slot = 0;
-            std::memcpy(&slot,
-                        blob.data() + characterFlagMapRows.dataOffset
-                            + static_cast<std::size_t>(row) * tables::kUnlockMapRowStride
-                            + tables::kUnlockMapDestinationSlotOffset,
-                        sizeof slot);
-            characterFlagIndexBySlot.emplace(slot, static_cast<std::uint16_t>(row));
+/**
+ * Resolves one node's lore-book flag and the value slot its parent bar reads.
+ * A book's parent triumph is the one child record that displays no lore. Its first objective
+ * names the slot the book's collected-chapter bar counts in.
+ * @param storage Pass storage holding the record rows and the objective bank.
+ * @param node Node whose children were already read.
+ * @param parentSlot Receives the parent bar's raw value slot, or -1 when the book has none.
+ * @return True when at least one child record displays lore, which is what makes a book.
+ */
+[[nodiscard]] bool resolve_book(const Storage& storage,
+                                const domain::Definition& node,
+                                std::int16_t& parentSlot) noexcept {
+    parentSlot = -1;
+    bool book = false;
+    for (std::size_t child = 0; child < node.childCount; ++child) {
+        const std::size_t row = node.children[child];
+        if (row >= storage.recordCount) {
+            continue;
         }
+        const record_domain::Definition& record = storage.recordRows[row];
+        if (record.loreRow != record_domain::kUnavailableLoreRow) {
+            book = true;
+            continue;
+        }
+        for (std::size_t entry = 0; entry < record.objectiveCount; ++entry) {
+            const std::size_t at = static_cast<std::size_t>(record.objectiveOffset) + entry;
+            if (at < storage.recordObjectiveCount
+                && storage.recordObjectives[at].sourceValueSlot >= 0) {
+                parentSlot = storage.recordObjectives[at].sourceValueSlot;
+            }
+        }
+    }
+    return book;
+}
+
+} // namespace
+
+/** Reads nodes and resolves their value slots, owned records and lore parent bars. */
+bool build_nodes(const reader::Source& source,
+                 Storage& storage,
+                 std::span<const std::byte> root) noexcept {
+    storage.nodeCount = 0;
+    clear_slot_maps(g_slotMaps);
+
+    // A gate names a flag slot, not an index. The index is the mapping row whose destination is
+    // that slot.
+    std::uint32_t flagMapTag = 0;
+    if (tables::slot_tag(root, tables::kUnlockFlagMapTableSlot, flagMapTag) && flagMapTag != 0
+        && tables::package_of(flagMapTag) != tables::kAbsentPackageId
+        && reader::read_tag(source, storage.scratch, flagMapTag, storage.child)) {
+        const std::span<const std::byte> blob{storage.child};
+        (void)read_slot_map(blob, tables::kAccountFlagMapDescriptor, g_slotMaps.accountFlag);
+        (void)read_slot_map(blob, tables::kCharacterFlagMapDescriptor, g_slotMaps.characterFlag);
     }
 
     std::uint32_t mapTag = 0;
-    tables::Array mapRows{};
     if (!tables::slot_tag(root, tables::kUnlockValueMapTableSlot, mapTag) || mapTag == 0
         || tables::package_of(mapTag) == tables::kAbsentPackageId
-        || !reader::read_tag(source, scratch, mapTag, blob)
-        || !tables::find_array_at(std::span<const std::byte>{blob},
-                                  tables::kAccountValueMapDescriptor,
-                                  mapRows)
-        || mapRows.count == 0
-        || mapRows.dataOffset
-                   + static_cast<std::size_t>(mapRows.count) * tables::kUnlockMapRowStride
-               > blob.size()) {
+        || !reader::read_tag(source, storage.scratch, mapTag, storage.child)) {
         report("value_map_fail", mapTag);
         return false;
     }
-    std::unordered_map<std::int16_t, std::uint16_t> indexBySlot{};
-    for (std::uint64_t row = 0; row < mapRows.count && row <= domain::kUnavailableValueIndex;
-         ++row) {
-        const std::size_t at =
-            mapRows.dataOffset + static_cast<std::size_t>(row) * tables::kUnlockMapRowStride;
-        std::int16_t slot = 0;
-        std::memcpy(&slot, blob.data() + at + tables::kUnlockMapDestinationSlotOffset, sizeof slot);
-        indexBySlot.emplace(slot, static_cast<std::uint16_t>(row));
-    }
-
-
-    tables::Array characterValueMapRows{};
-    std::unordered_map<std::int16_t, std::uint16_t> characterValueIndexBySlot{};
-    if (tables::find_array_at(std::span<const std::byte>{blob},
-                              tables::kCharacterValueMapDescriptor,
-                              characterValueMapRows)
-        && characterValueMapRows.count != 0
-        && characterValueMapRows.dataOffset
-                   + static_cast<std::size_t>(characterValueMapRows.count)
-                         * tables::kUnlockMapRowStride
-               <= blob.size()) {
-        for (std::uint64_t row = 0;
-             row < characterValueMapRows.count && row <= domain::kUnavailableValueIndex; ++row) {
-            std::int16_t slot = 0;
-            std::memcpy(&slot,
-                        blob.data() + characterValueMapRows.dataOffset
-                            + static_cast<std::size_t>(row) * tables::kUnlockMapRowStride
-                            + tables::kUnlockMapDestinationSlotOffset,
-                        sizeof slot);
-            characterValueIndexBySlot.emplace(slot, static_cast<std::uint16_t>(row));
-        }
+    const std::span<const std::byte> valueMap{storage.child};
+    const bool valueMapRead =
+        read_slot_map(valueMap, tables::kAccountValueMapDescriptor, g_slotMaps.accountValue);
+    (void)read_slot_map(valueMap, tables::kCharacterValueMapDescriptor, g_slotMaps.characterValue);
+    if (!valueMapRead) {
+        report("value_map_fail", mapTag);
+        return false;
     }
 
     std::uint32_t tableTag = 0;
     tables::Array rows{};
     if (!tables::slot_tag(root, tables::kPresentationNodeTableSlot, tableTag) || tableTag == 0
         || tables::package_of(tableTag) == tables::kAbsentPackageId
-        || !reader::read_tag(source, scratch, tableTag, blob)
+        || !reader::read_tag(source, storage.scratch, tableTag, storage.child)
         || !tables::find_array_at(
-            std::span<const std::byte>{blob}, tables::kTableArrayDescriptor, rows)
-        || rows.count == 0 || rows.count > output.size()
+            std::span<const std::byte>{storage.child}, tables::kTableArrayDescriptor, rows)
+        || rows.count == 0 || rows.count > storage.nodeRows.size()
         || rows.dataOffset + static_cast<std::size_t>(rows.count) * tables::kNodeRowStride
-               > blob.size()) {
+               > storage.child.size()) {
         report("node_table_fail", tableTag);
         return false;
     }
 
-    const std::span<const std::byte> table{blob};
-    std::size_t driving = 0;
+    const std::span<const std::byte> table{storage.child};
+    std::size_t books = 0;
 
-    // Pass 1: resolve every node's own value slot and children.
     for (std::uint64_t row = 0; row < rows.count; ++row) {
         const std::size_t at =
             rows.dataOffset + static_cast<std::size_t>(row) * tables::kNodeRowStride;
-        domain::Definition& definition = output[static_cast<std::size_t>(row)];
+        domain::Definition& definition = storage.nodeRows[static_cast<std::size_t>(row)];
         definition = {};
         definition.definitionIndex = static_cast<std::uint16_t>(row);
 
@@ -168,49 +197,35 @@ bool build_nodes(const reader::Source& source,
         std::int16_t slot = 0;
         const bool named =
             tables::expression_value_slot(table, at, tables::kNodeExpressionFieldPrimary, slot)
-            || tables::expression_value_slot(table, at, tables::kNodeExpressionFieldAlternate, slot);
+            || tables::expression_value_slot(
+                table, at, tables::kNodeExpressionFieldAlternate, slot);
         if (named) {
             definition.valueSlot = slot;
-            const auto found = indexBySlot.find(slot);
-            if (found != indexBySlot.end()) {
-                definition.valueIndex = found->second;
-            }
-            // The same expression may resolve in the character scope: one lore book's bar reads a
-            // slot only the character table carries, and its parent has to be fed there too.
+            definition.valueIndex = bank_index(g_slotMaps.accountValue, slot);
+            // One book's bar reads a slot only the character table carries, so both scopes resolve.
             definition.characterValueSlot = slot;
-            const auto character_resolved = characterValueIndexBySlot.find(slot);
-            if (character_resolved != characterValueIndexBySlot.end()) {
-                definition.characterValueIndex = character_resolved->second;
-            }
+            definition.characterValueIndex = bank_index(g_slotMaps.characterValue, slot);
         }
 
-        // A category gated on a flag rather than on its own progress cannot reveal itself by being
-        // played: with no title shown there is nothing inside to claim, and nothing to claim leaves
-        // the gate shut. Resolve that flag so the gate can be satisfied.
+        // A category gated on a flag never opens from progress alone, so resolve that flag.
         std::int16_t gateSlot = 0;
         if (tables::expression_flag_slot(table, at, tables::kNodeExpressionFieldPrimary, gateSlot)
-            || tables::expression_flag_slot(table, at, tables::kNodeExpressionFieldAlternate, gateSlot)) {
-            const auto gate = flagIndexBySlot.find(gateSlot);
-            if (gate != flagIndexBySlot.end()) {
-                definition.visibilityFlagIndex = gate->second;
-            }
-            const auto characterGate = characterFlagIndexBySlot.find(gateSlot);
-            if (characterGate != characterFlagIndexBySlot.end()) {
-                definition.visibilityCharacterFlagIndex = characterGate->second;
-            }
+            || tables::expression_flag_slot(
+                table, at, tables::kNodeExpressionFieldAlternate, gateSlot)) {
+            definition.visibilityFlagIndex = bank_index(g_slotMaps.accountFlag, gateSlot);
+            definition.visibilityCharacterFlagIndex =
+                bank_index(g_slotMaps.characterFlag, gateSlot);
         }
-
-
 
         // Records the node owns, four bytes each as a row and a gate.
         std::int64_t childCount = 0;
         std::int64_t childRelative = 0;
-        std::memcpy(&childCount, table.data() + at + tables::kNodeChildRecordField,
-                    sizeof childCount);
-        std::memcpy(&childRelative, table.data() + at + tables::kNodeChildRecordField + 8,
-                    sizeof childRelative);
+        const std::size_t pointerAt =
+            at + tables::kNodeChildRecordField + tables::kUnlockExpressionPointerOffset;
+        std::memcpy(
+            &childCount, table.data() + at + tables::kNodeChildRecordField, sizeof childCount);
+        std::memcpy(&childRelative, table.data() + pointerAt, sizeof childRelative);
         if (childCount >= 1 && childCount <= static_cast<std::int64_t>(domain::kChildCapacity)) {
-            const std::size_t pointerAt = at + tables::kNodeChildRecordField + 8;
             const std::int64_t target = static_cast<std::int64_t>(pointerAt) + childRelative
                                         + static_cast<std::int64_t>(tables::kHeaderSkip);
             if (target >= 0
@@ -230,85 +245,22 @@ bool build_nodes(const reader::Source& source,
                 }
             }
         }
-        if (definition.childCount != 0 && definition.valueIndex != domain::kUnavailableValueIndex) {
-            ++driving;
+
+        // A lore book and its parent bar are read from the records the node owns, never from the
+        // order the value bank happens to allocate its slots in.
+        std::int16_t parentSlot = -1;
+        definition.loreBook = resolve_book(storage, definition, parentSlot);
+        if (definition.loreBook && parentSlot >= 0) {
+            definition.parentValueIndex = bank_index(g_slotMaps.accountValue, parentSlot);
+            definition.parentCharacterValueIndex =
+                bank_index(g_slotMaps.characterValue, parentSlot);
         }
-        ++count;
+        books += definition.loreBook ? 1U : 0U;
+        ++storage.nodeCount;
     }
 
-    // Pass 2: assign each lore book's parent-record bar slot from the shipped allocation.
-    //
-    // The naive rule (parent = category slot + 1) holds only when the slot above a category was
-    // free at allocation time. Categories were handed out in contiguous runs, and a run's parent
-    // slots were deferred to immediately after the run, assigned in reverse category order: the
-    // run's first book takes the last parent slot, its last book takes the first. Verified against
-    // four independent in-game marker readings; see kNodeParentSlotStep in definition_index_table.h.
-    //
-    // Both scopes are walked. Most books are account-scoped; one reads its category from the
-    // character table, and its parent sits in that scope too.
-    {
-        struct BookSlot {
-            std::int32_t slot;
-            std::size_t row;
-        };
-        std::vector<BookSlot> accountBooks;
-        std::vector<BookSlot> characterBooks;
-        for (std::size_t row = 0; row < count; ++row) {
-            const auto& d = output[row];
-            if (!domain::lore_category(d.definitionIndex)) {
-                continue;
-            }
-            if (d.valueSlot >= 0) {
-                accountBooks.push_back({d.valueSlot, row});
-            }
-            if (d.characterValueSlot >= 0) {
-                characterBooks.push_back({d.characterValueSlot, row});
-            }
-        }
-
-        auto assignRuns = [&](std::vector<BookSlot>& books,
-                              const std::unordered_map<std::int16_t, std::uint16_t>& indexBySlot,
-                              auto memberSetter) {
-            std::sort(books.begin(), books.end(),
-                      [](const BookSlot& a, const BookSlot& b) { return a.slot < b.slot; });
-            std::size_t i = 0;
-            while (i < books.size()) {
-                std::size_t j = i;
-                while (j + 1 < books.size() && books[j + 1].slot == books[j].slot + 1) {
-                    ++j;
-                }
-                const std::size_t runLength = j - i + 1;
-                const std::int32_t runEnd = books[j].slot;
-                for (std::size_t k = 0; k < runLength; ++k) {
-                    // Reverse order within the run: book k gets the slot after the run counting
-                    // back from its end.
-                    const std::int32_t parentSlot =
-                        runEnd + static_cast<std::int32_t>(runLength - k);
-                    const auto found = indexBySlot.find(static_cast<std::int16_t>(parentSlot));
-                    if (found != indexBySlot.end()) {
-                        memberSetter(output[books[i + k].row], found->second);
-                    }
-                }
-                i = j + 1;
-            }
-        };
-
-        assignRuns(accountBooks,
-                   indexBySlot,
-                   [](domain::Definition& d, std::uint16_t index) {
-                       d.parentValueIndex = index;
-                   });
-        assignRuns(characterBooks,
-                   characterValueIndexBySlot,
-                   [](domain::Definition& d, std::uint16_t index) {
-                       d.parentCharacterValueIndex = index;
-                   });
-    }
-
-    report("ok", static_cast<unsigned long long>(driving));
-
-
-    return count != 0;
+    report("ok", static_cast<unsigned long long>(books));
+    return storage.nodeCount != 0;
 }
 
 } // namespace sunrise::client::content::items::packages

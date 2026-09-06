@@ -38,9 +38,9 @@ acquire(Scratch& scratch, const Path& path, const Header& header) noexcept {
         return nullptr;
     }
     const std::uint64_t key = table_key(header);
-    const auto found = scratch.tableIndex.find(key);
-    if (found != scratch.tableIndex.end() && found->second < scratch.tables.size()) {
-        TableSlot& held = scratch.tables[found->second];
+    for (std::size_t chained = slot_index_first(scratch.tableIndex, key); chained != kNoSlot;
+         chained = slot_index_next(scratch.tableIndex, chained)) {
+        TableSlot& held = scratch.tables[chained];
         if (held.occupied && held.key == key) {
             held.used = ++scratch.slotCounter;
             return &held;
@@ -50,12 +50,10 @@ acquire(Scratch& scratch, const Path& path, const Header& header) noexcept {
     if (scratch.tableCursor >= scratch.tables.size()) {
         scratch.tableCursor = 0;
     }
-    TableSlot* const target = &scratch.tables[scratch.tableCursor];
+    const std::size_t slot = scratch.tableCursor;
+    TableSlot* const target = &scratch.tables[slot];
     if (target->occupied) {
-        const auto prior = scratch.tableIndex.find(table_key_of(*target));
-        if (prior != scratch.tableIndex.end() && prior->second == scratch.tableCursor) {
-            scratch.tableIndex.erase(prior);
-        }
+        slot_index_erase(scratch.tableIndex, table_key_of(*target), slot);
     }
     ++scratch.tableCursor;
     const auto entryBytes = std::as_writable_bytes(
@@ -73,12 +71,7 @@ acquire(Scratch& scratch, const Path& path, const Header& header) noexcept {
     target->blockCount = header.blockCount;
     target->used = ++scratch.slotCounter;
     target->occupied = true;
-    try {
-        scratch.tableIndex[key] = static_cast<std::size_t>(target - scratch.tables.data());
-    } catch (...) {
-        target->occupied = false;
-        return nullptr;
-    }
+    slot_index_insert(scratch.tableIndex, key, slot);
     return target;
 }
 

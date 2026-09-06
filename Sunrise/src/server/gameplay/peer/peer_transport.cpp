@@ -108,12 +108,16 @@ void reset_transports(std::uint64_t sessionId) noexcept {
 
 /** Source retirement follows peer-to-identity lock order and waits for publication leases. */
 void invalidate_entity_identity_locked(const gp::entity_identity::Source& source) noexcept {
-    if (source.groupSessionId != 0) entity_identities::reset_source(source);
+    if (source.groupSessionId != 0) {
+        entity_identities::reset_source(source);
+    }
 }
 
 /** Retires only the captured source, never a replacement sharing its group. */
 void reset_entity_source(const gp::entity_identity::Source& source) noexcept {
-    if (source.groupSessionId == 0) return;
+    if (source.groupSessionId == 0) {
+        return;
+    }
     AcquireSRWLockShared(&g_lock);
     if (g_entityTransport.reset != nullptr) {
         g_entityTransport.reset(g_entityTransport.context, source);
@@ -515,21 +519,19 @@ bool open_external_common(
 
 /**
  * Advances matching views without replacing their entity source or baseline store.
- * @param
- * activity Exact admitted activity binding.
- * @param activityClientGeneration Owner of the
- * committed host operation.
+ * @param activity Exact admitted activity binding.
+ * @param activityClientGeneration Owner of the committed host operation.
  * @param expectedEpoch Previously authored epoch.
- * @param nextEpoch
- * Epoch carried by the committed operation.
+ * @param nextEpoch Epoch carried by the committed operation.
  * @return Number of views whose epoch advanced.
  */
 std::size_t commit_replication_epoch(const state::activity::SessionBinding& activity,
                                      std::uint64_t activityClientGeneration,
                                      std::uint8_t expectedEpoch,
                                      std::uint8_t nextEpoch) noexcept {
-    if (activity.sessionId == 0 || activity.createdRevision == 0 || activityClientGeneration == 0)
+    if (activity.sessionId == 0 || activity.createdRevision == 0 || activityClientGeneration == 0) {
         return 0;
+    }
     std::size_t advanced = 0;
     AcquireSRWLockExclusive(&g_lock);
     for (gp::PeerLink& peer : g_peers) {
@@ -537,13 +539,15 @@ std::size_t commit_replication_epoch(const state::activity::SessionBinding& acti
             || peer.activityBinding.sessionId != activity.sessionId
             || peer.activityBinding.createdRevision != activity.createdRevision
             || peer.commonReconciler.owner_generation() != activityClientGeneration
-            || !peer.commonReconciler.advance_host_epoch(expectedEpoch, nextEpoch))
+            || !peer.commonReconciler.advance_host_epoch(expectedEpoch, nextEpoch)) {
             continue;
+        }
         const auto source = entity_source(peer);
         const auto domain = peer.commonReconciler.allocation_domain();
-        if (g_entityTransport.advanceEpoch != nullptr)
+        if (g_entityTransport.advanceEpoch != nullptr) {
             g_entityTransport.advanceEpoch(
                 g_entityTransport.context, source, expectedEpoch, nextEpoch, domain);
+        }
         static_cast<void>(
             entity_identities::advance_epoch(source, expectedEpoch, nextEpoch, domain));
         peer.commonCommitted = false;
@@ -673,8 +677,9 @@ void drop_endpoint(const gp::Endpoint& endpoint) noexcept {
     }
     ReleaseSRWLockExclusive(&g_lock);
     reset_transports(sessions.data(), sessionCount);
-    for (std::size_t index = 0; index < sourceCount; ++index)
+    for (std::size_t index = 0; index < sourceCount; ++index) {
         reset_entity_source(sources[index]);
+    }
 }
 
 /** Drops every peer. */
@@ -696,8 +701,9 @@ void reset() noexcept {
     }
     ReleaseSRWLockExclusive(&g_lock);
     reset_transports(sessions.data(), sessionCount);
-    for (std::size_t index = 0; index < sourceCount; ++index)
+    for (std::size_t index = 0; index < sourceCount; ++index) {
         reset_entity_source(sources[index]);
+    }
 }
 
 } // namespace sunrise::server::gameplay::peer

@@ -12,10 +12,11 @@
 namespace sunrise::client::hooks::bootflow {
 namespace {
 
+using core::log::kLineCapacity;
+
 /**
- * The destination-hold predicate of the orbit setup step. Its prologue repeats across the image,
- * so the pattern runs on through the call and the flag test that follow. Every displacement is
- * wildcarded.
+ * The destination-hold predicate of the orbit setup step, whose prologue repeats across the image.
+ * The pattern runs on through the call and flag test that follow; every displacement is wildcarded.
  */
 constexpr std::string_view kHoldSignatureText =
     "48 89 5C 24 ? 57 48 83 EC ? 48 8B D9 E8 ? ? ? ? 80 3D ? ? ? ? 00 48 8B F8 75 ?";
@@ -36,7 +37,7 @@ void report(const char* result) noexcept {
     if (g_reported.exchange(true, std::memory_order_relaxed)) {
         return;
     }
-    std::array<char, 96> line{};
+    std::array<char, kLineCapacity> line{};
     const int written = std::snprintf(
         line.data(), line.size(), "ev=bootflow stage=orbit_handoff result=%s", result);
     if (written > 0) {
@@ -67,7 +68,7 @@ __declspec(noinline) bool __fastcall destination_hold(void* stepCtx) noexcept {
 /**
  * Stages the orbit handoff release.
  * @param spec Receives the target and replacement.
- * @return True when the target is found and the fix wants attaching.
+ * @return staged when the target is found, unavailable on a miss.
  */
 StageResult stage_orbit_handoff(hooking::detour::Spec& spec) noexcept {
     if (g_handle.attached) {

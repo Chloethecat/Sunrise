@@ -18,10 +18,10 @@ namespace {
 
 /** FNV-1 hash of the investment-globals bootstrap name, so the name itself is not shipped. */
 constexpr std::uint32_t kInvestmentGlobalsNameHash = 0x6F7125CBU;
-/** The bootstrap name is not unique, so every match is collected. */
-// Keep this identical to the package extractor. The installed catalogue currently has more than
-// eight entries with this shared name; treating a truncated lookup as total failure made live
-// socket routing permanently defer even though the correct candidate was present.
+/**
+ * The bootstrap name is not unique, so every match is collected.
+ * A truncated lookup is not a failure: every copied candidate is still worth validating.
+ */
 constexpr std::size_t kBootstrapMatchCapacity = 64;
 /** One native resolver prefix is enough to recover all descriptor field offsets. */
 constexpr std::size_t kResolverDiagnosticBytes = 128;
@@ -65,7 +65,7 @@ void report_bytes(const char* stage,
     }
     std::size_t length = (std::min)(static_cast<std::size_t>(prefix), line.size() - 1U);
     static_cast<void>(core::log::append_hex(line, length, bytes));
-    core::log::write(core::log::Channel::client, core::log::Level::warn, {line.data(), length});
+    core::log::write(core::log::Channel::client, core::log::Level::debug, {line.data(), length});
 }
 
 /** Writes one candidate descriptor and its package identity as a diagnostic line. */
@@ -87,13 +87,14 @@ void report_descriptor(unsigned depth,
     }
     std::size_t length = (std::min)(static_cast<std::size_t>(prefix), line.size() - 1U);
     static_cast<void>(core::log::append_hex(line, length, bytes));
-    core::log::write(core::log::Channel::client, core::log::Level::warn, {line.data(), length});
+    core::log::write(core::log::Channel::client, core::log::Level::debug, {line.data(), length});
 }
 
 /** Captures the native resolver and every plausible descriptor base once, without mutation. */
 void report_layout_diagnostics(const targets::game::content::Targets& targets,
                                std::span<const state::content::Definition> candidates) noexcept {
-    if (g_diagnosticsReported.exchange(true, std::memory_order_relaxed)) {
+    if (!core::log::accepts(core::log::Channel::client, core::log::Level::debug)
+        || g_diagnosticsReported.exchange(true, std::memory_order_relaxed)) {
         return;
     }
     std::array<std::byte, kResolverDiagnosticBytes> resolver{};
@@ -125,7 +126,7 @@ void report_layout_diagnostics(const targets::game::content::Targets& targets,
     if (written > 0) {
         core::log::write(
             core::log::Channel::client,
-            core::log::Level::warn,
+            core::log::Level::debug,
             {line.data(), (std::min)(static_cast<std::size_t>(written), line.size() - 1U)});
     }
 
@@ -163,9 +164,6 @@ bool resolve_source(Source& source) noexcept {
 
     std::array<state::content::Definition, kBootstrapMatchCapacity> candidates{};
     std::size_t count = 0;
-    // A shared bootstrap name may have more installed matches than this bounded scratch array.
-    // Truncation is not a lookup failure: every copied candidate is still safe to validate, and
-    // rejecting the whole set is what kept socket-category routing permanently deferred.
     if (!state::content::lookup_hash(kInvestmentGlobalsNameHash, candidates, count) && count == 0) {
         return false;
     }

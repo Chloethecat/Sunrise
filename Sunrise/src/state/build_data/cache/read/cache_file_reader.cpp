@@ -47,7 +47,14 @@ namespace {
            && counts.vendorSaleRows <= output.vendorSaleRows.size()
            && counts.vendorInstalledRows <= output.vendorInstalledRows.size()
            && counts.positionProfiles <= output.positionProfiles.size()
-           && counts.objectTypes <= output.objectTypes.size();
+           && counts.objectTypes <= output.objectTypes.size()
+           && counts.recordObjectives <= output.recordObjectives.size()
+           && counts.recordIntervals <= output.recordIntervals.size()
+           && counts.recordRewards <= output.recordRewards.size()
+           && counts.progressionSteps <= output.progressionSteps.size()
+           && counts.seasonPassRewards <= output.seasonPassRewards.size()
+           && counts.seasonPassPackages <= output.seasonPassPackages.size()
+           && counts.bounties <= output.bounties.size();
 }
 
 /** @return The header's row counts, as platform sizes. */
@@ -82,15 +89,18 @@ namespace {
         header.vendorInstalledRowCount,
         header.positionProfileCount,
         header.objectTypeCount,
+        header.recordObjectiveCount,
+        header.recordIntervalCount,
+        header.recordRewardCount,
+        header.progressionStepCount,
+        header.seasonPassRewardCount,
+        header.seasonPassPackageCount,
+        header.bountyCount,
     };
 }
 
 /**
- * A cache written by any other format is out of date, so a version bump needs no edit here.
- * Listing them one by one left a bumped version unknown, and a valid cache read as corrupt.
- * A newer file is another build's cache rather than a damaged one, so it rebuilds the same way.
- * Reading it as corrupt instead failed the whole boot until the file was deleted by hand, which
- * is what downgrading the module did.
+ * Any other format is stale, higher or lower, so it rebuilds instead of failing the boot.
  * @param version Cache prefix version.
  * @return True when the cache was not written by the current format.
  */

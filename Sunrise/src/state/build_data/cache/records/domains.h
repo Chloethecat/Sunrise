@@ -7,6 +7,7 @@
 #include "../../../gameplay/external/entity_object_types.h"
 #include "../../../gameplay/external/entity_position_profiles.h"
 #include "../../abilities/definition.h"
+#include "../../bounties/definition.h"
 #include "../../collectibles/collectible_catalog.h"
 #include "../../hash_names/definition.h"
 #include "../../inventory/buckets/definition.h"
@@ -19,6 +20,7 @@
 #include "../../progressions/definition.h"
 #include "../../records/definition.h"
 #include "../../scenarios/definition.h"
+#include "../../season_pass/definition.h"
 #include "../../sobjects/sobject_catalog.h"
 #include "../../socket_entry_lists/definition.h"
 #include "../../spawn_sets/definition.h"
@@ -58,6 +60,13 @@ struct DomainCounts {
     std::size_t vendorInstalledRows{};
     std::size_t positionProfiles{};
     std::size_t objectTypes{};
+    std::size_t recordObjectives{};
+    std::size_t recordIntervals{};
+    std::size_t recordRewards{};
+    std::size_t progressionSteps{};
+    std::size_t seasonPassRewards{};
+    std::size_t seasonPassPackages{};
+    std::size_t bounties{};
 };
 
 /** Fixed caller storage used while decoding the cache domains. */
@@ -94,6 +103,13 @@ struct MutableDomains {
     std::span<gameplay::entity_position_profiles::Row> positionProfiles;
     gameplay::entity_position_profiles::Fingerprint* positionFingerprint{};
     std::span<gameplay::entity_object_types::Row> objectTypes;
+    std::span<build_data::records::Objective> recordObjectives;
+    std::span<build_data::records::Interval> recordIntervals;
+    std::span<build_data::records::Reward> recordRewards;
+    std::span<progressions::Step> progressionSteps;
+    std::span<season_pass::Reward> seasonPassRewards;
+    std::span<season_pass::Package> seasonPassPackages;
+    std::span<bounties::Definition> bounties;
 };
 
 /** Read-only complete views used for the checks and for cache encoding. */
@@ -129,6 +145,13 @@ struct Domains {
     std::span<const gameplay::entity_position_profiles::Row> positionProfiles;
     gameplay::entity_position_profiles::Fingerprint positionFingerprint{};
     std::span<const gameplay::entity_object_types::Row> objectTypes;
+    std::span<const build_data::records::Objective> recordObjectives;
+    std::span<const build_data::records::Interval> recordIntervals;
+    std::span<const build_data::records::Reward> recordRewards;
+    std::span<const progressions::Step> progressionSteps;
+    std::span<const season_pass::Reward> seasonPassRewards;
+    std::span<const season_pass::Package> seasonPassPackages;
+    std::span<const bounties::Definition> bounties;
 };
 
 } // namespace sunrise::state::build_data::cache::records

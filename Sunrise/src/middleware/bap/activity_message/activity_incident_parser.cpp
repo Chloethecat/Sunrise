@@ -71,7 +71,7 @@ Verdict validate(std::span<const std::byte> payload, Incident& parsed) noexcept 
         if (!reader.read(kTargetWidth, field)) {
             return Verdict::truncated;
         }
-        parsed.extraTargets[index] = static_cast<std::uint16_t>(field);
+        parsed.extraTargets[index] = static_cast<std::uint32_t>(field);
         if (!target_allowed(parsed.extraTargets[index], verdict)) {
             return verdict;
         }

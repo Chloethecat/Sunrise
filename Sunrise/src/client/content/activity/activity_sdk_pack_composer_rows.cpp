@@ -756,6 +756,7 @@ translate_native_rows(const Inputs& inputs, const detail::StringResolver& linker
 
 } // namespace
 
+/** Translates topology, policy and native rows into pack storage. @return False on failure. */
 bool detail::translate_rows(const Inputs& inputs,
                             const PreparedRanges& ranges,
                             const StringResolver& strings,

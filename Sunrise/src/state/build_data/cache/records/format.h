@@ -21,6 +21,7 @@
 #include "../../progressions/definition.h"
 #include "../../records/definition.h"
 #include "../../scenarios/definition.h"
+#include "../../season_pass/definition.h"
 #include "../../sobjects/sobject_catalog.h"
 #include "../../spawn_sets/definition.h"
 #include "../../vendors/definition.h"
@@ -30,15 +31,11 @@ namespace sunrise::state::build_data::cache::records {
 /** These 8 ASCII bytes mark a Sunrise build-data file. */
 inline constexpr std::array<char, 8> kCacheMagic{'S', 'U', 'N', 'R', 'I', 'S', 'E', 'B'};
 /**
- * Current build-data cache format. An older cache is rebuilt rather than read.
- * Bump it when a stored shape changes, and when the extraction filling it changes what it writes.
- * A cached row survives a code change, so a corrected walk keeps publishing the old rows.
- *
- * 48: nodes and SObjects joined the unified cache, replacing their incomplete sidecar lifecycle.
- * 60: entity position profiles and object types joined the cache, with the position fingerprint
- * in the header.
+ * Current build-data cache format. Any other version on disk is rebuilt rather than read.
+ * Bump it when a stored shape changes or when the extraction filling it changes what it writes,
+ * because a cached row survives a code change and a corrected walk keeps publishing old rows.
  */
-inline constexpr std::uint32_t kCacheFormatVersion = 60;
+inline constexpr std::uint32_t kCacheFormatVersion = 62;
 /** Signed -1 on disk means there is no equipment slot. */
 inline constexpr std::int8_t kAbsentEquipmentSlot = -1;
 /** The standard 64-bit FNV-1a offset basis starts the payload checksum. */
@@ -104,6 +101,13 @@ struct Header {
     std::uint32_t vendorInstalledRowCount{};
     std::uint32_t positionProfileCount{};
     std::uint32_t objectTypeCount{};
+    std::uint32_t recordObjectiveCount{};
+    std::uint32_t recordIntervalCount{};
+    std::uint32_t recordRewardCount{};
+    std::uint32_t progressionStepCount{};
+    std::uint32_t seasonPassRewardCount{};
+    std::uint32_t seasonPassPackageCount{};
+    std::uint32_t bountyCount{};
     gameplay::entity_position_profiles::Fingerprint positionFingerprint{};
     InvestmentConstants constants{};
     std::uint64_t payloadChecksum{};
@@ -169,6 +173,8 @@ struct CollectibleRecord {
     std::uint16_t itemDefinitionIndex{collectibles::kUnavailableItemDefinitionIndex};
     std::uint16_t materialRequirementSetIndex{
         collectibles::kUnavailableMaterialRequirementSetIndex};
+    std::uint16_t acquiredFlagSlot{collectibles::kUnavailableFlagSlot};
+    std::uint16_t acquiredFlagIndex{collectibles::kUnavailableFlagIndex};
     std::uint8_t materialRequirementCount{};
     /** Must be zero, so unused bytes have one canonical representation. */
     std::uint8_t reserved{};
@@ -246,8 +252,7 @@ struct ExoticCatalystRecord {
     std::uint16_t acquisitionDefinitionIndex{};
     std::array<std::uint16_t, items::catalysts::kCompletionFlagCapacity>
         completionFlagDefinitionIndices{};
-    std::array<std::uint16_t, items::catalysts::kCompletionValueCapacity>
-        completionValueIndices{};
+    std::array<std::uint16_t, items::catalysts::kCompletionValueCapacity> completionValueIndices{};
     std::uint16_t objectiveDefinitionIndex{items::catalysts::kUnavailableObjectiveIndex};
     std::uint8_t socketLane{};
     std::uint8_t availability{};
@@ -283,21 +288,51 @@ struct AbilityBucketRecord {
     std::array<std::uint32_t, abilities::kOverflowCapacity> overflow{};
 };
 
-/** Disk form of one progression definition and the object array it routes to. */
+/** Disk form of one progression definition, the object array it routes to, and its step range. */
 struct ProgressionRecord {
     std::uint16_t definitionIndex{};
+    std::uint16_t stepOffset{};
+    std::uint8_t stepCount{};
     std::uint8_t scope{};
-    /** Must be zero, so the packed progression row always matches. */
-    std::uint8_t reserved{};
 };
 
-/** Disk form of one record and the account flag bank row its claim sets.
- *
- * Carries every runtime field. It did not always: loreRow, categoryValueIndex and definitionHash
- * were added to records::Definition after this row was laid out, and the positional decode then
- * filled completionFlagIndex from the disk scoreValue - claims resolved to the score (50/100) as
- * their flag, which looked like claiming doing nothing at all. The row is now the full shape and
- * the codec assigns by name; kCacheFormatVersion bump rejects rows written before that.
+/** Disk form of one progression rank step. */
+struct ProgressionStepRecord {
+    std::int32_t cost{};
+};
+
+/** Disk form of one season pass reward row. */
+struct SeasonPassRewardRecord {
+    std::uint32_t itemHash{};
+    std::uint32_t quantity{};
+    std::uint16_t itemIndex{};
+    std::uint16_t claimFlagIndex{season_pass::kUnavailableFlagIndex};
+    std::uint8_t requiredRank{};
+    /** Must be zero, so the packed reward row always matches. */
+    std::array<std::uint8_t, 3> reserved{};
+};
+
+/** Disk form of one season pass wrapper item and the set it opens into. */
+struct SeasonPassPackageRecord {
+    std::uint32_t definitionHash{};
+    std::array<std::uint32_t, season_pass::kPackageItemCapacity> items{};
+    std::uint8_t itemCount{};
+    /** Must be zero, so the packed wrapper row always matches. */
+    std::array<std::uint8_t, 3> reserved{};
+};
+
+/** Disk form of one repeatable bounty and the item-type its pool is keyed by. */
+struct BountyRecord {
+    std::uint32_t itemTypeBank{};
+    std::uint32_t itemTypeHash{};
+    std::uint16_t itemIndex{};
+    /** Must be zero, so the packed bounty row always matches. */
+    std::uint16_t reserved{};
+};
+
+/**
+ * Disk form of one record and the account flag bank row its claim sets.
+ * Carries every field of records::Definition; adding one there needs a format bump here.
  */
 struct RecordDefinitionRecord {
     std::uint16_t definitionIndex{};
@@ -306,8 +341,43 @@ struct RecordDefinitionRecord {
     std::uint16_t loreRow{};
     std::uint16_t scoreValue{};
     std::uint16_t categoryValueIndex{};
+    std::uint16_t objectiveValueIndex{};
+    std::uint16_t objectiveOffset{};
+    std::uint16_t intervalOffset{};
+    std::uint16_t rewardOffset{};
+    std::uint16_t redeemedCountValueIndex{};
+    std::uint8_t objectiveCount{};
+    std::uint8_t intervalCount{};
+    std::uint8_t rewardCount{};
     std::uint8_t hasTitle{};
     std::uint8_t reserved{};
+};
+
+/** Disk form of one record objective row. */
+struct RecordObjectiveRecord {
+    std::int32_t completionValue{};
+    std::uint16_t valueIndex{};
+    std::uint16_t sourceValueIndex{};
+    std::int16_t sourceValueSlot{};
+    /** Must be zero, so the packed objective row always matches. */
+    std::uint16_t reserved{};
+};
+
+/** Disk form of one record interval step. */
+struct RecordIntervalRecord {
+    std::int32_t completionValue{};
+    std::uint32_t score{};
+    std::uint16_t itemIndex{};
+    /** Must be zero, so the packed interval row always matches. */
+    std::uint16_t reserved{};
+};
+
+/** Disk form of one record reward row. */
+struct RecordRewardRecord {
+    std::int32_t quantity{};
+    std::uint16_t itemIndex{};
+    /** Must be zero, so the packed reward row always matches. */
+    std::uint16_t reserved{};
 };
 
 /** Disk form of one presentation node and its owned record rows. */
@@ -321,6 +391,7 @@ struct NodeDefinitionRecord {
     std::uint16_t visibilityFlagIndex{nodes::kUnavailableFlagIndex};
     std::uint16_t visibilityCharacterFlagIndex{nodes::kUnavailableFlagIndex};
     std::uint16_t characterValueIndex{nodes::kUnavailableValueIndex};
+    std::uint8_t loreBook{};
     std::uint8_t childCount{};
     std::array<std::uint16_t, nodes::kChildCapacity> children{};
 };
@@ -474,31 +545,20 @@ struct VendorDefinitionRecord {
     std::uint16_t thirdCount{};
 };
 
-/** Disk form of one vendor sale row. Unnamed fields keep their raw value. */
+/** Disk form of one vendor sale row. */
 struct VendorSaleRowRecord {
-    std::uint16_t vendorIndex{};
-    std::uint16_t rowIndex{};
+    std::int32_t categoryIndex{};
+    std::uint32_t costQuantity{};
     std::uint16_t itemIndex{};
     std::uint16_t secondaryItemIndex{};
-    std::int32_t categoryIndex{};
-    std::uint32_t raw104{};
-    std::uint32_t raw108{};
-    std::int32_t raw172{};
-    std::uint32_t expressionCount8{};
-    std::uint32_t nestedRecordCount{};
-    std::uint32_t expressionCount120{};
-    std::uint32_t count136{};
-    std::uint32_t expressionCount160{};
-    std::uint8_t featureBranch{};
+    std::uint16_t costItemIndex{};
     /** Must be zero, so the packed sale row always matches. */
-    std::array<std::uint8_t, 3> reserved{};
+    std::uint16_t reserved{};
 };
 
-/** Disk form of one vendor installed row, kept whole. */
+/** Disk form of one vendor category row. */
 struct VendorInstalledRowRecord {
-    std::uint16_t vendorIndex{};
-    std::uint16_t rowIndex{};
-    std::array<std::uint8_t, vendors::kInstalledRowStride> raw{};
+    std::uint32_t definitionHash{};
 };
 
 /** Disk form of one roster group object and its slots. */
@@ -518,7 +578,7 @@ static_assert(sizeof(Prefix) == kCacheMagic.size() + sizeof(std::uint32_t));
 static_assert(sizeof(InvestmentConstants)
               == constants::kCharacterStatRowCount + 3 * sizeof(std::uint8_t));
 static_assert(sizeof(Header)
-              == kCacheMagic.size() + 32 * sizeof(std::uint32_t) + 2 * sizeof(std::uint64_t)
+              == kCacheMagic.size() + 39 * sizeof(std::uint32_t) + 2 * sizeof(std::uint64_t)
                      + sizeof(InvestmentConstants)
                      + sizeof(gameplay::entity_position_profiles::Fingerprint));
 static_assert(sizeof(SpawnPointRecord)
@@ -527,10 +587,8 @@ static_assert(sizeof(SpawnPointRecord)
 static_assert(sizeof(VendorIndexRecord) == 2 * sizeof(std::uint32_t) + 2 * sizeof(std::uint16_t));
 static_assert(sizeof(VendorDefinitionRecord)
               == 14 * sizeof(std::uint32_t) + 4 * sizeof(std::uint16_t));
-static_assert(sizeof(VendorSaleRowRecord)
-              == 4 * sizeof(std::uint16_t) + 9 * sizeof(std::uint32_t) + 4 * sizeof(std::uint8_t));
-static_assert(sizeof(VendorInstalledRowRecord)
-              == 2 * sizeof(std::uint16_t) + vendors::kInstalledRowStride);
+static_assert(sizeof(VendorSaleRowRecord) == 4 * sizeof(std::uint16_t) + 2 * sizeof(std::uint32_t));
+static_assert(sizeof(VendorInstalledRowRecord) == sizeof(std::uint32_t));
 static_assert(sizeof(HashNameRecord)
               == hash_names::kNameLength + sizeof(std::uint32_t) + 4 * sizeof(std::uint8_t));
 static_assert(sizeof(ScenarioRecord)
@@ -555,12 +613,22 @@ static_assert(sizeof(RosterGroupRecord)
               == 2 * sizeof(std::uint32_t) + sizeof(std::uint16_t)
                      + 2 * scenarios::kRosterSlotCapacity * sizeof(std::uint8_t)
                      + scenarios::kRosterSlotCapacity * sizeof(std::uint16_t));
-static_assert(sizeof(ProgressionRecord) == sizeof(std::uint16_t) + 2 * sizeof(std::uint8_t));
+static_assert(sizeof(ProgressionRecord) == 2 * sizeof(std::uint16_t) + 2 * sizeof(std::uint8_t));
+static_assert(sizeof(ProgressionStepRecord) == sizeof(std::int32_t));
+static_assert(sizeof(SeasonPassRewardRecord)
+              == 2 * sizeof(std::uint32_t) + 2 * sizeof(std::uint16_t) + 4 * sizeof(std::uint8_t));
+static_assert(sizeof(SeasonPassPackageRecord)
+              == (1 + season_pass::kPackageItemCapacity) * sizeof(std::uint32_t)
+                     + 4 * sizeof(std::uint8_t));
+static_assert(sizeof(BountyRecord) == 2 * sizeof(std::uint32_t) + 2 * sizeof(std::uint16_t));
 static_assert(sizeof(RecordDefinitionRecord)
-              == sizeof(std::uint16_t) + sizeof(std::uint32_t) + 4 * sizeof(std::uint16_t)
-                     + 2 * sizeof(std::uint8_t));
+              == sizeof(std::uint32_t) + 10 * sizeof(std::uint16_t) + 5 * sizeof(std::uint8_t));
+static_assert(sizeof(RecordObjectiveRecord) == sizeof(std::int32_t) + 4 * sizeof(std::uint16_t));
+static_assert(sizeof(RecordIntervalRecord)
+              == sizeof(std::int32_t) + sizeof(std::uint32_t) + 2 * sizeof(std::uint16_t));
+static_assert(sizeof(RecordRewardRecord) == sizeof(std::int32_t) + 2 * sizeof(std::uint16_t));
 static_assert(sizeof(NodeDefinitionRecord)
-              == 9 * sizeof(std::uint16_t) + sizeof(std::uint8_t)
+              == 9 * sizeof(std::uint16_t) + 2 * sizeof(std::uint8_t)
                      + nodes::kChildCapacity * sizeof(std::uint16_t));
 static_assert(sizeof(SObjectDefinitionRecord) == 2 * sizeof(std::uint32_t) + sizeof(std::int32_t));
 static_assert(sizeof(AbilityBucketRecord)
@@ -577,7 +645,7 @@ static_assert(sizeof(ItemRecord)
 static_assert(sizeof(MaterialRequirementRecord)
               == sizeof(std::uint32_t) + 2 * sizeof(std::uint16_t) + 2 * sizeof(std::uint8_t));
 static_assert(sizeof(CollectibleRecord)
-              == 2 * sizeof(std::uint32_t) + 3 * sizeof(std::uint16_t) + 2 * sizeof(std::uint8_t)
+              == 2 * sizeof(std::uint32_t) + 5 * sizeof(std::uint16_t) + 2 * sizeof(std::uint8_t)
                      + collectibles::kMaterialRequirementCapacity
                            * sizeof(MaterialRequirementRecord));
 static_assert(sizeof(MaterialRequirementSetRecord)
@@ -597,8 +665,7 @@ static_assert(sizeof(SocketPlugRuleRecord)
 static_assert(sizeof(SocketPlugPoolRecord) == 2 * sizeof(std::uint32_t));
 static_assert(sizeof(SocketPlugMemberRecord) == sizeof(std::uint16_t));
 static_assert(sizeof(ExoticCatalystRecord)
-              == 6 * sizeof(std::uint32_t) + 14 * sizeof(std::uint16_t)
-                     + 4 * sizeof(std::uint8_t));
+              == 6 * sizeof(std::uint32_t) + 14 * sizeof(std::uint16_t) + 4 * sizeof(std::uint8_t));
 static_assert(sizeof(InventoryBucketRecord)
               == 4 * sizeof(std::uint8_t) + 2 * sizeof(std::uint16_t));
 static_assert(sizeof(SocketEntryListRecord)

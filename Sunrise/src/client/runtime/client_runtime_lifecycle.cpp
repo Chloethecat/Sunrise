@@ -1,5 +1,6 @@
 #include "../../core/logging/log.h"
 #include "../../core/settings/settings.h"
+#include "../../server/bap/runtime.h"
 #include "../content/activity/activity_sdk_generation_worker.h"
 #include "../content/activity/scriptable_catalog_worker.h"
 #include "../content/investment/worker.h"
@@ -40,8 +41,6 @@ bool initialize(void* module) noexcept {
         core::settings::get().activitySdkGeneration;
     content::activity::sdk_generation::initialize(module,
                                                   {generation.enabled, generation.luaDeclarations});
-    // Kept for activation, which resolves the artifact directory from Sunrise's own module.
-    runtime::g_sunriseModule = module;
     // Loaded before the pages register, so each page draws saved values on its first frame.
     movement::initialize(module);
     player::initialize(module);
@@ -124,6 +123,7 @@ bool shutdown() noexcept {
     }
     content::activity::sdk_generation::reset();
     content::activity::scriptables::reset();
+    server::bap::unregister_client_investment_consumers();
     content::investment::worker::reset();
     (void)hooks::async_io::uninstall();
     targets::steam::clear();

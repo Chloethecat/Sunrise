@@ -7,6 +7,7 @@
 namespace sunrise::client::content::activity::scriptables::internal {
 namespace {
 
+// Client references: the package class id and the fixed row stride.
 constexpr std::uint32_t kClientReferenceClass = 0x80809C42U;
 constexpr std::size_t kClientReferenceSize = 16;
 

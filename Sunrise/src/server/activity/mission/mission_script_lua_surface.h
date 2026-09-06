@@ -27,7 +27,6 @@ namespace sunrise::server::activity::mission::lua_vm::detail {
     }
     switch (route.ingressClass) {
     case communication::IngressClass::nativeMetadataOnly:
-        return "message_event";
     case communication::IngressClass::nativeParsed:
         return "message_event";
     case communication::IngressClass::typedOnly:

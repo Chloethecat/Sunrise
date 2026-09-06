@@ -2,9 +2,9 @@
 
 #include <memory>
 #include <span>
-#include <string>
 #include <string_view>
 
+#include "../../../core/filesystem/path.h"
 #include "catalog_manifest.h"
 
 namespace sunrise::state::activity_sdk::generated_world::store {
@@ -31,7 +31,7 @@ enum class RecordLoadStatus : std::uint8_t {
 [[nodiscard]] bool shard_path(std::wstring_view scenarioDirectory,
                               std::uint32_t scenarioTag,
                               const Digest& payloadSha256,
-                              std::wstring& output) noexcept;
+                              core::path::Buffer& output) noexcept;
 
 /**
  * Reopens one exact manifest record without publishing it through another State namespace.

@@ -12,20 +12,25 @@ bool g_confirmed{};
 } // namespace
 /** Only sorted, unique, reciprocal package records enter the role catalogue. */
 bool validate(std::span<const Row> rows) noexcept {
-    if (rows.empty() || rows.size() > kMaximumRows) return false;
+    if (rows.empty() || rows.size() > kMaximumRows) {
+        return false;
+    }
     std::uint32_t previous = 0;
     for (const auto& row : rows) {
         if (!row.rsatTag || row.rsatTag == 0xFFFFFFFFU || !row.definitionTag
             || row.definitionTag == 0xFFFFFFFFU || row.objectType > kMaximumObjectType
-            || row.rsatTag <= previous)
+            || row.rsatTag <= previous) {
             return false;
+        }
         previous = row.rsatTag;
     }
     return true;
 }
 /** Package extraction publishes a complete immutable catalogue. */
 bool publish(Rows rows, const Fingerprint& fingerprint) noexcept {
-    if (!validate(rows)) return false;
+    if (!validate(rows)) {
+        return false;
+    }
     AcquireSRWLockExclusive(&g_lock);
     g_rows.swap(rows);
     g_fingerprint = fingerprint;
@@ -35,7 +40,9 @@ bool publish(Rows rows, const Fingerprint& fingerprint) noexcept {
 }
 /** Shared-cache rows remain hidden until the installed manifest is confirmed. */
 bool restore(std::span<const Row> rows, const Fingerprint& fingerprint) noexcept {
-    if (!validate(rows)) return false;
+    if (!validate(rows)) {
+        return false;
+    }
     try {
         Rows copy(rows.begin(), rows.end());
         AcquireSRWLockExclusive(&g_lock);
@@ -89,7 +96,9 @@ bool lookup(std::uint32_t rsat, Row& output) noexcept {
             return row.rsatTag < tag;
         });
     const bool valid = g_confirmed && found != g_rows.end() && found->rsatTag == rsat;
-    if (valid) output = *found;
+    if (valid) {
+        output = *found;
+    }
     ReleaseSRWLockShared(&g_lock);
     return valid;
 }
@@ -97,15 +106,19 @@ bool lookup(std::uint32_t rsat, Row& output) noexcept {
 bool enrich_snapshot(std::span<entity_identity::Identity> rows) noexcept {
     AcquireSRWLockShared(&g_lock);
     bool valid = true;
-    if (g_confirmed)
+    if (g_confirmed) {
         for (auto& row : rows) {
-            if (!row.known || !row.present || row.type != 0 || !row.metadata.hasRsat) continue;
+            if (!row.known || !row.present || row.type != 0 || !row.metadata.hasRsat) {
+                continue;
+            }
             const auto found = std::lower_bound(
                 g_rows.begin(),
                 g_rows.end(),
                 row.metadata.rsatTag,
                 [](const Row& candidate, auto tag) { return candidate.rsatTag < tag; });
-            if (found == g_rows.end() || found->rsatTag != row.metadata.rsatTag) continue;
+            if (found == g_rows.end() || found->rsatTag != row.metadata.rsatTag) {
+                continue;
+            }
             if (row.metadata.hasObjectType && row.metadata.objectType != found->objectType) {
                 valid = false;
                 break;
@@ -113,6 +126,7 @@ bool enrich_snapshot(std::span<entity_identity::Identity> rows) noexcept {
             row.metadata.objectType = found->objectType;
             row.metadata.hasObjectType = true;
         }
+    }
     ReleaseSRWLockShared(&g_lock);
     return valid;
 }

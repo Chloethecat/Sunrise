@@ -7,6 +7,7 @@
 namespace sunrise::client::content::activity::sdk_generation::dialogue_group_index {
 namespace {
 
+// One dialogue group row is 16 bytes in the blob.
 constexpr std::size_t kGroupStride = 16U;
 
 template <typename Value>
@@ -20,6 +21,7 @@ read_value(std::span<const std::byte> bytes, std::size_t offset, Value& output) 
     return true;
 }
 
+/** Applies one signed blob-relative offset. @return False when the result leaves the blob. */
 [[nodiscard]] bool
 add_relative(std::size_t member, std::int64_t relative, std::size_t& target) noexcept {
     if (relative >= 0) {
@@ -71,13 +73,13 @@ bool build(std::span<const std::byte> bytes,
                 }
             }
         }
-        std::sort(output.begin(), output.end(), [](const Span& left, const Span& right) {
-            return left.definitionHash < right.definitionHash;
+        std::sort(output.begin(), output.end(), [](const Span& first, const Span& second) {
+            return first.definitionHash < second.definitionHash;
         });
         if (std::adjacent_find(output.begin(),
                                output.end(),
-                               [](const Span& left, const Span& right) {
-                                   return left.definitionHash == right.definitionHash;
+                               [](const Span& first, const Span& second) {
+                                   return first.definitionHash == second.definitionHash;
                                })
             != output.end()) {
             output.clear();

@@ -32,29 +32,34 @@ using patterns::signature_length;
 constexpr std::string_view kApplyGateText =
     "48 89 5C 24 ? 57 48 83 EC 30 48 8B DA 48 8B F9 E8 ? ? ? ? 84 C0 75 ? 48 8B 05 ? ? ? ? 48 8D "
     "4C 24 ? 4C 8B 4B";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kApplyGate = signature<signature_length(kApplyGateText)>(kApplyGateText);
 
 /** The body copy: 224 bytes to component `+384`, then the generation and start gates. */
 constexpr std::string_view kBodyApplyText =
     "40 53 48 83 EC 20 0F 10 02 44 8B 81 90 01 00 00 48 8D 81 80 01 00 00 48 8B D9 0F 11 00";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kBodyApply = signature<signature_length(kBodyApplyText)>(kBodyApplyText);
 
 /** The per-frame update. Once the armed gate opens it re-applies the retained Auth body. */
 constexpr std::string_view kUpdateText =
     "40 53 48 83 EC 50 48 8B 05 ? ? ? ? 48 33 C4 48 89 44 24 ? 48 8B D9 E8 ? ? ? ? 84 C0 0F 85 "
     "? ? ? ? 48 89 74 24 ? 48 89 7C 24 ? 38";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kUpdate = signature<signature_length(kUpdateText)>(kUpdateText);
 
 /** The start: writes the participant list, starts by content id, posts the outcome event. */
 constexpr std::string_view kStartText =
     "48 89 5C 24 ? 48 89 74 24 ? 57 48 83 EC 20 44 8B 01 48 8B F9 48 8B 1D ? ? ? ? 41 8B C0 C1 "
     "F8 0D 41 81 E0 FF 1F 00 00";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kStart = signature<signature_length(kStartText)>(kStartText);
 
 /** The armed predicate: an active travel-cinematic object. Called directly, never detoured. */
 constexpr std::string_view kArmedText =
     "48 83 EC 28 E8 ? ? ? ? 48 8D 54 24 ? 48 8D 88 00 02 00 00 E8 ? ? ? ? 83 38 FF 0F 95 C0 48 "
     "83 C4 28 C3";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kArmed = signature<signature_length(kArmedText)>(kArmedText);
 
 /** Auth body generation; the copy latches it at component `+400`. */

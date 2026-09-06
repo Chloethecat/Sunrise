@@ -6,12 +6,10 @@
 #include <cstdio>
 
 #include "../../../core/logging/log.h"
-#include "../../../middleware/datagen/definitions.h"
 #include "../../../middleware/encoding/byte_order.h"
 #include "../../../middleware/secure_channel/runtime.h"
 #include "../../../state/activity/bubble_authority/runtime.h"
 #include "../../../state/runtime/runtime.h"
-#include "../../../client/hooks/network/investment/investment_derived_rebuild.h"
 #include "../../activity/host_runtime.h"
 #include "../../gameplay/peer/peer_transport.h"
 #include "../../gameplay/squad_entity_retirement.h"
@@ -28,7 +26,10 @@
 namespace sunrise::server::bap::encrypted {
 namespace {
 
-/** Records decoded service traffic while reconstructing the investment-signin contract. */
+/** Delay before the Family-4 copy of an artifact change, so its Family-5 refresh lands first. */
+constexpr std::uint64_t kArtifactFamily4RefreshDelayMs = 100;
+
+/** Traces one decoded service frame and the reply it produced. */
 void report_service_traffic(const middleware::bap::RequestFrame& frame,
                             const ServiceRoute& route,
                             std::size_t responseBodySize) noexcept {
@@ -56,59 +57,6 @@ void report_service_traffic(const middleware::bap::RequestFrame& frame,
  */
 void clear_prefix(std::span<std::byte> buffer, std::size_t size) noexcept {
     SecureZeroMemory(buffer.data(), (std::min)(buffer.size(), size));
-}
-
-/** Rejects stale peer mutations until every current instance object is resident. */
-[[nodiscard]] bool
-manifest_covers_account_instances(const queuez::SessionState& queuezState) noexcept {
-    if (!queuez::valid(queuezState) || !queuezState.family4Active) {
-        return false;
-    }
-    const state::AccountState account = state::account_snapshot();
-    if (!state::account::valid(account) || account.primarySoid != queuezState.family4RootSoid) {
-        return false;
-    }
-    const auto resident = [&](std::uint64_t soid, std::uint32_t definitionId) noexcept {
-        return std::count_if(
-                   queuezState.family4Residents.cbegin(),
-                   queuezState.family4Residents.cbegin() + queuezState.family4ResidentCount,
-                   [&](const queuez::ResidentObject& object) noexcept {
-                       return object.objectSoid == soid && object.definitionId == definitionId;
-                   })
-               == 1;
-    };
-    if (!resident(account.primarySoid, middleware::datagen::kAccountObjectId)) {
-        return false;
-    }
-    const std::uint64_t selectedCharacter = state::account::selected_character_soid(account);
-    if (selectedCharacter != 0
-        && !resident(selectedCharacter, middleware::datagen::kCharacterObjectId)) {
-        return false;
-    }
-    for (std::size_t characterIndex = 0; characterIndex < account.characterCount;
-         ++characterIndex) {
-        const state::CharacterState& character = account.characters[characterIndex];
-        for (const auto& equipped : character.equipment.slots) {
-            if (equipped.has_value()
-                && !resident(equipped->instanceSoid, middleware::datagen::kItemInstanceObjectId)) {
-                return false;
-            }
-        }
-        for (std::size_t itemIndex = 0; itemIndex < character.inventory.count; ++itemIndex) {
-            if (!resident(character.inventory.values[itemIndex].instanceSoid,
-                          middleware::datagen::kItemInstanceObjectId)) {
-                return false;
-            }
-        }
-    }
-    for (std::size_t itemIndex = 0; itemIndex < account.profileItemCount; ++itemIndex) {
-        const std::uint64_t instanceSoid = account.profileItems[itemIndex].instanceSoid;
-        if (instanceSoid != 0
-            && !resident(instanceSoid, middleware::datagen::kItemInstanceObjectId)) {
-            return false;
-        }
-    }
-    return true;
 }
 
 /** Appends one join only after its exact ActivityClient binding has committed and published. */
@@ -312,8 +260,8 @@ bool consume(Session& session,
     const bool processesBody = handled && route.responseMode != ResponseMode::none;
     const bool sendsReply = handled && route.responseMode == ResponseMode::reply;
     bool staleWebAction = false;
+    // An armed resync means this peer's published manifest predates the account it would name.
     if (processesBody && route.bodyCodec == BodyCodec::webService && session.accountResyncArmed
-        && !manifest_covers_account_instances(session.queuez)
         && !web_service::encode_resident_dependent_refusal(
             frame.body, scratch.responseBody, responseBodySize, staleWebAction)) {
         handled = false;
@@ -423,8 +371,7 @@ bool consume(Session& session,
         || transaction_if<EquipmentSwapTransaction>(outcome) != nullptr
         || transaction_if<SubclassSelectionTransaction>(outcome) != nullptr
         || transaction_if<SocketPlugTransaction>(outcome) != nullptr
-        || transaction_if<ItemStateTransaction>(outcome) != nullptr
-        || artifactPurchase
+        || transaction_if<ItemStateTransaction>(outcome) != nullptr || artifactPurchase
         || transaction_if<CurrentActivityTransaction>(outcome) != nullptr
         || transaction_if<ItemAcquisitionTransaction>(outcome) != nullptr
         || transaction_if<ProfileItemAcquisitionTransaction>(outcome) != nullptr
@@ -452,7 +399,9 @@ bool consume(Session& session,
         const bool retirementValid =
             push::activity::begin_staged_roster_publication(session, entityLease);
         const bool fits = framedSize <= response.size();
-        if (!retirementValid) commitReason = "entity_retirement_stale";
+        if (!retirementValid) {
+            commitReason = "entity_retirement_stale";
+        }
         handled =
             fits && retirementValid && transactions::commit(outcome, publication, commitReason);
         if (!handled) {
@@ -537,10 +486,11 @@ bool consume(Session& session,
                                       static_cast<int>(activityPlan->authorityPurge.body.reason),
                                       slots,
                                       updatedViews);
-                    if (count > 0)
+                    if (count > 0) {
                         core::log::write(core::log::Channel::server,
                                          core::log::Level::debug,
                                          {line.data(), static_cast<std::size_t>(count)});
+                    }
                 }
             }
             // Any delivered activity notification resets the client's silence timer, so the
@@ -557,14 +507,12 @@ bool consume(Session& session,
             if (resyncsCommittedAccount) {
                 bap::arm_account_resync_everywhere();
             }
-            const bool refreshesDerivedInvestment = artifactPurchase || outcome.hasArtifactReset;
-            if (refreshesDerivedInvestment) {
-                // Artifact overrides really live in Family 5. Record claims and their rewards do
-                // not: their committed Family-4 replacement now rearms the client rebuild itself.
-                session.artifactRefreshArmed = true;
-            }
             if (artifactPurchase || outcome.hasArtifactReset) {
-                session.artifactFamily4RefreshDueTick = GetTickCount64() + 100;
+                // Artifact overrides live in Family 5, so they need their own refresh. A record
+                // claim does not: its Family-4 replacement rearms the client rebuild.
+                session.artifactRefreshArmed = true;
+                session.artifactFamily4RefreshDueTick =
+                    GetTickCount64() + kArtifactFamily4RefreshDelayMs;
                 session.artifactFamily4RefreshArmed = true;
             }
             if (outcome.hasArtifactReset) {
@@ -576,7 +524,7 @@ bool consume(Session& session,
                 // The Family-4 store is updated in place, so pointer identity cannot detect its
                 // initial population or later revisions. Carry the exact committed publication
                 // across to the next native lookup, after the client has consumed this frame.
-                client::hooks::network::investment::notify_family4_publication();
+                bap::notify_investment_publication();
             }
         }
     }

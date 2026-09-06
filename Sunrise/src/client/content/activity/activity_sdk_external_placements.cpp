@@ -132,15 +132,15 @@ void finalize(Index& output) noexcept {
     output.lookup.clear();
     std::sort(output.scenarioRows.begin(),
               output.scenarioRows.end(),
-              [](const ScenarioRow& left, const ScenarioRow& right) {
-                  return std::tie(left.scenarioTag, left.rowIndex)
-                         < std::tie(right.scenarioTag, right.rowIndex);
+              [](const ScenarioRow& first, const ScenarioRow& second) {
+                  return std::tie(first.scenarioTag, first.rowIndex)
+                         < std::tie(second.scenarioTag, second.rowIndex);
               });
     output.scenarioRows.erase(std::unique(output.scenarioRows.begin(),
                                           output.scenarioRows.end(),
-                                          [](const ScenarioRow& left, const ScenarioRow& right) {
-                                              return left.scenarioTag == right.scenarioTag
-                                                     && left.rowIndex == right.rowIndex;
+                                          [](const ScenarioRow& first, const ScenarioRow& second) {
+                                              return first.scenarioTag == second.scenarioTag
+                                                     && first.rowIndex == second.rowIndex;
                                           }),
                               output.scenarioRows.end());
 }

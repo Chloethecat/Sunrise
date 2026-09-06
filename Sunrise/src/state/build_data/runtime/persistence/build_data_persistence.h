@@ -8,6 +8,7 @@
 #include "../../../../core/filesystem/path.h"
 #include "../../../content/content_catalog.h"
 #include "../../abilities/definition.h"
+#include "../../bounties/definition.h"
 #include "../../cache/records/domains.h"
 #include "../../collectibles/collectible_catalog.h"
 #include "../../constants/definition.h"
@@ -23,6 +24,7 @@
 #include "../../progressions/definition.h"
 #include "../../records/definition.h"
 #include "../../scenarios/definition.h"
+#include "../../season_pass/definition.h"
 #include "../../sobjects/sobject_catalog.h"
 #include "../../socket_entry_lists/definition.h"
 #include "../../spawn_sets/definition.h"
@@ -75,7 +77,14 @@ struct Context {
     std::vector<socket_entry_lists::EntryTable> socketEntryTableScratch{};
     std::vector<abilities::Definition> abilityBucketScratch{};
     std::vector<progressions::Definition> progressionScratch{};
+    std::vector<progressions::Step> progressionStepScratch{};
+    std::vector<season_pass::Reward> seasonPassRewardScratch{};
+    std::vector<season_pass::Package> seasonPassPackageScratch{};
+    std::vector<bounties::Definition> bountyScratch{};
     std::vector<records::Definition> recordScratch{};
+    std::vector<records::Objective> recordObjectiveScratch{};
+    std::vector<records::Interval> recordIntervalScratch{};
+    std::vector<records::Reward> recordRewardScratch{};
     std::vector<nodes::Definition> nodeScratch{};
     std::vector<sobjects::Definition> sobjectScratch{};
     std::vector<scenarios::Definition> scenarioScratch{};

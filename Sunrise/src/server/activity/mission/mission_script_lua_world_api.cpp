@@ -100,6 +100,7 @@ namespace catalog = state::build_data::scriptables;
         std::string_view key;
         WorldCollectionKind kind;
     };
+    // Every generated-world collection a program may index, by its script-facing key.
     static constexpr std::array entries{
         Entry{"bubbles", WorldCollectionKind::bubbles},
         Entry{"states", WorldCollectionKind::states},
@@ -163,7 +164,9 @@ namespace catalog = state::build_data::scriptables;
     return nullptr;
 }
 
+/** Pushes one 32-byte digest as 64 lowercase hex characters. */
 void push_digest(lua_State* state, const std::array<std::byte, 32>& digest) {
+    // Lowercase hex digits; every digest and byte field is spelled this way.
     constexpr char digits[] = "0123456789abcdef";
     std::array<char, 64> text{};
     for (std::size_t index = 0; index < digest.size(); ++index) {
@@ -437,6 +440,7 @@ void push_world_id(lua_State* state,
     std::array<char, 96> text{};
     char* cursor = text.data();
     char* const end = text.data() + text.size();
+    // Every generated-world text id starts with this family prefix.
     constexpr std::string_view prefix = "world/";
     std::copy(prefix.begin(), prefix.end(), cursor);
     cursor += prefix.size();
@@ -572,6 +576,7 @@ void push_field(lua_State* state, const WorldFieldDefinition& value) {
         push_vector(state, std::span(value.vectorValue.data(), value.valueCount));
         return;
     case WorldFieldKind::bytes: {
+        // Lowercase hex digits; every digest and byte field is spelled this way.
         constexpr char digits[] = "0123456789abcdef";
         std::array<char, 64> text{};
         if (value.valueCount > value.bytesValue.size()) {

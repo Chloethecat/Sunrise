@@ -7,6 +7,7 @@ namespace {
 
 namespace catalog = state::build_data::scriptables;
 
+// A cinematic incident names its source with slot type 6; any other type is not a cinematic.
 constexpr std::uint8_t kCinematicSlotType = 6;
 
 [[nodiscard]] bool same_source(const Source& left, const Source& right) noexcept {

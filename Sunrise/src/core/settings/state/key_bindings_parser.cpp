@@ -4,6 +4,7 @@
 #include "../parser.h"
 
 namespace sunrise::core::settings::parser {
+namespace {
 
 namespace bindings = state::account::settings::bindings;
 
@@ -76,7 +77,7 @@ constexpr std::array<std::string_view, bindings::kActionCount> kActionNames{
  * @param name Borrowed JSON property name.
  * @return Fixed State index, or the action count when the name is unknown.
  */
-[[nodiscard]] static std::size_t action_index(std::string_view name) noexcept {
+[[nodiscard]] std::size_t action_index(std::string_view name) noexcept {
     const auto found = std::find(kActionNames.begin(), kActionNames.end(), name);
     return static_cast<std::size_t>(found - kActionNames.begin());
 }
@@ -235,7 +236,7 @@ constexpr std::array<ModifierName, 9> kModifiers{{
 }};
 
 /** @return The name without leading and trailing ASCII blanks. */
-[[nodiscard]] static constexpr std::string_view trim(std::string_view text) noexcept {
+[[nodiscard]] constexpr std::string_view trim(std::string_view text) noexcept {
     while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {
         text.remove_prefix(1);
     }
@@ -246,8 +247,7 @@ constexpr std::array<ModifierName, 9> kModifiers{{
 }
 
 /** @return True when the two names match with ASCII case folded, as the Client compares them. */
-[[nodiscard]] static constexpr bool same_name(std::string_view left,
-                                              std::string_view right) noexcept {
+[[nodiscard]] constexpr bool same_name(std::string_view left, std::string_view right) noexcept {
     if (left.size() != right.size()) {
         return false;
     }
@@ -269,7 +269,7 @@ constexpr std::array<ModifierName, 9> kModifiers{{
  * @param output Receives the code the table gives that name.
  * @return True when the name is in the table.
  */
-[[nodiscard]] static bool named_code(std::string_view name, std::uint16_t& output) noexcept {
+[[nodiscard]] bool named_code(std::string_view name, std::uint16_t& output) noexcept {
     for (const InputName& entry : kInputNames) {
         if (same_name(entry.name, name)) {
             output = entry.code;
@@ -284,7 +284,7 @@ constexpr std::array<ModifierName, 9> kModifiers{{
  * @param output Receives the flag that code sets on the key it prefixes.
  * @return True when the code is a modifier.
  */
-[[nodiscard]] static bool modifier_flag(std::uint16_t code, std::uint16_t& output) noexcept {
+[[nodiscard]] bool modifier_flag(std::uint16_t code, std::uint16_t& output) noexcept {
     for (const ModifierName& entry : kModifiers) {
         if (entry.code == code) {
             output = entry.flag;
@@ -293,6 +293,8 @@ constexpr std::array<ModifierName, 9> kModifiers{{
     }
     return false;
 }
+
+} // namespace
 
 /** Parses the whole fixed action table under named JSON properties. */
 bool Parser::key_bindings(bindings::KeyBindings& output) noexcept {

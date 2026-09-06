@@ -10,10 +10,13 @@
 namespace sunrise::client::content::activity::sdk_generation::tree_publication {
 namespace {
 
+// Both separators end a path component.
 constexpr std::wstring_view kSeparators = L"\\/";
+// Suffixes of the sibling names one publication owns.
 constexpr std::wstring_view kBackupSuffix = L".activity-sdk-backup";
 constexpr std::wstring_view kPendingSuffix = L".activity-sdk-publication.pending";
 constexpr std::wstring_view kCommittedSuffix = L".activity-sdk-publication.committed";
+// Marker magic; the bytes spell AST1.
 constexpr std::uint32_t kMarkerMagic = 0x31545341U;
 
 struct Marker final {
@@ -95,6 +98,7 @@ struct Marker final {
                   == CSTR_EQUAL;
 }
 
+/** Splits one path at its last separator. @return False when there is no interior separator. */
 [[nodiscard]] bool
 split(std::wstring_view path, std::wstring_view& parent, std::wstring_view& leaf) noexcept {
     const std::size_t separator = path.find_last_of(kSeparators);

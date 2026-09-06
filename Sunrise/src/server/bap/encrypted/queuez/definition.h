@@ -36,7 +36,7 @@ struct AcquisitionPresentationRow {
     std::uint16_t inventoryRow{};
 };
 
-/** When the roster is published after a change, as measured in the character-select flow. */
+/** Whether a Family-3 subscription still gets a body: always, once more, or never again. */
 enum class Family3Phase : std::uint8_t {
     normal,
     publishOnce,
@@ -63,6 +63,8 @@ struct SessionState {
     std::int32_t family3Version{};
     /** Retail sets the full-snapshot flag once per family, then increments this by one. */
     std::int32_t family0Version{};
+    /** Every family-five publication is a full snapshot, so its version only has to move. */
+    std::int32_t family5Version{};
     std::uint16_t family4ResidentCount{};
     Family3Phase family3Phase{Family3Phase::normal};
     bool family4Active{};
@@ -96,8 +98,8 @@ struct SelectCharacter {
     std::uint64_t selectedCharacterSoid{};
     /**
      * The account object moves as a selected-character patch, not a full body.
-     * The first pick replaces it whole, which is the measured path. After opcode 505 a resent
-     * account body wipes the resident settings block, so only the one field goes out.
+     * The first pick replaces it whole. After opcode 505 a resent account body wipes the resident
+     * settings block, so only the one field goes out.
      */
     bool patchAccount{};
 };
@@ -217,21 +219,12 @@ struct StagedPublication {
     std::uint64_t bannerRepushRoot{};
     /**
      * Root a family-two subscribe was answered against, or zero when this frame answered none.
-     *
-     * A subscribe is the only moment a family-two root arrives. The connection keeps the last one
-     * so a later re-push can reuse it rather than deriving a value the peer never named.
+     * A subscribe is the only moment that root arrives, so the connection keeps the last one.
      */
     std::uint64_t socialRosterRepushRoot{};
     /**
      * An emblem equip left the published family-two object stale and it owes a fresh copy.
-     *
-     * The family-two snapshot is built when the peer subscribes, so the emblem it carries is only
-     * correct as of that moment; the Client resolves that account-keyed object as *the* account
-     * emblem, so a stale one pins the display for the rest of the session while the equip itself
-     * keeps succeeding.
-     *
-     * Its own flag on its own signal. The banner arm is deliberately not reused: the consumer
-     * records that arming a re-push from another family's signal took the connection down.
+     * Its own flag on its own signal; the banner arm is never reused for it.
      */
     bool rearmsSocialRosterRepush{};
     /** A subclass selection just staged and owes a delayed ability-icon refresh. */

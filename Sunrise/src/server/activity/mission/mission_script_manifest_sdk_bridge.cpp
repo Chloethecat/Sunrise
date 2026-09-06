@@ -58,6 +58,7 @@ checked_view(const void* context, const lua_vm::WorldGenerationIdentity& expecte
     return true;
 }
 
+/** @return The Lua-facing name of one activity-root selection status. */
 [[nodiscard]] std::string_view
 selection_name(manifest::ActivityRootSelectionStatus value) noexcept {
     switch (value) {
@@ -240,6 +241,7 @@ template <typename Selector>
     return result;
 }
 
+/** @return The flat index of one variant tag kind's first tag, counted across all earlier rows. */
 [[nodiscard]] std::uint64_t
 evidence_tag_first(std::span<const manifest::ActivityVariantRecord> rows,
                    std::size_t row,
@@ -266,7 +268,7 @@ evidence_tag_first(std::span<const manifest::ActivityVariantRecord> rows,
                                  lua_vm::ManifestFieldDefinition& output) noexcept {
     const manifest::ActivityVariantRecord& row = rows[index];
 #define SUNRISE_MANIFEST_U32(NAME, MEMBER)                                                         \
-    if (key == NAME) {                                                                             \
+    if (key == (NAME)) {                                                                           \
         return field_u64(output, row.MEMBER);                                                      \
     }
     SUNRISE_MANIFEST_U32("activity_index", activityIndex)
@@ -279,7 +281,7 @@ evidence_tag_first(std::span<const manifest::ActivityVariantRecord> rows,
         return field_string(output, {row.internalName.data(), row.internalNameLength});
     }
 #define SUNRISE_MANIFEST_ENUM(NAME, MEMBER, NAMER)                                                 \
-    if (key == NAME) {                                                                             \
+    if (key == (NAME)) {                                                                           \
         return field_u64(output, static_cast<std::uint8_t>(row.MEMBER));                           \
     }                                                                                              \
     if (key == NAME "_name") {                                                                     \
@@ -292,7 +294,7 @@ evidence_tag_first(std::span<const manifest::ActivityVariantRecord> rows,
     SUNRISE_MANIFEST_ENUM("runnable_status", runnableStatus, runnable_name)
 #undef SUNRISE_MANIFEST_ENUM
 #define SUNRISE_MANIFEST_BOOL(NAME, MEMBER)                                                        \
-    if (key == NAME) {                                                                             \
+    if (key == (NAME)) {                                                                           \
         return field_bool(output, row.MEMBER);                                                     \
     }
     SUNRISE_MANIFEST_BOOL("full_sdk_acceptable", fullSdkAcceptable)
@@ -332,7 +334,7 @@ evidence_tag_first(std::span<const manifest::ActivityVariantRecord> rows,
                                       std::string_view key,
                                       lua_vm::ManifestFieldDefinition& output) noexcept {
 #define SUNRISE_MANIFEST_COUNT(NAME, MEMBER)                                                       \
-    if (key == NAME) {                                                                             \
+    if (key == (NAME)) {                                                                           \
         return field_u64(output, row.MEMBER);                                                      \
     }
     SUNRISE_MANIFEST_COUNT("total", total)
@@ -379,6 +381,7 @@ evidence_tag_first(std::span<const manifest::ActivityVariantRecord> rows,
     return false;
 }
 
+/** @return The tag span one variant kind names, or empty when the kind is unknown. */
 [[nodiscard]] std::span<const std::uint32_t>
 variant_tags(const manifest::ActivityVariantRecord& row,
              lua_vm::ManifestVariantTagKind kind) noexcept {
@@ -457,6 +460,7 @@ variant_tags(const manifest::ActivityVariantRecord& row,
 
 } // namespace
 
+/** @return The Lua manifest reader bound to this world, or an empty api when none is bound. */
 lua_vm::ManifestDefinitionApi
 manifest_definition_api(const generated::GeneratedWorldView& world) noexcept {
     lua_vm::WorldGenerationIdentity generation{};

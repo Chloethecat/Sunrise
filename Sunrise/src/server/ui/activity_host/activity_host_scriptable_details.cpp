@@ -30,6 +30,7 @@ namespace placement_source = client::ui::activity::package_type23_placement_mark
 namespace tag_names = server::ui::activity_host::package_tag_names;
 namespace tables = middleware::content::packages::tables;
 
+/** One shared table style, so every table on this page reads the same. */
 constexpr ImGuiTableFlags kTableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
                                         | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX
                                         | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit;
@@ -295,6 +296,7 @@ void draw_type23_placements(const catalog::Snapshot& snapshot,
 
 /** Draws native handles only within the selected object's technical disclosure. */
 void draw_live_instances(const catalog::Snapshot& snapshot, const catalog::Slot& slot) noexcept {
+    // Rows listed before the panel stops and reports a count; the list is a disclosure, not data.
     constexpr std::size_t kVisibleInstanceLimit = 16;
     std::size_t placementCount = 0;
     std::size_t liveCount = 0;

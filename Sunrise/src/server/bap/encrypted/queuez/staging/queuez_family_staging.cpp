@@ -118,7 +118,7 @@ bool stage_family0_subscription(const SessionState& before,
     return true;
 }
 
-/** Stages the measured Family-3 subscription reset: full first, then response-only. */
+/** Stages one Family-3 subscription: a full body first, then response-only. */
 bool stage_family3_subscription(const SessionState& before,
                                 const middleware::queuez::Subscription& subscription,
                                 bool& publish,

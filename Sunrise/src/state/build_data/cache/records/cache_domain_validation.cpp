@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "../../abilities/ability_bucket_catalog.h"
+#include "../../bounties/bounty_catalog.h"
 #include "../../hash_names/hash_name_catalog.h"
 #include "../../inventory/buckets/inventory_bucket_catalog.h"
 #include "../../items/socket_plugs/socket_plug_catalog.h"
@@ -13,6 +14,7 @@
 #include "../../progressions/progression_catalog.h"
 #include "../../records/record_catalog.h"
 #include "../../scenarios/scenario_catalog.h"
+#include "../../season_pass/season_pass_catalog.h"
 #include "../../sobjects/sobject_catalog.h"
 #include "../../socket_entry_lists/socket_entry_list_catalog.h"
 #include "../../spawn_sets/spawn_set_catalog.h"
@@ -161,7 +163,14 @@ template <typename Value, typename Less>
            && counts.vendorSaleRows <= domains.vendorSaleRows.size()
            && counts.vendorInstalledRows <= domains.vendorInstalledRows.size()
            && counts.positionProfiles <= domains.positionProfiles.size()
-           && counts.objectTypes <= domains.objectTypes.size();
+           && counts.objectTypes <= domains.objectTypes.size()
+           && counts.recordObjectives <= domains.recordObjectives.size()
+           && counts.recordIntervals <= domains.recordIntervals.size()
+           && counts.recordRewards <= domains.recordRewards.size()
+           && counts.progressionSteps <= domains.progressionSteps.size()
+           && counts.seasonPassRewards <= domains.seasonPassRewards.size()
+           && counts.seasonPassPackages <= domains.seasonPassPackages.size()
+           && counts.bounties <= domains.bounties.size();
 }
 
 } // namespace
@@ -238,9 +247,16 @@ bool valid_domains(const BuildIdentity& build, Domains domains) noexcept {
             domains.socketPlugRules, domains.socketPlugPools, domains.socketPlugMembers)
         || !abilities::valid(domains.abilityBuckets)
         || !strictly_ordered(domains.abilityBuckets, ability_less)
-        || !progressions::valid(domains.progressions)
-        || !build_data::records::valid(domains.records) || !nodes::valid(domains.nodes)
-        || !sobjects::valid(domains.sobjects)
+        || !progressions::valid(domains.progressions, domains.progressionSteps)
+        // An empty catalog is complete: a build with no installed pass declares no reward.
+        || (!domains.seasonPassRewards.empty()
+            && !season_pass::valid(domains.seasonPassRewards, domains.seasonPassPackages))
+        || !bounties::valid(domains.bounties)
+        || !build_data::records::valid(domains.records,
+                                       domains.recordObjectives,
+                                       domains.recordIntervals,
+                                       domains.recordRewards)
+        || !nodes::valid(domains.nodes) || !sobjects::valid(domains.sobjects)
         || !scenarios::valid(domains.scenarios, domains.rosterGroups)
         // An empty catalog is complete. It is what a build with no installed spawn set means.
         // Both arrays must be empty together, because a stem names its hashes by range.

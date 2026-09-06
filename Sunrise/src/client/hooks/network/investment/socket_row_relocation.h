@@ -8,13 +8,39 @@
 
 namespace sunrise::client::hooks::network::investment::relocation {
 
+/** Class marker every native content array and condition record starts with. */
 inline constexpr std::uint32_t kMarker = 0x80809FBDU;
+/** Element class the plug-set member array declares. */
 inline constexpr std::uint32_t kMemberClass = 0x80802E03U;
+/** Element class one member's own condition record declares. */
 inline constexpr std::uint32_t kConditionClass = 0x80807D31U;
+/** Member rows start here; the array header occupies everything before it. */
 inline constexpr std::size_t kDataOffset = 24;
+/** The largest member array this build relocates. */
 inline constexpr std::size_t kMaximumMembers = 56;
+/** One member row is 32 bytes. */
 inline constexpr std::size_t kMemberSize = 32;
+/** One condition record is 32 bytes. */
 inline constexpr std::size_t kConditionSize = 32;
+
+/** Array header fields, as byte offsets from the array start. */
+inline constexpr std::size_t kArrayMarkerOffset = 4;
+inline constexpr std::size_t kArrayCountOffset = 8;
+inline constexpr std::size_t kArrayClassOffset = 16;
+
+/** Member row fields, as byte offsets from the row start. */
+inline constexpr std::size_t kMemberConditionCountOffset = 8;
+inline constexpr std::size_t kMemberConditionRelativeOffset = 16;
+
+/** Condition record fields, as byte offsets from the record start. */
+inline constexpr std::size_t kConditionCountOffset = 4;
+inline constexpr std::size_t kConditionClassOffset = 12;
+inline constexpr std::size_t kConditionReservedOffset = 16;
+/** A member's relative reference names this offset inside its condition record. */
+inline constexpr std::size_t kConditionReferenceOffset = 4;
+
+/** The native reader dereferences these records as 8-byte aligned. */
+inline constexpr std::size_t kRecordAlignment = 8;
 
 /** A captured member and its own opaque, single-record condition allocation. */
 struct Row {
@@ -32,25 +58,27 @@ template <typename T> void put(std::byte* p, T value) noexcept {
     std::memcpy(p, &value, sizeof value);
 }
 
+/** @return True for a row with no condition, or with exactly one record of the expected class. */
 inline bool valid(const Row& row) noexcept {
-    const auto count = get<std::uint64_t>(row.bytes.data() + 8);
+    const auto count = get<std::uint64_t>(row.bytes.data() + kMemberConditionCountOffset);
     if (count == 0) {
-        return get<std::int64_t>(row.bytes.data() + 16) == 0;
+        return get<std::int64_t>(row.bytes.data() + kMemberConditionRelativeOffset) == 0;
     }
     return count == 1 && get<std::uint32_t>(row.condition.data()) == kMarker
-           && get<std::uint64_t>(row.condition.data() + 4) == 1
-           && get<std::uint32_t>(row.condition.data() + 12) == kConditionClass
-           && get<std::uint32_t>(row.condition.data() + 16) == 0;
+           && get<std::uint64_t>(row.condition.data() + kConditionCountOffset) == 1
+           && get<std::uint32_t>(row.condition.data() + kConditionClassOffset) == kConditionClass
+           && get<std::uint32_t>(row.condition.data() + kConditionReservedOffset) == 0;
 }
 
+/** @return Bytes one relocated array of that many rows needs, condition storage included. */
 inline std::size_t capacity(std::size_t count) noexcept {
-    return kDataOffset + count * (kMemberSize + kConditionSize) + 8;
+    return kDataOffset + count * (kMemberSize + kConditionSize) + kRecordAlignment;
 }
 
 /** Builds aligned, self-contained arrays; the original pointer bits are never reused. */
 inline bool build(std::span<const Row> rows, std::span<std::byte> output) noexcept {
     if (rows.empty() || rows.size() > kMaximumMembers || output.size() < capacity(rows.size())
-        || reinterpret_cast<std::uintptr_t>(output.data()) % 8 != 0) {
+        || reinterpret_cast<std::uintptr_t>(output.data()) % kRecordAlignment != 0) {
         return false;
     }
     for (std::size_t i = 0; i < rows.size(); ++i) {
@@ -65,55 +93,20 @@ inline bool build(std::span<const Row> rows, std::span<std::byte> output) noexce
         }
     }
     std::memset(output.data(), 0, output.size());
-    put(output.data() + 4, kMarker);
-    put(output.data() + 8, static_cast<std::uint64_t>(rows.size()));
-    put(output.data() + 16, kMemberClass);
-    std::size_t cursor = kDataOffset + rows.size() * 32 + 4;
+    put(output.data() + kArrayMarkerOffset, kMarker);
+    put(output.data() + kArrayCountOffset, static_cast<std::uint64_t>(rows.size()));
+    put(output.data() + kArrayClassOffset, kMemberClass);
+    // Condition records follow the member rows, so every relocated offset is positive.
+    std::size_t cursor = kDataOffset + rows.size() * kMemberSize + kConditionReferenceOffset;
     for (std::size_t i = 0; i < rows.size(); ++i) {
-        const std::size_t at = kDataOffset + i * 32;
-        std::memcpy(output.data() + at, rows[i].bytes.data(), 32);
-        if (get<std::uint64_t>(rows[i].bytes.data() + 8) != 0) {
-            std::memcpy(output.data() + cursor, rows[i].condition.data(), 32);
-            put(output.data() + at + 16,
-                static_cast<std::int64_t>(cursor + 4) - static_cast<std::int64_t>(at + 16));
-            cursor += 32;
-        }
-    }
-    return true;
-}
-
-/** Independently follows every relocated reference and compares all original payload bytes. */
-inline bool verify(std::span<const Row> rows, std::span<const std::byte> blob) noexcept {
-    if (rows.empty() || rows.size() > kMaximumMembers
-        || blob.size() < kDataOffset + rows.size() * 32
-        || reinterpret_cast<std::uintptr_t>(blob.data()) % 8 != 0
-        || get<std::uint32_t>(blob.data() + 4) != kMarker
-        || get<std::uint64_t>(blob.data() + 8) != rows.size()
-        || get<std::uint32_t>(blob.data() + 16) != kMemberClass
-        || get<std::uint32_t>(blob.data() + 20) != 0) {
-        return false;
-    }
-    for (std::size_t i = 0; i < rows.size(); ++i) {
-        const std::size_t at = kDataOffset + i * 32;
-        const auto* member = blob.data() + at;
-        if (!valid(rows[i]) || std::memcmp(member, rows[i].bytes.data(), 16) != 0
-            || std::memcmp(member + 24, rows[i].bytes.data() + 24, 8) != 0) {
-            return false;
-        }
-        const auto relative = get<std::int64_t>(member + 16);
-        if (get<std::uint64_t>(member + 8) == 0) {
-            if (relative != 0) return false;
-            continue;
-        }
-        // Owned condition storage is after the member array, so all relocated offsets are positive.
-        if (relative <= 0 || static_cast<std::uint64_t>(relative) > blob.size() - at - 16) {
-            return false;
-        }
-        const std::size_t header = at + 16 + static_cast<std::size_t>(relative);
-        if (header % 8 != 0 || header < kDataOffset + rows.size() * 32 + 4
-            || blob.size() - header < 28
-            || std::memcmp(blob.data() + header - 4, rows[i].condition.data(), 32) != 0) {
-            return false;
+        const std::size_t at = kDataOffset + i * kMemberSize;
+        std::memcpy(output.data() + at, rows[i].bytes.data(), kMemberSize);
+        if (get<std::uint64_t>(rows[i].bytes.data() + kMemberConditionCountOffset) != 0) {
+            std::memcpy(output.data() + cursor, rows[i].condition.data(), kConditionSize);
+            put(output.data() + at + kMemberConditionRelativeOffset,
+                static_cast<std::int64_t>(cursor + kConditionReferenceOffset)
+                    - static_cast<std::int64_t>(at + kMemberConditionRelativeOffset));
+            cursor += kConditionSize;
         }
     }
     return true;

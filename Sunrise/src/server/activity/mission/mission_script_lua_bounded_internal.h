@@ -10,6 +10,7 @@
 
 namespace sunrise::server::activity::mission::lua_vm::detail {
 
+// Metatable names that lock the bounded-lane userdata shapes a program may hold.
 inline constexpr char kBoundedLaneCollectionMetatable[] = "sunrise.sdk.bounded_lanes";
 inline constexpr char kBoundedLaneMetatable[] = "sunrise.sdk.bounded_lane";
 inline constexpr char kCountListMetatable[] = "sunrise.sdk.count_list";

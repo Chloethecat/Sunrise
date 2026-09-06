@@ -25,8 +25,10 @@ namespace sdk = state::activity_sdk;
 namespace scaling = core::ui::scaling::dpi;
 namespace tables = middleware::content::packages::tables;
 
+/** Lane names in type-23 channel order, one entry per channel. */
 constexpr std::array<const char*, auth::kType23ChannelCount> kLaneLabels{
     "Position", "Power", "Lock"};
+/** Lane help text in the same channel order. */
 constexpr std::array<const char*, auth::kType23ChannelCount> kLaneHelp{
     "Where the device sits. What 0 and 1 mean is authored per device.",
     "Power. Position and lock only move while power is near 1.",

@@ -6,8 +6,7 @@
 #include <span>
 #include <variant>
 
-#include "../build_data/records/rewards/definition.h"
-#include "../record_claims/record_claims.h"
+#include "../build_data/records/definition.h"
 #include "state.h"
 
 namespace sunrise::state::account::settings {
@@ -79,15 +78,9 @@ struct PendingSubclassSelection {
 [[nodiscard]] bool commit_subclass_selection(PendingSubclassSelection& mutation) noexcept;
 
 /**
- * Equips each character with the "Emotes" collection item (hash 3183180185) in the emote slot, in
- * place of an individual emote. The stock client opens its own wheel-configuration screen for this
- * item; its 4 ordinary sockets seed default lanes from the item's real plug pool so the wheel has
- * something in every slot the first time it opens.
- * Idempotent, and safe to call from more than one boundary: a character already carrying a sound
- * copy is left alone, and one whose sockets no longer resolve is repaired in place, keeping its
- * instance identity and every field this does not own.
- * The outcome distinguishes "nothing to do" from "could not be done", so a caller never records
- * the account as canonical on the strength of a prerequisite that was never met.
+ * Equips the "Emotes" collection item in each character's emote slot, with seeded default lanes.
+ * Idempotent and safe from more than one boundary: a sound copy is left alone and a broken one is
+ * repaired in place, keeping its instance identity.
  */
 [[nodiscard]] EmoteCollectionOutcome ensure_character_emote_collection() noexcept;
 
@@ -178,10 +171,9 @@ struct PendingProfileItemAcquisition {
     std::uint8_t bucketId{};
     std::uint8_t materialRequirementCount{};
     /**
-     * Rows this mutation announces to the account's change ring, which is what draws the floating
-     * "+5 Legendary Shards" the Client shows. Empty for an ordinary acquisition, which announces
-     * its one acquired row instead; non-empty marks this an exchange, whose quantities move by
-     * more than one and whose row count is not fixed at one.
+     * Rows this mutation announces to the account's change ring, which is the only way the Client
+     * is told of a currency gain. Empty marks an ordinary acquisition, which announces its one
+     * acquired row instead; non-empty marks an exchange.
      */
     std::array<ProfileStackChange, kProfileStackChangeCapacity> changes{};
     std::size_t changeCount{};
@@ -209,7 +201,7 @@ struct PendingDirectItemBundle {
 
 /** Shared batch capacity covers both Triumph rewards and the nine-row Season package. */
 inline constexpr std::size_t kRecordRewardGrantCapacity = 9;
-static_assert(kRecordRewardGrantCapacity >= build_data::records::rewards::kRewardPerRecordCapacity);
+static_assert(kRecordRewardGrantCapacity >= build_data::records::kRewardPerRecordCapacity);
 
 /** One direct item requested by a record reward policy. */
 struct DirectRecordReward {
@@ -236,6 +228,9 @@ struct PreparedRecordReward {
     bool appendedProfileResident{};
 };
 
+/** A reward grant that claims no record carries this instead of a record row. */
+inline constexpr std::uint16_t kUnclaimedRecordIndex = 0xFFFFU;
+
 /** Record claim and all of its item rows committed as one transaction. */
 struct PendingRecordRewardGrant {
     CharacterState beforeCharacter{};
@@ -245,7 +240,8 @@ struct PendingRecordRewardGrant {
     std::array<account::inventory::ProfileItem, account::inventory::kProfileItemCapacity>
         afterProfileItems{};
     std::array<PreparedRecordReward, kRecordRewardGrantCapacity> rewards{};
-    record_claims::PendingClaim claim{};
+    /** Record claimed with this grant, already written to the banks, or the unclaimed row. */
+    std::uint16_t claimedRecordIndex{kUnclaimedRecordIndex};
     std::uint64_t accountSoid{};
     std::uint64_t characterSoid{};
     std::size_t characterIndex{};
@@ -376,8 +372,7 @@ struct PendingArtifactPurchase {
 /** Item residents whose authored artifact sockets were cleared by one reset. */
 struct ArtifactResetResult {
     std::array<std::uint64_t,
-               account::inventory::kEquipmentSlotCount
-                   + account::inventory::kCharacterItemCapacity>
+               account::inventory::kEquipmentSlotCount + account::inventory::kCharacterItemCapacity>
         instanceSoids{};
     std::size_t instanceCount{};
 };
@@ -480,7 +475,14 @@ void publish_sign_in_time(std::uint64_t seconds) noexcept;
  */
 [[nodiscard]] bool set_selected_character(std::uint64_t characterSoid, bool& changed) noexcept;
 
-/** Equips a validated title on the selected character. */
+/**
+ * Stores the selected character's equipped title row. The caller proves the record is a claimed
+ * title; this only writes it.
+ * @param recordIndex Title record row, or kUnequippedTitleRecordIndex to clear it.
+ * @param characterSoid Receives the selected character's key, or zero on failure.
+ * @param changed Receives whether the stored row moved.
+ * @return False when no character is selected or the account would stop being valid.
+ */
 [[nodiscard]] bool
 set_selected_title(std::uint16_t recordIndex, std::uint64_t& characterSoid, bool& changed) noexcept;
 
@@ -548,9 +550,15 @@ set_selected_title(std::uint16_t recordIndex, std::uint64_t& characterSoid, bool
 /** Atomically commits one prepared Triumph reward and its durable record claim. */
 [[nodiscard]] bool commit_record_reward(PendingRecordRewardGrant& mutation) noexcept;
 
-/** Prepares all direct reward rows over one shared account after-image. */
+/**
+ * Prepares all direct reward rows over one shared account after-image.
+ * @param rewards Item rows the record grants.
+ * @param claimedRecordIndex Record already claimed in the banks, or kUnclaimedRecordIndex.
+ * @param mutation Receives the prepared grant.
+ * @return True when every row fits the account after-image.
+ */
 [[nodiscard]] bool prepare_record_reward_grant(std::span<const DirectRecordReward> rewards,
-                                               const record_claims::PendingClaim& claim,
+                                               std::uint16_t claimedRecordIndex,
                                                PendingRecordRewardGrant& mutation) noexcept;
 
 /** Builds the full account after-image while a record reward remains current. */
@@ -718,6 +726,7 @@ prepare_settings_update(const account::settings::SettingsDelta& delta,
  * @return True when the after-image was already current or was committed successfully.
  */
 [[nodiscard]] bool commit_settings_update(PendingSettingsUpdate& mutation) noexcept;
+
 /** One credited side of a vendor exchange: an authored profile stack and how much to add. */
 struct ProfileExchangePayout {
     std::uint32_t definitionHash{};
@@ -726,15 +735,8 @@ struct ProfileExchangePayout {
 
 /**
  * Prepares one vendor recycle row: charges the stack it names and credits what it pays out.
- *
- * This rides the profile-stack mutation rather than writing State directly, because the Client is
- * only told about a currency gain by the account object's change ring - a row named there is what
- * draws the floating "+5 Legendary Shards"; a direct write with a resync moves the numbers and
- * announces nothing. Every credited row is announced under a fresh mutation serial; the charged row
- * is not. Only an already-held payout stack is credited, since the currencies a recycle pays into
- * are authored from the start. `preview_profile_item_acquisition` and
- * `commit_profile_item_acquisition` carry the result the rest of the way.
- *
+ * It rides the profile-stack mutation because the change ring is the only way the Client is told
+ * of a gain. Each credited row gets a fresh serial; only an already-held payout stack is credited.
  * @param costDefinitionHash Stack the row charges against.
  * @param costQuantity Units of it the row consumes.
  * @param payouts Stacks to credit, each clamped to its own native stack limit.
@@ -756,15 +758,61 @@ struct ProfileExchangePayout {
  */
 [[nodiscard]] bool investment_snapshot(InvestmentState& output) noexcept;
 
-/** Prepares one artifact purchase without changing persistent state. */
+/** Seasonal artifact item definition, whose equipped row carries the Power bonus stat. */
+inline constexpr std::uint32_t kSeasonalArtifactItemHash = 0x613A3DA6U;
+
+/** Native progression row carrying the seasonal artifact Power ladder. */
+inline constexpr std::uint16_t kArtifactPowerProgressionIndex = 38;
+/** Native progression row carrying the seasonal artifact unlock-point ladder. */
+inline constexpr std::uint16_t kArtifactUnlockProgressionIndex = 39;
+
+/** @return Seasonal XP published in the account progression bank. */
+[[nodiscard]] std::int32_t seasonal_experience() noexcept;
+
+/** Publishes every seasonal value the seeded XP and artifact ownership imply. */
+[[nodiscard]] bool seed_seasonal_progression() noexcept;
+
+/** @return One-based Season of Arrivals rank the published XP earns. */
+[[nodiscard]] std::uint16_t seasonal_rank() noexcept;
+
+/** @return Account-wide Power bonus published by the seasonal artifact. */
+[[nodiscard]] std::uint16_t artifact_power_bonus() noexcept;
+
+/**
+ * Adds base XP to the seasonal lanes and republishes every value derived from the total.
+ * @param amount Positive XP to grant.
+ * @return False when the amount is not positive or the total would overflow.
+ */
+[[nodiscard]] bool grant_seasonal_experience(std::int32_t amount) noexcept;
+
+/** @param rewardIndex Native reward-array index. @return True when the row is claimed. */
+[[nodiscard]] bool season_pass_reward_claimed(std::uint16_t rewardIndex) noexcept;
+
+/**
+ * Claims one Season pass reward row into the account flag its row names.
+ * @param rewardIndex Native reward-array index.
+ * @return False when the row names no flag or is already claimed.
+ */
+[[nodiscard]] bool claim_season_pass_reward(std::uint16_t rewardIndex) noexcept;
+
+/** Undoes one Season pass claim so a refused commit cannot leave it held. */
+void revoke_season_pass_reward(std::uint16_t rewardIndex) noexcept;
+
+/** @return Purchased artifact sale rows, one bit per row. */
+[[nodiscard]] std::uint32_t artifact_mod_mask() noexcept;
+
+/** Replaces the exact published artifact mask, refusing when it already moved. */
+[[nodiscard]] bool replace_artifact_mod_mask(std::uint32_t expected,
+                                             std::uint32_t replacement) noexcept;
+
+/** Writes one affordable artifact purchase and keeps its before-image for the commit. */
 [[nodiscard]] bool prepare_artifact_mod_unlock(std::uint16_t saleIndex,
                                                PendingArtifactPurchase& mutation) noexcept;
 
-/** Commits one prepared artifact purchase if its character and mask remain current. */
+/** Keeps a prepared artifact purchase only while its character and mask are still current. */
 [[nodiscard]] bool commit_artifact_mod_unlock(PendingArtifactPurchase& mutation) noexcept;
 
 /** Charges Glimmer, removes artifact mods, and refunds every spent unlock point. */
-[[nodiscard]] bool reset_artifact(std::int32_t glimmerCost,
-                                  ArtifactResetResult& result) noexcept;
+[[nodiscard]] bool reset_artifact(std::int32_t glimmerCost, ArtifactResetResult& result) noexcept;
 
 } // namespace sunrise::state

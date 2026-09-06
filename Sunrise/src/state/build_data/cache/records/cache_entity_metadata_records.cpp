@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <string_view>
 
 #include "codec.h"
 namespace sunrise::state::build_data::cache::records {
@@ -6,9 +7,12 @@ namespace sunrise::state::build_data::cache::records {
 bool encode(const gameplay::entity_position_profiles::Row& value,
             PositionProfileRecord& record) noexcept {
     record = {};
-    if (!gameplay::entity_position_profiles::validate(std::span(&value, 1))) return false;
-    std::copy(value.activity.begin(), value.activity.end(), record.activity.begin());
-    record.nameLength = static_cast<std::uint8_t>(value.activity.size());
+    if (!gameplay::entity_position_profiles::validate(std::span(&value, 1))) {
+        return false;
+    }
+    const std::string_view activity = value.activity.view();
+    std::copy(activity.begin(), activity.end(), record.activity.begin());
+    record.nameLength = value.activity.length;
     record.cell = value.cell;
     record.bubble = value.bubble;
     record.axisBits = value.axisBits;
@@ -18,27 +22,26 @@ bool encode(const gameplay::entity_position_profiles::Row& value,
 bool decode(const PositionProfileRecord& record,
             gameplay::entity_position_profiles::Row& value) noexcept {
     value = {};
-    if (record.reserved || record.nameLength == 0 || record.nameLength >= record.activity.size())
-        return false;
-    const auto end = record.activity.begin() + record.nameLength;
-    if (std::find(record.activity.begin(), end, '\0') != end
-        || !std::all_of(end, record.activity.end(), [](char byte) { return byte == 0; }))
-        return false;
-    try {
-        value.activity.assign(record.activity.data(), record.nameLength);
-        value.cell = record.cell;
-        value.bubble = record.bubble;
-        value.axisBits = record.axisBits;
-        return gameplay::entity_position_profiles::validate(std::span(&value, 1));
-    } catch (...) {
-        value = {};
+    if (record.reserved || record.nameLength == 0 || record.nameLength >= record.activity.size()) {
         return false;
     }
+    const auto end = record.activity.begin() + record.nameLength;
+    if (std::find(record.activity.begin(), end, '\0') != end
+        || !std::all_of(end, record.activity.end(), [](char byte) { return byte == 0; })) {
+        return false;
+    }
+    value.activity = std::string_view(record.activity.data(), record.nameLength);
+    value.cell = record.cell;
+    value.bubble = record.bubble;
+    value.axisBits = record.axisBits;
+    return gameplay::entity_position_profiles::validate(std::span(&value, 1));
 }
 /** Only validated package-class rows enter the shared payload. */
 bool encode(const gameplay::entity_object_types::Row& value, ObjectTypeRecord& record) noexcept {
     record = {};
-    if (!gameplay::entity_object_types::validate(std::span(&value, 1))) return false;
+    if (!gameplay::entity_object_types::validate(std::span(&value, 1))) {
+        return false;
+    }
     record.rsatTag = value.rsatTag;
     record.definitionTag = value.definitionTag;
     record.objectType = value.objectType;
@@ -49,11 +52,14 @@ bool decode(const ObjectTypeRecord& record, gameplay::entity_object_types::Row& 
     value = {};
     if (!std::all_of(record.reserved.begin(), record.reserved.end(), [](auto byte) {
             return byte == std::byte{};
-        }))
+        })) {
         return false;
+    }
     const gameplay::entity_object_types::Row row{
         record.rsatTag, record.definitionTag, record.objectType};
-    if (!gameplay::entity_object_types::validate(std::span(&row, 1))) return false;
+    if (!gameplay::entity_object_types::validate(std::span(&row, 1))) {
+        return false;
+    }
     value = row;
     return true;
 }

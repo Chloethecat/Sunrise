@@ -7,13 +7,16 @@ namespace {
 
 namespace bits = encoding::bits;
 
+/** Field widths of the message-7 header, in bits. */
 constexpr std::uint8_t kRosterKeyBits = 32;
 constexpr std::uint8_t kSlotTypeBits = 7;
 constexpr std::uint8_t kSlotIndexBits = 16;
 constexpr std::uint8_t kSchemaPresenceBits = 1;
 constexpr std::uint8_t kSchemaBits = 32;
+/** The slot type and index are sent unsigned, biased so their absent value is zero. */
 constexpr std::int32_t kSlotTypeBias = 1;
 constexpr std::int32_t kSlotIndexBias = 32'768;
+/** Slot-type range the package authors; the biased field cannot carry more. */
 constexpr std::int8_t kMinimumAuthoredSlotType = 0;
 constexpr std::int8_t kMaximumAuthoredSlotType = 126;
 

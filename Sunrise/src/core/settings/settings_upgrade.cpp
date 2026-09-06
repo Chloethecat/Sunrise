@@ -1,9 +1,7 @@
 /**
- * Boot-time repair of a settings file written against an older layout version. A member whose
- * value form changed cannot be read by the current parser, so the file would be refused and the
- * boot would end. Such a member is replaced with the bundled default before the parse. A member
- * that only changed name is renamed in place, so its authored value survives. A member this build
- * no longer reads is deleted, so the file stops carrying a key nothing acts on.
+ * Boot-time repair of a settings file written against an older layout version.
+ * A member whose value form changed takes the bundled default, a renamed one is renamed in place
+ * so its authored value survives, and one this build no longer reads is deleted.
  */
 
 #include "settings_upgrade.h"
@@ -32,7 +30,7 @@ struct ReplacedMember {
  * Members replaced with the bundled default, each with the version that changed it.
  * A member is listed because its value form changed, or because its default changed.
  */
-constexpr std::array<ReplacedMember, 9> kReplacedMembers{{
+constexpr std::array<ReplacedMember, 11> kReplacedMembers{{
     {"\"key_bindings\"", 3},
     {"\"region_private\"", 5},
     {"\"topology\"", 5},
@@ -46,6 +44,9 @@ constexpr std::array<ReplacedMember, 9> kReplacedMembers{{
     {"\"lua_declarations\"", 13},
     {"\"suppress_peer_relay\"", 13},
     {"\"activity_public_membership\"", 13},
+    // Version 15 seeded the lore book unlock slots, so both banks take the new default.
+    {"\"character_flags\"", 15},
+    {"\"objective_values\"", 15},
 }};
 
 /** One renamed member, and the layout version that renamed it. */
@@ -76,8 +77,13 @@ struct RemovedMember {
 };
 
 /** Members this build no longer reads, each with the version that removed it. */
-constexpr std::array<RemovedMember, 1> kRemovedMembers{{
+constexpr std::array<RemovedMember, 4> kRemovedMembers{{
     {"\"force_join_request_ready\"", 12},
+    // Version 14 dropped two client stand-ins and moved the catalyst gate under
+    // `state.investment`, so the root copy is no longer read.
+    {"\"skip_profile_setup\"", 14},
+    {"\"ignore_client_slot_release\"", 14},
+    {"\"complete_exotic_catalysts\"", 14},
 }};
 
 /** One splice per replaced, renamed and removed member, plus the version member itself. */

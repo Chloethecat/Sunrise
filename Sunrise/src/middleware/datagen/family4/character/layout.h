@@ -42,9 +42,9 @@ inline constexpr std::size_t kInventoryRowCountPaddingSize = 4;
 inline constexpr std::size_t kInventoryChangeUnknownSize = 4;
 /** The character object carries at most 16 transient inventory-change records. */
 inline constexpr std::size_t kInventoryChangeRecordCapacity = 16;
-/** 52 reserved bytes separate the equipment summary from its validity gate. */
+/** 36 reserved bytes separate the equipment summary from the equipped-title row. */
 inline constexpr std::size_t kSummaryTitlePaddingSize = 36;
-/** Reserved bytes between the equipped-title row and the inventory validity gate. */
+/** 14 reserved bytes separate the equipped-title row from the inventory validity gate. */
 inline constexpr std::size_t kTitleGatePaddingSize = 14;
 /** 14 reserved bytes separate the two inventory validity gate fields. */
 inline constexpr std::size_t kGateStatePaddingSize = 14;

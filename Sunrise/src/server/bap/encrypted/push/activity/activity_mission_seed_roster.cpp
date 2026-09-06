@@ -5,8 +5,6 @@
 #include <limits>
 #include <span>
 #include <string_view>
-#include <tuple>
-#include <type_traits>
 
 #include "../../../../../core/logging/log.h"
 #include "../../../../../middleware/content/packages/tables/region_reader.h"
@@ -430,11 +428,8 @@ MissionSeedRosterResult append_initial_mission_seed(Session& session,
     // A publication must not shrink the registered group set: a group left out is never torn down
     // and its records stay unseeded. So every publication carries the union of the registered
     // regions' groups, activated through one sub-block per bubble.
-    std::array<std::uint8_t,
-               std::tuple_size_v<std::remove_reference_t<decltype(scratch.rosterGroups)>>>
-        groupBubble{};
-    std::array<bool, std::tuple_size_v<std::remove_reference_t<decltype(scratch.rosterGroups)>>>
-        groupActive{};
+    std::array<std::uint8_t, message::kPublishedGroupCapacity> groupBubble{};
+    std::array<bool, message::kPublishedGroupCapacity> groupActive{};
     std::size_t foldGroupCount = summary.groupCount;
     for (std::size_t index = 0; index < foldGroupCount; ++index) {
         groupBubble[index] = static_cast<std::uint8_t>(summary.bubbleOrdinal);

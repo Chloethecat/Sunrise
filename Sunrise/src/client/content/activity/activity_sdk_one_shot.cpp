@@ -22,6 +22,7 @@ namespace generated = state::activity_sdk::generated_world;
 namespace publication = tree_publication;
 namespace estate = estate_validation;
 
+// A stage name carries three sequence words so two passes never collide.
 constexpr std::wstring_view kStageSuffix = L".stage.%08lX.%08lX.%08lX";
 
 volatile LONG g_stageSequence{};
@@ -162,6 +163,7 @@ void report(OfflineProgressSink sink,
                 directory, buffer.data(), needed, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
             if (written != 0 && written < needed) {
                 buffer.resize(written);
+                // Windows returns the extended prefix; callers store the plain path.
                 constexpr std::wstring_view kExtended = L"\\\\?\\";
                 if (buffer.starts_with(kExtended)) {
                     buffer.erase(0, kExtended.size());

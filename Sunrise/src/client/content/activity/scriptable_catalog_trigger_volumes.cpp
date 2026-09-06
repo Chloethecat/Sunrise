@@ -22,12 +22,14 @@ namespace catalog = state::build_data::scriptables;
 namespace package_reader = middleware::content::packages::reader;
 namespace tables = middleware::content::packages::tables;
 
+// Fixed capacities bound one scenario's trigger tables, prisms and components.
 constexpr std::size_t kTableCapacity = 65'536;
 constexpr std::size_t kOwnerCapacity = 262'144;
 constexpr std::size_t kInstanceCapacity = 262'144;
 constexpr std::size_t kVertexCapacity = 1'048'576;
 constexpr std::size_t kTriangleCapacity = 1'048'576;
 constexpr std::size_t kComponentCapacity = 4'096;
+// Authored bounds must agree within this absolute tolerance.
 constexpr float kBoundsTolerance = 0.0001F;
 
 struct BuildContext final {
@@ -278,9 +280,9 @@ void append_root(BuildContext& context,
         }
         rows.emplace_back(identity, static_cast<std::uint32_t>(rowIndex));
     }
-    std::sort(rows.begin(), rows.end(), [](const auto& left, const auto& right) noexcept {
-        return std::tie(left.first.key, left.first.type, left.first.index, left.second)
-               < std::tie(right.first.key, right.first.type, right.first.index, right.second);
+    std::sort(rows.begin(), rows.end(), [](const auto& first, const auto& second) noexcept {
+        return std::tie(first.first.key, first.first.type, first.first.index, first.second)
+               < std::tie(second.first.key, second.first.type, second.first.index, second.second);
     });
     for (std::size_t first = 0; first < rows.size();) {
         std::size_t last = first + 1;
@@ -398,18 +400,18 @@ bool append_trigger_volumes(const package_reader::Source& source,
         std::vector<TriggerVolumeInput> ordered(inputs.begin(), inputs.end());
         std::sort(ordered.begin(),
                   ordered.end(),
-                  [](const TriggerVolumeInput& left, const TriggerVolumeInput& right) noexcept {
-                      if (left.configTag != right.configTag) {
-                          return left.configTag < right.configTag;
+                  [](const TriggerVolumeInput& first, const TriggerVolumeInput& second) noexcept {
+                      if (first.configTag != second.configTag) {
+                          return first.configTag < second.configTag;
                       }
-                      return left.objectRow < right.objectRow;
+                      return first.objectRow < second.objectRow;
                   });
         ordered.erase(std::unique(ordered.begin(),
                                   ordered.end(),
-                                  [](const TriggerVolumeInput& left,
-                                     const TriggerVolumeInput& right) noexcept {
-                                      return left.configTag == right.configTag
-                                             && left.objectRow == right.objectRow;
+                                  [](const TriggerVolumeInput& first,
+                                     const TriggerVolumeInput& second) noexcept {
+                                      return first.configTag == second.configTag
+                                             && first.objectRow == second.objectRow;
                                   }),
                       ordered.end());
         output.triggerVolumeTables.reserve(256);

@@ -116,16 +116,16 @@ struct SquadClientRefLayout final {
             || slot.unsignedValue > external::kMaximumEntitySlot) {
             continue;
         }
+        const auto end = values.begin() + static_cast<std::ptrdiff_t>(result.valueCount);
         const auto incarnation =
-            std::find_if(values.begin() + position + 1,
-                         values.begin() + result.valueCount,
+            std::find_if(values.begin() + static_cast<std::ptrdiff_t>(position) + 1,
+                         end,
                          [&slot](const wire::RuntimeDecodedValue& value) {
                              return value.present && value.fieldRow == slot.fieldRow
                                     && value.occurrence == slot.occurrence
                                     && value.role == wire::ValueRole::entityReferenceIncarnation;
                          });
-        if (incarnation == values.begin() + result.valueCount
-            || incarnation->unsignedValue > external::kMaximumEntityIncarnation
+        if (incarnation == end || incarnation->unsignedValue > external::kMaximumEntityIncarnation
             || output.actorCount == output.actors.size()) {
             return false;
         }
@@ -214,10 +214,11 @@ struct SquadClientRefLayout final {
                            OutputPurpose::policyCommand)) {
             for (OutputRow& output : session.outputs) {
                 if (output.purpose == OutputPurpose::policyCommand
-                    && std::any_of(
-                        queued.begin(), queued.begin() + queuedCount, [&output](const auto& token) {
-                            return same_token(output.target, token);
-                        })) {
+                    && std::any_of(queued.begin(),
+                                   queued.begin() + static_cast<std::ptrdiff_t>(queuedCount),
+                                   [&output](const auto& token) {
+                                       return same_token(output.target, token);
+                                   })) {
                     output = {};
                 }
             }
@@ -334,11 +335,14 @@ static bool accept_entity_record(std::uint64_t groupSessionId,
 /** Policy projection visits every record after transport acceptance. */
 bool accept_entity_batch(std::uint64_t groupSessionId,
                          const external::EntityBatch& batch) noexcept {
-    if (groupSessionId == 0) return false;
+    if (groupSessionId == 0) {
+        return false;
+    }
     bool accepted = true;
-    for (std::size_t index = 0; index < external::entity_record_count(batch); ++index)
+    for (std::size_t index = 0; index < external::entity_record_count(batch); ++index) {
         accepted = accept_entity_record(groupSessionId, external::entity_record_at(batch, index))
                    && accepted;
+    }
     return accepted;
 }
 
@@ -425,10 +429,9 @@ bool accept_lane0(std::uint64_t groupSessionId,
             if (row.purpose != OutputPurpose::restoreCommand) {
                 continue;
             }
-            if (std::find(createdReplays.begin(),
-                          createdReplays.begin() + createdReplayCount,
-                          row.replayIndex)
-                != createdReplays.begin() + createdReplayCount) {
+            const auto end =
+                createdReplays.begin() + static_cast<std::ptrdiff_t>(createdReplayCount);
+            if (std::find(createdReplays.begin(), end, row.replayIndex) != end) {
                 row = {};
             }
         }

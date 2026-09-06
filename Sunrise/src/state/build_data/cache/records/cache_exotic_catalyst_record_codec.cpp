@@ -2,6 +2,11 @@
 
 namespace sunrise::state::build_data::cache::records {
 
+/**
+ * Packs one catalyst relation into its canonical disk form.
+ * @param record Receives the packed row; zeroed first.
+ * @return False when the availability value is not supported.
+ */
 bool encode(const items::catalysts::Definition& value, ExoticCatalystRecord& record) noexcept {
     record = {};
     if (!items::catalysts::valid_availability(value.availability)) {
@@ -27,6 +32,11 @@ bool encode(const items::catalysts::Definition& value, ExoticCatalystRecord& rec
     return true;
 }
 
+/**
+ * Unpacks one catalyst relation from its canonical disk form.
+ * @param value Receives the runtime relation; zeroed first.
+ * @return False when the availability value is not supported.
+ */
 bool decode(const ExoticCatalystRecord& record, items::catalysts::Definition& value) noexcept {
     value = {};
     const auto availability = static_cast<items::catalysts::Availability>(record.availability);
@@ -42,7 +52,7 @@ bool decode(const ExoticCatalystRecord& record, items::catalysts::Definition& va
     value.completion.flags = record.completionFlagDefinitionIndices;
     for (std::size_t index = 0; index < value.completion.values.size(); ++index) {
         value.completion.values[index] = {record.completionValueIndices[index],
-                                         record.completionValues[index]};
+                                          record.completionValues[index]};
     }
     value.completion.flagCount = record.completionFlagCount;
     value.completion.valueCount = record.completionValueCount;

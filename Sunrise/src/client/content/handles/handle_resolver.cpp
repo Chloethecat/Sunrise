@@ -128,10 +128,8 @@ bool resolve(const Source& source, std::uint32_t handle, std::uintptr_t& address
     const std::uint64_t extendedMask =
         static_cast<std::uint64_t>(static_cast<std::int64_t>(table.correctionMask));
     const std::uint64_t correction = record.correctionSource & extendedMask;
-    // Match the native `sub rax, rcx` exactly. The correction source is a two's-complement
-    // relative value when the descriptor mask is -1, so a numerically large unsigned correction
-    // intentionally wraps the subtraction forward. Rejecting it as an underflow made every
-    // installed investment-globals handle appear unresolved.
+    // Match the native `sub rax, rcx`. With a -1 mask the correction is two's complement, so a
+    // large unsigned value must wrap forward rather than be refused as an underflow.
     address = recordAddress - static_cast<std::uintptr_t>(correction);
     return address != 0;
 }

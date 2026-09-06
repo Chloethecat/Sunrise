@@ -77,7 +77,8 @@ const manifest::Record* find_record(std::span<const manifest::Record> records,
 bool shard_path(std::wstring_view scenarioDirectory,
                 std::uint32_t scenarioTag,
                 const Digest& payloadSha256,
-                std::wstring& output) noexcept {
+                core::path::Buffer& output) noexcept {
+    // The shard filename spells its payload digest in lowercase hex.
     static constexpr std::array<wchar_t, 16> kDigits{
         L'0',
         L'1',
@@ -96,33 +97,33 @@ bool shard_path(std::wstring_view scenarioDirectory,
         L'e',
         L'f',
     };
-    output.clear();
+    output = {};
     if (scenarioDirectory.empty() || scenarioTag == 0 || !nonzero(payloadSha256)) {
         return false;
     }
     std::array<wchar_t, 10> prefix{};
     const int length =
         std::swprintf(prefix.data(), prefix.size(), L"%08X-", static_cast<unsigned>(scenarioTag));
-    if (length != 9) {
+    if (length != 9 || !core::path::assign(output, scenarioDirectory)) {
         return false;
     }
-    try {
-        output.assign(scenarioDirectory);
-        if (output.back() != L'\\' && output.back() != L'/') {
-            output.push_back(L'\\');
+    const wchar_t last = output.chars[output.length - 1];
+    if (last != L'\\' && last != L'/') {
+        if (!core::path::append(output, L"\\")) {
+            return false;
         }
-        output.append(prefix.data(), static_cast<std::size_t>(length));
-        for (const std::byte byte : payloadSha256) {
-            const unsigned value = std::to_integer<unsigned>(byte);
-            output.push_back(kDigits[(value >> 4U) & 0xFU]);
-            output.push_back(kDigits[value & 0xFU]);
-        }
-        output.append(L".pack");
-        return true;
-    } catch (...) {
-        output.clear();
-        return false;
     }
+    std::array<wchar_t, 2 * std::tuple_size_v<Digest>> hex{};
+    std::size_t written = 0;
+    for (const std::byte byte : payloadSha256) {
+        const unsigned value = std::to_integer<unsigned>(byte);
+        hex[written++] = kDigits[(value >> 4U) & 0xFU];
+        hex[written++] = kDigits[value & 0xFU];
+    }
+    return core::path::append(output,
+                              std::wstring_view(prefix.data(), static_cast<std::size_t>(length)))
+           && core::path::append(output, std::wstring_view(hex.data(), written))
+           && core::path::append(output, L".pack");
 }
 
 /** Loads and authenticates one manifest record's shard. @param status Receives the outcome. */
@@ -147,7 +148,7 @@ bool load_record(std::wstring_view scenarioDirectory,
         return false;
     }
 
-    std::wstring path;
+    core::path::Buffer path;
     if (!shard_path(scenarioDirectory, expectedScenarioTag, record.shardPayloadSha256, path)) {
         status = RecordLoadStatus::invalidIdentity;
         return false;
@@ -160,7 +161,7 @@ bool load_record(std::wstring_view scenarioDirectory,
     }
     Digest payload{};
     LoadStatus loadStatus = LoadStatus::invalid;
-    if (!generated_world::load(path.c_str(),
+    if (!generated_world::load(path.chars.data(),
                                expectedScenarioTag,
                                expectedSourceFingerprint,
                                *pending,

@@ -242,6 +242,7 @@ private:
                                                  const runtime::FieldView& field,
                                                  std::uint32_t occurrence,
                                                  std::size_t depth) noexcept {
+        // Type-36 command header fields, in wire order with their bit widths.
         constexpr std::array<std::pair<ValueRole, std::uint8_t>, 7> fields{{
             {ValueRole::commandDefault, std::uint8_t{1}},
             {ValueRole::commandMode, std::uint8_t{3}},
@@ -260,11 +261,13 @@ private:
             }
             sink_.append(owner, field, occurrence, at, width, value, true, role);
             if (resolver_.nativeCommandEmptyShortcut && role == ValueRole::commandDefault
-                && value != 0)
+                && value != 0) {
                 return RuntimeWalkStatus::complete;
+            }
             if (resolver_.nativeCommandEmptyShortcut && role == ValueRole::commandTargetReference
-                && value != 0)
+                && value != 0) {
                 return RuntimeWalkStatus::unsupportedField;
+            }
             if (role == ValueRole::commandSelector) {
                 selector = static_cast<std::uint8_t>(value);
             }
@@ -351,21 +354,30 @@ private:
         if (profile != nullptr && profile->selectorPresent) {
             const auto at = static_cast<std::uint32_t>(reader_.position());
             std::uint64_t value = 0;
-            if (!reader_.read(1, value)) return RuntimeWalkStatus::malformed;
+            if (!reader_.read(1, value)) {
+                return RuntimeWalkStatus::malformed;
+            }
             compressed = value != 0;
             sink_.append(
                 owner, field, occurrence, at, 1, value, true, ValueRole::positionCompressed);
         }
         if (compressed) {
-            if (!profile->hasWidths) return RuntimeWalkStatus::unsupportedField;
+            if (!profile->hasWidths) {
+                return RuntimeWalkStatus::unsupportedField;
+            }
+            // A compressed position sends X, Y then Z, each at its profile axis width.
             constexpr std::array<ValueRole, 3> roles{
                 ValueRole::positionCodeX, ValueRole::positionCodeY, ValueRole::positionCodeZ};
             for (std::size_t index = 0; index < roles.size(); ++index) {
                 const auto width = profile->axisBits[index];
-                if (width >= 32) return RuntimeWalkStatus::unsupportedField;
+                if (width >= 32) {
+                    return RuntimeWalkStatus::unsupportedField;
+                }
                 const auto at = static_cast<std::uint32_t>(reader_.position());
                 std::uint64_t value = 0;
-                if (!reader_.read(width, value)) return RuntimeWalkStatus::malformed;
+                if (!reader_.read(width, value)) {
+                    return RuntimeWalkStatus::malformed;
+                }
                 sink_.append(owner, field, occurrence, at, width, value, true, roles[index]);
             }
             return RuntimeWalkStatus::complete;
@@ -387,10 +399,14 @@ private:
                                                  std::uint32_t occurrence) noexcept {
         const auto at = static_cast<std::uint32_t>(reader_.position());
         std::uint64_t point = 0, direction = 0;
-        if (!reader_.read(1, point)) return RuntimeWalkStatus::malformed;
+        if (!reader_.read(1, point)) {
+            return RuntimeWalkStatus::malformed;
+        }
         sink_.append(owner, field, occurrence, at, 1, point, true, ValueRole::positionPoint);
         if (point == 0) {
-            if (!reader_.read(1, direction)) return RuntimeWalkStatus::malformed;
+            if (!reader_.read(1, direction)) {
+                return RuntimeWalkStatus::malformed;
+            }
             sink_.append(
                 owner, field, occurrence, at + 1, 1, direction, true, ValueRole::positionDirection);
         }
@@ -398,17 +414,23 @@ private:
             for (const auto role : {ValueRole::vectorX, ValueRole::vectorY, ValueRole::vectorZ}) {
                 const auto position = static_cast<std::uint32_t>(reader_.position());
                 std::uint64_t raw = 0;
-                if (!reader_.read(32, raw)) return RuntimeWalkStatus::malformed;
+                if (!reader_.read(32, raw)) {
+                    return RuntimeWalkStatus::malformed;
+                }
                 sink_.append(owner, field, occurrence, position, 32, raw, true, role);
             }
         } else {
             const auto status = walk_vector3(owner, field, occurrence);
-            if (status != RuntimeWalkStatus::complete) return status;
+            if (status != RuntimeWalkStatus::complete) {
+                return status;
+            }
         }
         if (point == 0 && direction == 0) {
             const auto position = static_cast<std::uint32_t>(reader_.position());
             std::uint64_t raw = 0;
-            if (!reader_.read(32, raw)) return RuntimeWalkStatus::malformed;
+            if (!reader_.read(32, raw)) {
+                return RuntimeWalkStatus::malformed;
+            }
             sink_.append(owner, field, occurrence, position, 32, raw, true, ValueRole::vectorW);
         }
         return RuntimeWalkStatus::complete;
@@ -606,18 +628,22 @@ private:
         if (depth >= kMaximumRuntimeDepth || !step()) {
             return RuntimeWalkStatus::unsafeCount;
         }
-        if (resolver_.canonicalType != nullptr)
+        if (resolver_.canonicalType != nullptr) {
             field.typeCode = resolver_.canonicalType(resolver_.context, field.typeCode);
+        }
         if (field.typeCode == 13) {
             return walk_vector3(owner, field, occurrence);
         }
         if (field.typeCode == 16) {
             const auto at = static_cast<std::uint32_t>(reader_.position());
             std::uint64_t shortcut = 0, axis = 0, angle = 0;
-            if (!reader_.read(1, shortcut)) return RuntimeWalkStatus::malformed;
-            const std::uint8_t axisWidth = shortcut != 0 ? 1 : 19;
-            if (!reader_.read(axisWidth, axis) || !reader_.read(7, angle))
+            if (!reader_.read(1, shortcut)) {
                 return RuntimeWalkStatus::malformed;
+            }
+            const std::uint8_t axisWidth = shortcut != 0 ? 1 : 19;
+            if (!reader_.read(axisWidth, axis) || !reader_.read(7, angle)) {
+                return RuntimeWalkStatus::malformed;
+            }
             sink_.append(
                 owner, field, occurrence, at, 1, shortcut, true, ValueRole::rotationAxisShortcut);
             sink_.append(owner,
@@ -641,13 +667,17 @@ private:
         if (field.typeCode == 42) {
             const auto at = static_cast<std::uint32_t>(reader_.position());
             std::uint64_t uniform = 0;
-            if (!reader_.read(1, uniform)) return RuntimeWalkStatus::malformed;
+            if (!reader_.read(1, uniform)) {
+                return RuntimeWalkStatus::malformed;
+            }
             sink_.append(owner, field, occurrence, at, 1, uniform, true, ValueRole::vectorUniform);
             const bool quantized = field.parameter2 > 0 && field.parameter2 < 32;
             unsigned width = quantized ? field.parameter2 : 32;
             if (uniform != 0 && quantized) {
                 std::uint64_t integer = 0;
-                if (!reader_.read(1, integer)) return RuntimeWalkStatus::malformed;
+                if (!reader_.read(1, integer)) {
+                    return RuntimeWalkStatus::malformed;
+                }
                 sink_.append(owner,
                              field,
                              occurrence,
@@ -662,11 +692,13 @@ private:
                     const float maximum =
                         std::bit_cast<float>(static_cast<std::uint32_t>(field.widthOrCountOffset));
                     const float range = maximum - minimum;
-                    if (!std::isfinite(range) || range < 0 || range >= 2147483648.0F)
+                    if (!std::isfinite(range) || range < 0 || range >= 2147483648.0F) {
                         return RuntimeWalkStatus::unsupportedField;
+                    }
                     width = std::bit_width(static_cast<std::uint32_t>(range));
                 }
             }
+            // A compressed vector sends X, Y, Z then W in that order.
             constexpr std::array roles{ValueRole::vectorCodeX,
                                        ValueRole::vectorCodeY,
                                        ValueRole::vectorCodeZ,
@@ -674,8 +706,9 @@ private:
             for (unsigned index = 0; index < (uniform != 0 ? 1U : 4U); ++index) {
                 const auto offset = static_cast<std::uint32_t>(reader_.position());
                 std::uint64_t code = 0;
-                if (width != 0 && !reader_.read(static_cast<std::uint8_t>(width), code))
+                if (width != 0 && !reader_.read(static_cast<std::uint8_t>(width), code)) {
                     return RuntimeWalkStatus::malformed;
+                }
                 sink_.append(owner,
                              field,
                              occurrence,
@@ -694,8 +727,9 @@ private:
                     : field.widthOrCountOffset;
             const auto at = static_cast<std::uint32_t>(reader_.position());
             std::uint64_t code = 0;
-            if (width <= 0 || width > 32 || !reader_.read(static_cast<std::uint8_t>(width), code))
+            if (width <= 0 || width > 32 || !reader_.read(static_cast<std::uint8_t>(width), code)) {
                 return RuntimeWalkStatus::malformed;
+            }
             sink_.append(owner,
                          field,
                          occurrence,
@@ -837,12 +871,14 @@ private:
         for (std::uint32_t index = 0; index < repeats; ++index) {
             const std::uint64_t relative = static_cast<std::uint64_t>(field.bitmapOffset)
                                            * (owner.arrayLength != 0 ? index : 1U);
-            if (relative > (std::numeric_limits<std::uint32_t>::max)() - bitmapBase_)
+            if (relative > (std::numeric_limits<std::uint32_t>::max)() - bitmapBase_) {
                 return RuntimeWalkStatus::unsafeCount;
+            }
             const auto fieldBit = bitmapBase_ + static_cast<std::uint32_t>(relative);
             if (resolver_.recordPresence != nullptr && (field.presence != 0 || nested)
-                && !field.hasBitmapOffset)
+                && !field.hasBitmapOffset) {
                 return RuntimeWalkStatus::schemaUnavailable;
+            }
             BitmapScope bitmapScope(bitmapBase_, fieldBit + (field.presence != 0 ? 1U : 0U));
             if (!step()) {
                 return RuntimeWalkStatus::unsafeCount;
@@ -858,8 +894,9 @@ private:
                     return RuntimeWalkStatus::malformed;
                 }
                 if (resolver_.recordPresence != nullptr
-                    && !resolver_.recordPresence(resolver_.context, fieldBit, present != 0))
+                    && !resolver_.recordPresence(resolver_.context, fieldBit, present != 0)) {
                     return RuntimeWalkStatus::unsafeCount;
+                }
                 if (structural) {
                     sink_.append(owner,
                                  field,
@@ -877,7 +914,9 @@ private:
                     continue;
                 }
             }
-            if (unknownOptional) return RuntimeWalkStatus::unsupportedField;
+            if (unknownOptional) {
+                return RuntimeWalkStatus::unsupportedField;
+            }
             if (nested) {
                 const RuntimeWalkStatus status = walk_nested(owner, field, memory, depth);
                 if (status != RuntimeWalkStatus::complete) {

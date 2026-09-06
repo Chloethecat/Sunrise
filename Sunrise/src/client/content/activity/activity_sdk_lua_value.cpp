@@ -24,6 +24,7 @@ enum class Dialect : std::uint8_t {
 
 /** Appends JSON/Lua-safe ASCII and refuses non-ASCII bytes without rollback. */
 [[nodiscard]] bool append_quoted(std::string_view value, std::string& output) {
+    // Escaped bytes are emitted as lowercase hex.
     static constexpr char kHex[] = "0123456789abcdef";
     output.push_back('"');
     for (const unsigned char byte : value) {
@@ -138,18 +139,18 @@ render_value(const Value& value, Dialect dialect, std::uint32_t depth, std::stri
     return std::visit(
         [&](const auto& item) -> bool {
             using Item = std::remove_cvref_t<decltype(item)>;
-            if constexpr (std::is_same_v<Item, std::monostate>) {
+            if constexpr (std::is_same_v<Item, std::monostate>) { // Empty spells differently.
                 output.append(dialect == Dialect::json ? "null" : "nil");
                 return true;
-            } else if constexpr (std::is_same_v<Item, bool>) {
+            } else if constexpr (std::is_same_v<Item, bool>) { // Both dialects share the literals.
                 output.append(item ? "true" : "false");
                 return true;
-            } else if constexpr (std::is_same_v<Item, std::uint64_t>) {
+            } else if constexpr (std::is_same_v<Item, std::uint64_t>) { // No float form is emitted.
                 output.append(std::to_string(item));
                 return true;
-            } else if constexpr (std::is_same_v<Item, std::string>) {
+            } else if constexpr (std::is_same_v<Item, std::string>) { // Non-ASCII is refused.
                 return append_quoted(item, output);
-            } else if constexpr (std::is_same_v<Item, Value::Array>) {
+            } else if constexpr (std::is_same_v<Item, Value::Array>) { // Objects take the last arm.
                 return render_array(item, dialect, depth, output);
             } else {
                 return render_object(item, dialect, depth, output);
@@ -181,8 +182,8 @@ Value array(Value::Array values) {
 }
 
 Value object(Value::Object values) {
-    std::sort(values.begin(), values.end(), [](const auto& left, const auto& right) {
-        return left.first < right.first;
+    std::sort(values.begin(), values.end(), [](const auto& first, const auto& second) {
+        return first.first < second.first;
     });
     return Value{std::move(values)};
 }
@@ -227,6 +228,7 @@ std::string_view text(const Source& source, format::StringRef reference) noexcep
 
 /** Encodes the 32-byte digest in lowercase with an optional sha256 prefix. */
 std::string digest_hex(const std::array<std::byte, 32>& digest, bool prefix) {
+    // The digest is published in lowercase hex.
     static constexpr char kHex[] = "0123456789abcdef";
     std::string output;
     output.reserve((prefix ? 7U : 0U) + digest.size() * 2U);

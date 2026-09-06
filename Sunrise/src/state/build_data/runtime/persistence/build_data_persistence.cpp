@@ -7,6 +7,7 @@
 
 #include "../../../../core/ui/busy/busy.h"
 #include "../../abilities/ability_bucket_catalog.h"
+#include "../../bounties/bounty_catalog.h"
 #include "../../cache/internal.h"
 #include "../../cache/records/validation.h"
 #include "../../collectibles/collectible_catalog.h"
@@ -22,6 +23,7 @@
 #include "../../records/record_catalog.h"
 #include "../../runtime.h"
 #include "../../scenarios/scenario_catalog.h"
+#include "../../season_pass/season_pass_catalog.h"
 #include "../../sobjects/sobject_catalog.h"
 #include "../../socket_entry_lists/socket_entry_list_catalog.h"
 #include "../../spawn_sets/spawn_set_catalog.h"
@@ -86,7 +88,14 @@ to_record(const constants::InvestmentConstants& value) noexcept {
                                                         counts.socketEntryTables)
            && abilities::snapshot(scratch.abilityBuckets, counts.abilityBuckets)
            && progressions::snapshot(scratch.progressions, counts.progressions)
+           && progressions::snapshot_steps(scratch.progressionSteps, counts.progressionSteps)
+           && season_pass::snapshot(scratch.seasonPassRewards, counts.seasonPassRewards)
+           && season_pass::snapshot_packages(scratch.seasonPassPackages, counts.seasonPassPackages)
+           && bounties::snapshot(scratch.bounties, counts.bounties)
            && records::snapshot(scratch.records, counts.records)
+           && records::snapshot_objectives(scratch.recordObjectives, counts.recordObjectives)
+           && records::snapshot_intervals(scratch.recordIntervals, counts.recordIntervals)
+           && records::snapshot_rewards(scratch.recordRewards, counts.recordRewards)
            && nodes::snapshot(scratch.nodes, counts.nodes)
            && sobjects::snapshot(scratch.sobjects, counts.sobjects)
            && scenarios::snapshot(scratch.scenarios, counts.scenarios)
@@ -115,10 +124,10 @@ to_record(const constants::InvestmentConstants& value) noexcept {
            && collectible_definitions_ready() && socket_plug_rules_ready()
            && material_requirement_sets_ready() && inventory_bucket_descriptors_ready()
            && socket_entry_lists_ready() && ability_buckets_ready()
-           && progression_definitions_ready() && record_definitions_ready()
-           && node_definitions_ready() && sobjects::count() != 0 && scenario_layouts_ready()
-           && spawn_sets_ready() && hash_names_ready()
-           && gameplay::entity_position_profiles::available()
+           && progression_definitions_ready() && season_pass_ready() && repeatable_bounties_ready()
+           && record_definitions_ready() && node_definitions_ready() && sobject_definitions_ready()
+           && scenario_layouts_ready() && spawn_sets_ready() && hash_names_ready()
+           && vendor_catalog_ready() && gameplay::entity_position_profiles::available()
            && gameplay::entity_object_types::available() && constants::find(published);
 }
 
@@ -174,6 +183,12 @@ cache::records::MutableDomains scratch_domains(Context& state) noexcept {
             state.progressionScratch);
     const auto recordRows =
         ensure_scratch<records::Definition, records::kDefinitionCapacity>(state.recordScratch);
+    const auto recordObjectives = ensure_scratch<records::Objective, records::kObjectiveCapacity>(
+        state.recordObjectiveScratch);
+    const auto recordIntervals =
+        ensure_scratch<records::Interval, records::kIntervalCapacity>(state.recordIntervalScratch);
+    const auto recordRewards =
+        ensure_scratch<records::Reward, records::kRewardCapacity>(state.recordRewardScratch);
     const auto nodeRows =
         ensure_scratch<nodes::Definition, nodes::kDefinitionCapacity>(state.nodeScratch);
     const auto sobjectRows =
@@ -202,6 +217,16 @@ cache::records::MutableDomains scratch_domains(Context& state) noexcept {
     const auto vendorInstalledRows =
         ensure_scratch<vendors::InstalledRow, vendors::kInstalledRowCapacity>(
             state.vendorInstalledRowScratch);
+    const auto progressionSteps = ensure_scratch<progressions::Step, progressions::kStepCapacity>(
+        state.progressionStepScratch);
+    const auto seasonPassRewards =
+        ensure_scratch<season_pass::Reward, season_pass::kRewardCapacity>(
+            state.seasonPassRewardScratch);
+    const auto seasonPassPackages =
+        ensure_scratch<season_pass::Package, season_pass::kPackageCapacity>(
+            state.seasonPassPackageScratch);
+    const auto bountyRows =
+        ensure_scratch<bounties::Definition, bounties::kDefinitionCapacity>(state.bountyScratch);
     const auto positionProfiles = ensure_scratch<gameplay::entity_position_profiles::Row,
                                                  gameplay::entity_position_profiles::kMaximumRows>(
         state.positionProfileScratch);
@@ -238,6 +263,13 @@ cache::records::MutableDomains scratch_domains(Context& state) noexcept {
         &state.positionFingerprint,
         ensure_scratch<gameplay::entity_object_types::Row,
                        gameplay::entity_object_types::kMaximumRows>(state.objectTypeScratch),
+        recordObjectives,
+        recordIntervals,
+        recordRewards,
+        progressionSteps,
+        seasonPassRewards,
+        seasonPassPackages,
+        bountyRows,
     };
 }
 
@@ -265,7 +297,14 @@ void release_scratch_locked(Context& state) noexcept {
     release_bank(state.socketEntryTableScratch);
     release_bank(state.abilityBucketScratch);
     release_bank(state.progressionScratch);
+    release_bank(state.progressionStepScratch);
+    release_bank(state.seasonPassRewardScratch);
+    release_bank(state.seasonPassPackageScratch);
+    release_bank(state.bountyScratch);
     release_bank(state.recordScratch);
+    release_bank(state.recordObjectiveScratch);
+    release_bank(state.recordIntervalScratch);
+    release_bank(state.recordRewardScratch);
     release_bank(state.nodeScratch);
     release_bank(state.sobjectScratch);
     release_bank(state.scenarioScratch);
@@ -354,6 +393,18 @@ cache::records::Domains occupied_domains(Context& state,
         state.positionFingerprint,
         std::span<const gameplay::entity_object_types::Row>{state.objectTypeScratch.data(),
                                                             counts.objectTypes},
+        std::span<const records::Objective>{state.recordObjectiveScratch.data(),
+                                            counts.recordObjectives},
+        std::span<const records::Interval>{state.recordIntervalScratch.data(),
+                                           counts.recordIntervals},
+        std::span<const records::Reward>{state.recordRewardScratch.data(), counts.recordRewards},
+        std::span<const progressions::Step>{state.progressionStepScratch.data(),
+                                            counts.progressionSteps},
+        std::span<const season_pass::Reward>{state.seasonPassRewardScratch.data(),
+                                             counts.seasonPassRewards},
+        std::span<const season_pass::Package>{state.seasonPassPackageScratch.data(),
+                                              counts.seasonPassPackages},
+        std::span<const bounties::Definition>{state.bountyScratch.data(), counts.bounties},
     };
 }
 

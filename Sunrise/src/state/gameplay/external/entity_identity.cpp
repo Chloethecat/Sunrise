@@ -28,10 +28,15 @@ bool newer(std::uint16_t next, std::uint16_t previous, std::uint16_t modulus) no
     return distance != 0 && distance < modulus / 2;
 }
 
+/** @return True when the actor source matches what this observation may carry. */
 bool valid_actor_source(const Observation& value) noexcept {
     const auto& source = value.actorSource;
-    if (!source.known) return !source.present;
-    if (value.type != 0 || value.action == Action::remove) return false;
+    if (!source.known) {
+        return !source.present;
+    }
+    if (value.type != 0 || value.action == Action::remove) {
+        return false;
+    }
     return !source.present
            || (source.key != 0 && source.key != 0xFFFFFFFFU && source.type <= 126
                && source.index <= 32767);
@@ -76,8 +81,9 @@ Result stage(const Identity& current,
     if (ordinalOrder
         && (value.packetOrdinal < current.packetOrdinal
             || (value.packetOrdinal == current.packetOrdinal
-                && value.packetRecordIndex < current.packetRecordIndex)))
+                && value.packetRecordIndex < current.packetRecordIndex))) {
         return Result::stale;
+    }
     if (!ordinalOrder && current.known && value.hasPacketSequence && current.hasPacketSequence
         && value.packetSequence != current.packetSequence
         && !newer(value.packetSequence, current.packetSequence, kPacketModulus)) {
@@ -88,21 +94,28 @@ Result stage(const Identity& current,
         const bool resetSerial =
             value.hasAllocationEpoch
             && (!current.hasAllocationEpoch || current.serialDomain != allocationDomain);
-        if (value.hasAllocationEpoch && value.allocationSequence == 0) return Result::stale;
+        if (value.hasAllocationEpoch && value.allocationSequence == 0) {
+            return Result::stale;
+        }
         if (current.known && !resetSerial) {
             const bool duplicate = current.token == value.token
                                    && current.allocationSequence == value.allocationSequence;
             if (duplicate) {
-                if (!current.present) return Result::stale;
+                if (!current.present) {
+                    return Result::stale;
+                }
                 if (current.type != value.type || current.metadata != value.metadata) {
                     next.conflicted = true;
                     return Result::conflict;
                 }
-                if (current.conflicted) return Result::conflict;
+                if (current.conflicted) {
+                    return Result::conflict;
+                }
             } else {
                 if (!newer(
-                        value.allocationSequence, current.allocationSequence, kAllocationModulus))
+                        value.allocationSequence, current.allocationSequence, kAllocationModulus)) {
                     return Result::stale;
+                }
                 replacement = true;
             }
         }
@@ -128,20 +141,34 @@ Result stage(const Identity& current,
         }
         next.serialDomain = value.hasAllocationEpoch ? allocationDomain : 0;
     } else {
-        if (!current.known) return Result::missing;
-        if (current.token != value.token) return Result::stale;
-        if (current.conflicted) return Result::conflict;
-        if (!current.present && value.action != Action::remove) return Result::missing;
-        if (value.action == Action::remove) next.present = false;
+        if (!current.known) {
+            return Result::missing;
+        }
+        if (current.token != value.token) {
+            return Result::stale;
+        }
+        if (current.conflicted) {
+            return Result::conflict;
+        }
+        if (!current.present && value.action != Action::remove) {
+            return Result::missing;
+        }
+        if (value.action == Action::remove) {
+            next.present = false;
+        }
     }
     if (value.actorSource.known) {
         next.actorSource = value.actorSource.present ? value.actorSource : ActorSourceReference{};
         next.actorSource.known = true;
     }
-    if (value.action == Action::createAndRemove) next.present = false;
+    if (value.action == Action::createAndRemove) {
+        next.present = false;
+    }
     next.cell = value.cell;
     next.recordFlags = value.recordFlags;
-    if ((value.recordFlags & kTerminalFlag) != 0) next.trailingState = value.trailingState;
+    if ((value.recordFlags & kTerminalFlag) != 0) {
+        next.trailingState = value.trailingState;
+    }
     if (value.anchorChanged) {
         next.anchorKnown = true;
         next.anchorPresent = value.anchorPresent;
@@ -182,16 +209,22 @@ Result stage(const Identity& current,
         next.hasPacketSequence = current.hasPacketSequence;
         next.packetSequence = current.packetSequence;
     }
-    if (value.action == Action::createAndRemove) return Result::removed;
-    if (replacement) return Result::created;
-    if (value.action == Action::remove)
+    if (value.action == Action::createAndRemove) {
+        return Result::removed;
+    }
+    if (replacement) {
+        return Result::created;
+    }
+    if (value.action == Action::remove) {
         return current.present ? Result::removed : Result::unchanged;
+    }
     if (same_state(current, next) && next.hasPacketSequence == current.hasPacketSequence
         && next.packetSequence == current.packetSequence
         && next.hasPacketOrdinal == current.hasPacketOrdinal
         && next.packetOrdinal == current.packetOrdinal
-        && next.packetRecordIndex == current.packetRecordIndex)
+        && next.packetRecordIndex == current.packetRecordIndex) {
         return Result::unchanged;
+    }
     return Result::updated;
 }
 } // namespace
@@ -209,20 +242,24 @@ std::size_t Store::retire(const Source& source,
     if (!valid_source(source) || lifetimes.size() > kSlotCapacity
         || std::any_of(lifetimes.begin(), lifetimes.end(), [](const auto& lifetime) {
                return !valid_token(lifetime.token);
-           }))
+           })) {
         return 0;
+    }
     auto partition = std::find_if(partitions_.begin(), partitions_.end(), [&](const auto& value) {
         return value.occupied && value.source == source;
     });
-    if (partition == partitions_.end()) return 0;
+    if (partition == partitions_.end()) {
+        return 0;
+    }
     std::size_t retired = 0;
     for (const auto& lifetime : lifetimes) {
         auto& current = partition->slots[lifetime.token.slot];
         if (!current.known || !current.present || current.token != lifetime.token
             || current.allocationSequence != lifetime.allocationSequence
             || current.allocationEpoch != lifetime.allocationEpoch
-            || current.allocationDomain != lifetime.allocationDomain)
+            || current.allocationDomain != lifetime.allocationDomain) {
             continue;
+        }
         current.present = false;
         current.revision = ++revision_;
         ++retired;
@@ -238,22 +275,25 @@ std::size_t Store::retire(const Source& source,
  */
 Result Store::observe(const Source& source, const Observation& observation) noexcept {
     if (!valid_source(source) || !valid_observation(observation)
-        || (observation.hasAllocationEpoch && observation.allocationDomain == 0))
+        || (observation.hasAllocationEpoch && observation.allocationDomain == 0)) {
         return Result::invalid;
+    }
     auto partition = std::find_if(partitions_.begin(), partitions_.end(), [&](const auto& value) {
         return value.occupied && value.source == source;
     });
     if (partition != partitions_.end() && partition->hasAllocationEpoch
         && (!observation.hasAllocationEpoch
             || observation.allocationEpoch != partition->allocationEpoch
-            || observation.allocationDomain != partition->allocationDomain))
+            || observation.allocationDomain != partition->allocationDomain)) {
         return Result::stale;
+    }
     const Identity empty{};
     const Identity& current =
         partition == partitions_.end() ? empty : partition->slots[observation.token.slot];
     if (observation.actorSource.known && observation.action != Action::create
-        && observation.action != Action::createAndRemove && current.known && current.type != 0)
+        && observation.action != Action::createAndRemove && current.known && current.type != 0) {
         return Result::invalid;
+    }
     Identity next{};
     const Result result = stage(current, observation, next, observation.allocationDomain);
     if (result == Result::missing || result == Result::stale
@@ -262,13 +302,16 @@ Result Store::observe(const Source& source, const Observation& observation) noex
             && next.hasPacketOrdinal == current.hasPacketOrdinal
             && next.packetOrdinal == current.packetOrdinal
             && next.packetRecordIndex == current.packetRecordIndex)
-        || (result == Result::conflict && current.conflicted))
+        || (result == Result::conflict && current.conflicted)) {
         return result;
+    }
     if (partition == partitions_.end()) {
         partition = std::find_if(partitions_.begin(), partitions_.end(), [](const auto& value) {
             return !value.occupied;
         });
-        if (partition == partitions_.end()) return Result::capacity;
+        if (partition == partitions_.end()) {
+            return Result::capacity;
+        }
         try {
             std::vector<Identity> slots(kSlotCapacity);
             partition->slots = std::move(slots);
@@ -293,8 +336,10 @@ Result Store::observe_batch(const Source& source,
                             std::span<const Observation> observations,
                             std::span<Result> results) noexcept {
     if (!valid_source(source) || observations.empty()
-        || observations.size() > kObservationBatchCapacity || results.size() < observations.size())
+        || observations.size() > kObservationBatchCapacity
+        || results.size() < observations.size()) {
         return Result::invalid;
+    }
     auto partition = std::find_if(partitions_.begin(), partitions_.end(), [&](const auto& value) {
         return value.occupied && value.source == source;
     });
@@ -302,9 +347,12 @@ Result Store::observe_batch(const Source& source,
     if (partition != partitions_.end() && partition->hasAllocationEpoch
         && (!packetEpoch.hasAllocationEpoch
             || packetEpoch.allocationEpoch != partition->allocationEpoch
-            || packetEpoch.allocationDomain != partition->allocationDomain))
+            || packetEpoch.allocationDomain != partition->allocationDomain)) {
         return Result::stale;
-    if (packetEpoch.hasAllocationEpoch && packetEpoch.allocationDomain == 0) return Result::invalid;
+    }
+    if (packetEpoch.hasAllocationEpoch && packetEpoch.allocationDomain == 0) {
+        return Result::invalid;
+    }
     struct Change {
         std::uint16_t slot{};
         Identity value{};
@@ -314,15 +362,20 @@ Result Store::observe_batch(const Source& source,
     std::size_t changeCount = 0;
     const Identity empty{};
     const auto current = [&](std::uint16_t slot) -> const Identity& {
-        for (std::size_t index = 0; index < changeCount; ++index)
-            if (changes[index].slot == slot) return changes[index].value;
+        for (std::size_t index = 0; index < changeCount; ++index) {
+            if (changes[index].slot == slot) {
+                return changes[index].value;
+            }
+        }
         return partition == partitions_.end() ? empty : partition->slots[slot];
     };
     const auto assign = [&](std::uint16_t slot, const Identity& value) {
         std::size_t index = 0;
         for (; index < changeCount && changes[index].slot != slot; ++index) {}
         if (index == changeCount) {
-            if (changeCount == changes.size()) return false;
+            if (changeCount == changes.size()) {
+                return false;
+            }
             changes[changeCount++].slot = slot;
         }
         changes[index].value = value;
@@ -330,7 +383,9 @@ Result Store::observe_batch(const Source& source,
     };
     for (std::size_t index = 0; index < observations.size(); ++index) {
         const auto& observation = observations[index];
-        if (!valid_observation(observation)) return Result::invalid;
+        if (!valid_observation(observation)) {
+            return Result::invalid;
+        }
         const auto& packet = observations.front();
         if (observation.hasAllocationEpoch != packet.hasAllocationEpoch
             || observation.allocationEpoch != packet.allocationEpoch
@@ -340,36 +395,52 @@ Result Store::observe_batch(const Source& source,
             || observation.hasPacketOrdinal != packet.hasPacketOrdinal
             || observation.packetOrdinal != packet.packetOrdinal
             || (index != 0
-                && observation.packetRecordIndex <= observations[index - 1].packetRecordIndex))
+                && observation.packetRecordIndex <= observations[index - 1].packetRecordIndex)) {
             return Result::invalid;
+        }
         const auto& before = current(observation.token.slot);
         Observation value = observation;
-        if (value.action == Action::createAndRemove) value.action = Action::create;
-        if (value.action == Action::remove && before.present) value.action = Action::update;
+        if (value.action == Action::createAndRemove) {
+            value.action = Action::create;
+        }
+        if (value.action == Action::remove && before.present) {
+            value.action = Action::update;
+        }
         if (value.actorSource.known && value.action != Action::create && before.known
-            && before.type != 0)
+            && before.type != 0) {
             return Result::invalid;
+        }
         Identity next{};
         const auto result = stage(before, value, next, value.allocationDomain);
         if (result == Result::missing || result == Result::stale || result == Result::conflict
-            || result == Result::invalid || result == Result::capacity)
+            || result == Result::invalid || result == Result::capacity) {
             return result;
-        if (!assign(observation.token.slot, next)) return Result::capacity;
+        }
+        if (!assign(observation.token.slot, next)) {
+            return Result::capacity;
+        }
         stagedResults[index] = result;
     }
     std::array<Token, kObservationBatchCapacity> terminals{};
     std::size_t terminalCount = 0;
     const auto add_terminal = [&](Token token) {
-        for (std::size_t index = 0; index < terminalCount; ++index)
-            if (terminals[index] == token) return true;
-        if (terminalCount == terminals.size()) return false;
+        for (std::size_t index = 0; index < terminalCount; ++index) {
+            if (terminals[index] == token) {
+                return true;
+            }
+        }
+        if (terminalCount == terminals.size()) {
+            return false;
+        }
         terminals[terminalCount++] = token;
         return true;
     };
     for (std::size_t index = 0; index < observations.size(); ++index) {
         const auto& observation = observations[index];
         if (observation.action == Action::remove || observation.action == Action::createAndRemove) {
-            if (!add_terminal(observation.token)) return Result::capacity;
+            if (!add_terminal(observation.token)) {
+                return Result::capacity;
+            }
             stagedResults[index] = Result::removed;
         }
     }
@@ -377,15 +448,19 @@ Result Store::observe_batch(const Source& source,
     for (std::size_t index = 0; index < terminalCount; ++index) {
         const auto token = terminals[index];
         const auto& before = current(token.slot);
-        if (!before.known || !before.present || before.token != token) continue;
+        if (!before.known || !before.present || before.token != token) {
+            continue;
+        }
         if (before.hasPacketOrdinal && order.hasPacketOrdinal
-            && before.packetOrdinal > order.packetOrdinal)
+            && before.packetOrdinal > order.packetOrdinal) {
             return Result::stale;
+        }
         for (std::size_t slot = 0; slot < kSlotCapacity; ++slot) {
             const auto& child = current(static_cast<std::uint16_t>(slot));
             if (child.known && child.present && child.anchorPresent && child.anchor == token
-                && !add_terminal(child.token))
+                && !add_terminal(child.token)) {
                 return Result::capacity;
+            }
         }
         Identity retired = before;
         retired.present = false;
@@ -399,13 +474,17 @@ Result Store::observe_batch(const Source& source,
             retired.hasPacketSequence = true;
             retired.packetSequence = order.packetSequence;
         }
-        if (!assign(token.slot, retired)) return Result::capacity;
+        if (!assign(token.slot, retired)) {
+            return Result::capacity;
+        }
     }
     if (partition == partitions_.end()) {
         partition = std::find_if(partitions_.begin(), partitions_.end(), [](const auto& value) {
             return !value.occupied;
         });
-        if (partition == partitions_.end()) return Result::capacity;
+        if (partition == partitions_.end()) {
+            return Result::capacity;
+        }
         try {
             partition->slots.resize(kSlotCapacity);
         } catch (const std::bad_alloc&) {
@@ -425,8 +504,9 @@ Result Store::observe_batch(const Source& source,
     }
     for (std::size_t index = 0; index < observations.size(); ++index) {
         const auto& value = partition->slots[observations[index].token.slot];
-        if (value.known && !value.present && value.token == observations[index].token)
+        if (value.known && !value.present && value.token == observations[index].token) {
             stagedResults[index] = Result::removed;
+        }
     }
     std::copy_n(stagedResults.begin(), observations.size(), results.begin());
     return Result::updated;
@@ -442,16 +522,26 @@ Result Store::observe_batch(const Source& source,
  */
 Result Store::lookup(const Source& source, Token token, Identity& output) const noexcept {
     output = {};
-    if (!valid_source(source) || !valid_token(token)) return Result::invalid;
+    if (!valid_source(source) || !valid_token(token)) {
+        return Result::invalid;
+    }
     const auto partition =
         std::find_if(partitions_.begin(), partitions_.end(), [&](const auto& row) {
             return row.occupied && row.source == source;
         });
-    if (partition == partitions_.end()) return Result::missing;
+    if (partition == partitions_.end()) {
+        return Result::missing;
+    }
     output = partition->slots[token.slot];
-    if (!output.known) return Result::missing;
-    if (output.token != token) return Result::stale;
-    if (output.conflicted) return Result::conflict;
+    if (!output.known) {
+        return Result::missing;
+    }
+    if (output.token != token) {
+        return Result::stale;
+    }
+    if (output.conflicted) {
+        return Result::conflict;
+    }
     return output.present ? Result::unchanged : Result::removed;
 }
 
@@ -463,12 +553,16 @@ Result Store::lookup(const Source& source, Token token, Identity& output) const 
  */
 Result Store::snapshot_source(const Source& source, std::vector<Identity>& output) const noexcept {
     output.clear();
-    if (!valid_source(source)) return Result::invalid;
+    if (!valid_source(source)) {
+        return Result::invalid;
+    }
     const auto partition =
         std::find_if(partitions_.begin(), partitions_.end(), [&](const auto& row) {
             return row.occupied && row.source == source;
         });
-    if (partition == partitions_.end()) return Result::missing;
+    if (partition == partitions_.end()) {
+        return Result::missing;
+    }
     try {
         output = partition->slots;
     } catch (const std::bad_alloc&) {
@@ -492,7 +586,9 @@ std::size_t Store::sources(std::uint64_t activitySessionId,
     for (const Partition& partition : partitions_) {
         if (partition.occupied && partition.source.activitySessionId == activitySessionId
             && partition.source.activityRevision == activityRevision) {
-            if (count < output.size()) output[count] = partition.source;
+            if (count < output.size()) {
+                output[count] = partition.source;
+            }
             ++count;
         }
     }
@@ -505,37 +601,45 @@ bool Store::advance_epoch(const Source& source,
                           std::uint8_t next,
                           std::uint64_t nextDomain) noexcept {
     if (!valid_source(source) || nextDomain == 0
-        || next != static_cast<std::uint8_t>(expected + 1U))
+        || next != static_cast<std::uint8_t>(expected + 1U)) {
         return false;
-    for (auto& partition : partitions_)
+    }
+    for (auto& partition : partitions_) {
         if (partition.occupied && partition.source == source) {
             if (partition.hasAllocationEpoch
                 && (partition.allocationEpoch != expected
-                    || partition.allocationDomain != nextDomain - 1))
+                    || partition.allocationDomain != nextDomain - 1)) {
                 return false;
+            }
             partition.allocationDomain = nextDomain;
             partition.allocationEpoch = next;
             partition.hasAllocationEpoch = true;
             return true;
         }
+    }
     return false;
 }
 
 void Store::reset_group(std::uint64_t groupSessionId) noexcept {
     for (Partition& partition : partitions_) {
-        if (partition.occupied && partition.source.groupSessionId == groupSessionId) partition = {};
+        if (partition.occupied && partition.source.groupSessionId == groupSessionId) {
+            partition = {};
+        }
     }
 }
 
 void Store::reset_source(const Source& source) noexcept {
     for (Partition& partition : partitions_) {
-        if (partition.occupied && partition.source == source) partition = {};
+        if (partition.occupied && partition.source == source) {
+            partition = {};
+        }
     }
 }
 
 void Store::reset() noexcept {
-    for (Partition& partition : partitions_)
+    for (Partition& partition : partitions_) {
         partition = {};
+    }
     revision_ = 0;
 }
 

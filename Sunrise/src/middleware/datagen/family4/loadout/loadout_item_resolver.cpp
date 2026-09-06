@@ -142,11 +142,8 @@ bool resolve_item(const authored_inventory::Item& authored,
         || !state::build_data::find_configured_item_detail(itemDefinition.definitionIndex,
                                                            itemDetail)
         || itemDefinition.bucketId != itemDetail.bucketId
-        // A pursuit - a bounty or a quest step - names no equipment slot, because nothing equips
-        // it. Requiring one refused it here, so it was added to the inventory and then could not
-        // be found in the resolved loadout, and the acquisition failed as `resolve_or_bucket_full`.
-        // Equipped items still must name a slot: they come out of the equipment array, where the
-        // slot is what identifies them.
+        // A pursuit names no equipment slot, so do not require one. An equipped item still must
+        // name a slot: it comes out of the equipment array, where the slot identifies it.
         || (!authored_inventory::resolve_native_equipment_slot(
                 authored.definitionHash, itemDetail.equipmentSlot, nativeEquipmentSlot)
             && (requireEquipmentSlot || itemDetail.equipmentSlot.has_value()))

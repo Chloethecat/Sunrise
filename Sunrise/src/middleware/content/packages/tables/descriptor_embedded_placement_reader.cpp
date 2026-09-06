@@ -61,6 +61,7 @@ bool descriptor_embedded_placements(std::span<const std::byte> blob,
                                     DescriptorEmbeddedPlacementArray& output) noexcept {
     output = {};
     const auto base = static_cast<std::size_t>(descriptor.descriptorOffset);
+    /** The whole descriptor must sit inside the blob before any field is read. */
     constexpr std::size_t kRequiredSize = kDescriptorSize;
     if (descriptor.componentClass != kDescriptorEmbeddedPlacementDescriptorClass
         || descriptor.slotType != kDescriptorEmbeddedPlacementSlotType || base > blob.size()

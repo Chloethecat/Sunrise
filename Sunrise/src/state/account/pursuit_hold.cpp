@@ -13,7 +13,7 @@ namespace {
 namespace detail_domain = build_data::items::details;
 
 /**
- * Logs the fields the pursuit rule turns on, so a misclassification can be read off the values.
+ * Logs the detail fields the pursuit rule reads.
  * @param itemDefinitionIndex Item being classified.
  * @param detail Its configured detail row.
  */
@@ -31,6 +31,11 @@ void report_classification(std::uint16_t itemDefinitionIndex,
                       detail.maxStackSize);
 }
 
+/** @return True when the detail row describes a pursuit rather than gear or a stack. */
+[[nodiscard]] bool pursuit_definition(const detail_domain::Definition& detail) noexcept {
+    return !detail.equipmentSlot.has_value() && detail.maxStackSize <= 1;
+}
+
 } // namespace
 
 /** Reports whether an item is a pursuit the selected character already holds. */
@@ -45,7 +50,7 @@ bool holds_pursuit(const AccountState& account, std::uint16_t itemDefinitionInde
         return false;
     }
     report_classification(itemDefinitionIndex, detail);
-    if (detail.equipmentSlot.has_value() || detail.maxStackSize > 1) {
+    if (!pursuit_definition(detail)) {
         return false;
     }
     build_data::items::Definition definition{};

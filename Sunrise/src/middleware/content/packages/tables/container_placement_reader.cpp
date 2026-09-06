@@ -8,6 +8,7 @@ namespace sunrise::middleware::content::packages::tables {
 
 /** @return The established label for a binary-carried object-type value. */
 const char* placed_object_type_name(std::uint8_t type) noexcept {
+    /** Labels in binary value order, so the value indexes the row directly. */
     constexpr std::array<const char*, 29> kNames{
         "inherited",
         "static_mesh",

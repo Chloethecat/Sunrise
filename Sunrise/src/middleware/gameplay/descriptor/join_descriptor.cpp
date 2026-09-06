@@ -95,6 +95,7 @@ void write_direct_net_addr(std::uint32_t address,
                            std::uint16_t port,
                            std::array<std::byte, kNetAddrSize>& output) noexcept {
     output = {};
+    /** The client reads these four bytes as the direct-form tag. */
     static constexpr std::array<std::byte, 4> kDirectMagic{
         std::byte{'D'}, std::byte{'R'}, std::byte{'C'}, std::byte{'T'}};
     std::copy(kDirectMagic.begin(), kDirectMagic.end(), output.begin());

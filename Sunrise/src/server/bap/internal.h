@@ -6,6 +6,7 @@
 #include <span>
 
 #include "../../client/network/consumer.h"
+#include "../../core/threading/srw_lock.h"
 #include "../../middleware/bap/activity_message/activity_patch_epoch_parser.h"
 #include "../../middleware/bap/activity_message/replicate_membership.h"
 #include "../../middleware/bap/activity_message/sensor_auth_update.h"
@@ -113,7 +114,9 @@ struct RosterPublication {
     state::activity::bubble_authority::Grant grant{};
     state::gameplay::squad_entity_retirement::RetirementPlan entityRetirement{};
     /** Epochs remain staged until both retirement and roster frames reach the caller. */
-    std::uint8_t retirementPriorEpoch{}, retirementBaseEpoch{}, retirementEpoch{};
+    std::uint8_t retirementPriorEpoch{};
+    std::uint8_t retirementBaseEpoch{};
+    std::uint8_t retirementEpoch{};
     bool priorRosterOwedForEpoch{};
     /** Exact decode identities carried by this staged complete roster snapshot. */
     RosterDecodeMap decodeMap{};
@@ -292,25 +295,27 @@ struct ReplicationEpochPublication {
     bool staged{};
 };
 
-/** Compact world reward retained until an active Family-4 peer can publish it. */
+/** Which inventory one world reward lands in. */
 enum class WorldRewardKind : std::uint8_t {
     item,
     profileItem,
 };
 
+/** One reward earned in world, held until a Family-4 peer can publish it. */
 struct WorldRewardRequest {
     std::int32_t quantity{};
     std::uint16_t itemDefinitionIndex{};
     WorldRewardKind kind{};
-    std::uint8_t failures{};
 };
-static_assert(sizeof(WorldRewardRequest) == 8);
+/** Packed size of one world reward row: the queue is sized in whole rows of this width. */
+inline constexpr std::size_t kWorldRewardRequestSize = 8;
+static_assert(sizeof(WorldRewardRequest) == kWorldRewardRequestSize);
 
+/** One flyout runs for seconds, so the queue only has to cover a burst inside one activity. */
 inline constexpr std::size_t kWorldRewardQueueCapacity = 64;
 
 /** Mutable transport state owned by one BAP connection. */
 struct Session {
-    // PR-specific publication state retained around upstream's newer activity session model.
     std::uint64_t activityAdvertisementHostGeneration{};
     std::uint64_t acquisitionPresentationUntilTick{};
     std::array<encrypted::queuez::AcquisitionPresentationRow,
@@ -320,9 +325,8 @@ struct Session {
     std::uint32_t activityRosterGroups{};
     std::int32_t pendingSeasonalExperienceAmount{};
     std::uint32_t pendingSeasonalExperienceMutationSerial{};
-    std::uint8_t pendingSeasonalExperienceFailures{};
     bool authenticated{};
-    /** Publishes changed artifact overrides after its Web Service reply has left this call. */
+    /** Owes one family-five snapshot for the unlock overrides an artifact change moved. */
     bool artifactRefreshArmed{};
     bool artifactFamily4RefreshArmed{};
     std::uint64_t artifactFamily4RefreshDueTick{};
@@ -440,8 +444,6 @@ struct Session {
     std::uint64_t bannerRepushRoot{};
     /** True while one banner re-push is still owed to this peer. */
     bool bannerRepushArmed{};
-    /** Tick count after which the owed social-roster re-push may go out. */
-    std::uint64_t socialRosterRepushDueTick{};
     /** Root the last family-two subscribe was answered against, and the re-push must reuse. */
     std::uint64_t socialRosterRepushRoot{};
     /** True while one family-two re-push is still owed to this peer. */
@@ -470,6 +472,36 @@ struct Session {
     bool cinematicHeld{};
 };
 
+/** Guards the session table; hold it for the whole event and never re-enter it from a route. */
+[[nodiscard]] core::threading::SrwLock& session_lock() noexcept;
+
+/** @return Every session slot, open or not. Caller owns the session lock. */
+[[nodiscard]] std::span<Session> sessions() noexcept;
+
+/** @return True while any authenticated peer holds a Family-4 subscription. */
+[[nodiscard]] bool has_active_family4_peer() noexcept;
+
+/**
+ * Finds one exact authenticated ActivityClient while the caller owns the session lock.
+ * @param binding Exact Activity Host generation selected by the caller.
+ * @param count Receives how many links own the binding.
+ * @return The link when exactly one owns the binding, else null.
+ */
+[[nodiscard]] const Session*
+unique_activity_link_locked(const state::activity::SessionBinding& binding,
+                            std::size_t& count) noexcept;
+
+/** @return Region index this connection's msg-5 builder selects. Caller owns the session lock. */
+[[nodiscard]] std::int32_t selected_region_index_locked(const Session& session) noexcept;
+
+/** Loads the scenario layout one lock-held ActivityClient owns. @return False when it has none. */
+[[nodiscard]] bool
+session_scenario_layout(const Session& session,
+                        state::build_data::scenarios::Definition& output) noexcept;
+
+/** Commits every queued world reward with no presentation and empties the queue. */
+void drain_world_rewards() noexcept;
+
 /** Arms every other Family-4 peer after the origin publishes a complete account mutation. */
 void arm_account_resync_elsewhere(Session& origin) noexcept;
 
@@ -492,8 +524,8 @@ void arm_acquisition_presentation_hold(Session& session) noexcept;
 /** Removes the world reward returned by current_world_reward. */
 void complete_world_reward() noexcept;
 
-/** Records one failed publication and settles a repeatedly failing reward. */
-void fail_world_reward_attempt() noexcept;
+/** Commits the queued reward with no flyout once its presentation cannot be built. */
+void settle_world_reward() noexcept;
 
 /** Queues one transient XP item update so the native HUD presents a seasonal XP gain. */
 [[nodiscard]] bool arm_seasonal_experience_presentation(std::int32_t amount) noexcept;

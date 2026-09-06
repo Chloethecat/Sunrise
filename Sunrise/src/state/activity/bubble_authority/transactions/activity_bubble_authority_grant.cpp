@@ -104,7 +104,9 @@ bool snapshot_released_entities(std::uint64_t sessionId,
     }
     ReleaseSRWLockShared(&runtime::storage::g_stateLock);
     for (const auto value : output) {
-        if (value != std::byte{}) return true;
+        if (value != std::byte{}) {
+            return true;
+        }
     }
     return false;
 }
@@ -155,22 +157,6 @@ void record_purge(std::uint64_t sessionId, const EntitySlotMask& mask) noexcept 
     ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
 }
 
-/** Drops one bubble's recorded grant, so re-entering it is granted again. */
-void release_grant(std::uint64_t sessionId, std::uint8_t bubble) noexcept {
-    if (sessionId == kAbsentSessionId || bubble >= kAuthoritySlotCount) {
-        return;
-    }
-    AcquireSRWLockExclusive(&runtime::storage::g_stateLock);
-    ActivityState& state = runtime::storage::g_state.activity;
-    const std::size_t target = activity::transactions::find_session(state, sessionId);
-    if (target != kInvalidSessionSlot) {
-        // Only the in-force token clears. `issuedTokens` stays so the next grant advances past
-        // what the client already mirrors.
-        state.sessions[target].bubbleAuthority.grantTokens[bubble] = 0;
-    }
-    ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
-}
-
 /** Drops every grant recorded for one session, so the next roster push grants again. */
 void clear_grants(std::uint64_t sessionId) noexcept {
     if (sessionId == kAbsentSessionId) {
@@ -180,9 +166,7 @@ void clear_grants(std::uint64_t sessionId) noexcept {
     ActivityState& state = runtime::storage::g_state.activity;
     const std::size_t target = activity::transactions::find_session(state, sessionId);
     if (target != kInvalidSessionSlot) {
-        // Only the in-force tokens clear. `issuedTokens` is what stops a re-grant re-sending a
-        // token the client's mirror already holds, and a join that resets the roster container
-        // does not reset that mirror, so wiping it here would reintroduce the invisible re-grant.
+        // A join resets the roster container, not the client's token mirror, so issued stays.
         AuthorityState& authority = state.sessions[target].bubbleAuthority;
         authority.grantTokens = {};
         authority.held = {};

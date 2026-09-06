@@ -35,6 +35,7 @@ using patterns::signature_length;
 constexpr std::string_view kFillText =
     "89 54 24 10 48 89 4C 24 08 48 83 EC 78 33 C0 85 C0 75 FA 48 83 BC 24 80 00 00 00 00 0F 84 "
     "? ? ? ? 48 8B 8C 24 80 00 00 00 E8";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kFill = signature<signature_length(kFillText)>(kFillText);
 
 /** The stalled-job format site. Its two calls are the type lookup and the description printer. */
@@ -42,6 +43,7 @@ constexpr std::string_view kFormatText =
     "48 89 84 24 80 01 00 00 48 8B 84 24 80 01 00 00 8B 40 68 89 44 24 38 48 8B 84 24 00 03 00 "
     "00 48 8B 80 20 6A 00 00 48 05 80 00 00 00 48 89 84 24 88 01 00 00 48 8D 4C 24 38 E8 ? ? ? "
     "? 4C 8D 84 24 E0 01 00 00 48 8B 8C 24 88 01 00 00 48 8B D1 48 8B C8 E8 ? ? ? ?";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kFormat = signature<signature_length(kFormatText)>(kFormatText);
 
 /** Description-type lookup call operand inside the format site, and the next instruction. */
@@ -58,6 +60,7 @@ constexpr std::size_t kPrintNext = 89;
 constexpr std::string_view kGatePollText =
     "8B 05 ? ? ? ? 85 C0 75 ? 8B 0D ? ? ? ? E8 ? ? ? ? 84 C0 74 ? 8B 0D ? ? ? ? E8 ? ? ? ? 84 "
     "C0 74 ? 8B 0D ? ? ? ? E8 ? ? ? ? 84 C0 74 ? B8 01 00 00 00 87 05 ? ? ? ?";
+/** Compiled form of the pattern above; the scan requires one match. */
 constexpr auto kGatePoll = signature<signature_length(kGatePollText)>(kGatePollText);
 
 /** Operand offsets inside the gate poll: gate, fiber handles, idle test, in match order. */
@@ -164,11 +167,10 @@ ModuleRange g_ownRange{};
     if (module == nullptr) {
         return {};
     }
-    const auto base = reinterpret_cast<std::uintptr_t>(module);
-    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
-    const auto* nt =
-        reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + static_cast<LONG_PTR>(dos->e_lfanew));
-    return {base, nt->OptionalHeader.SizeOfImage};
+    const auto* header = static_cast<const std::byte*>(static_cast<const void*>(module));
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(header);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(header + dos->e_lfanew);
+    return {reinterpret_cast<std::uintptr_t>(module), nt->OptionalHeader.SizeOfImage};
 }
 
 /** Resolves the game image range and this DLL's own range once. */

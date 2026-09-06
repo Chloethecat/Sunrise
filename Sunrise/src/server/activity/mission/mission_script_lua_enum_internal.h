@@ -12,6 +12,7 @@
 
 namespace sunrise::server::activity::mission::lua_vm::detail {
 
+// Metatable names that lock the device and lifetime enum userdata shapes a program may hold.
 inline constexpr char kDeviceChannelMetatable[] = "sunrise.sdk.device_channel";
 inline constexpr char kDeviceChannelCollectionMetatable[] = "sunrise.sdk.device_channels";
 inline constexpr char kDeviceTransitionMetatable[] = "sunrise.sdk.device_transition";

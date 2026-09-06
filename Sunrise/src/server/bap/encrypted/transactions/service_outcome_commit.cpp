@@ -3,26 +3,24 @@
 #include <array>
 #include <cstdio>
 
-#include "../../../../client/content/investment/worker.h"
 #include "../../../../core/logging/log.h"
 #include "../../../../middleware/bap/activity_message/activity_join_result_encoder.h"
 #include "../../../../state/activity/runtime.h"
 #include "../../../../state/matchmaking/matchmaking_state.h"
 #include "../../../../state/runtime/runtime.h"
-#include "../../../../state/vendors/answered_interactions.h"
 #include "../bap_connection_publication.h"
 #include "../internal.h"
 
 namespace sunrise::server::bap::encrypted::transactions {
+namespace {
 
 namespace slots = state::activity::entity_slots;
 
 /** Log names for each lease operation, in the enum's own order. */
-static constexpr std::array<const char*, 4> kLeaseKinds = {"none", "join", "grant", "release"};
+constexpr std::array<const char*, 4> kLeaseKinds = {"none", "join", "grant", "release"};
 
 /** Retains one newly committed private ActivityClient generation for its BAP link. */
-[[nodiscard]] static bool retain_private(std::uint64_t sessionId,
-                                         Publication& publication) noexcept {
+[[nodiscard]] bool retain_private(std::uint64_t sessionId, Publication& publication) noexcept {
     state::activity::SessionBinding binding{};
     if (!state::activity::snapshot_binding(sessionId, binding)
         || !state::activity::retain_binding(binding)) {
@@ -38,8 +36,8 @@ static constexpr std::array<const char*, 4> kLeaseKinds = {"none", "join", "gran
 }
 
 /** Retains one exact advertised public target before its join mutation commits. */
-[[nodiscard]] static bool retain_public(const activity_message::ActivityPlan& plan,
-                                        Publication& publication) noexcept {
+[[nodiscard]] bool retain_public(const activity_message::ActivityPlan& plan,
+                                 Publication& publication) noexcept {
     server::gameplay::group::HostSessionBinding current{};
     if (!server::gameplay::group::host_session_for_activity(plan.sessionId, current)
         || current.generation != plan.publicHost.generation
@@ -71,7 +69,7 @@ static constexpr std::array<const char*, 4> kLeaseKinds = {"none", "join", "gran
 }
 
 /** Releases provisional activity owners when the following State commit fails. */
-static void discard_activity_publication(Publication& publication) noexcept {
+void discard_activity_publication(Publication& publication) noexcept {
     if (publication.activity.hostGeneration != 0) {
         server::gameplay::group::release_host_session(publication.activity.hostGeneration);
     }
@@ -82,13 +80,12 @@ static void discard_activity_publication(Publication& publication) noexcept {
 }
 
 /**
- * Reports one entity-slot lease change.
- * The client prints only `failed to create` when it has no free index, and nothing else on this
- * path reports the lease. Without this line a failed create reads the same as an empty grant.
+ * Reports one failed entity-slot lease change; a committed one is not reported.
+ * Nothing else on this path names the lease, so a failed create would read as an empty grant.
  * @param mutation Plan as it was before the commit consumed it.
  * @param committed Whether the commit succeeded.
  */
-static void report_lease(const slots::PendingMutation& mutation, bool committed) noexcept {
+void report_lease(const slots::PendingMutation& mutation, bool committed) noexcept {
     if (committed) {
         return;
     }
@@ -108,9 +105,8 @@ static void report_lease(const slots::PendingMutation& mutation, bool committed)
                       slots::slot_count(mutation.mask),
                       held,
                       reserved,
-                      // Only a release carries one, so every other kind reports zero. A release
-                      // whose returned set and picked set disagree means the two ledgers have
-                      // diverged, which nothing else on this path would show.
+                      // Only a release carries one; a returned set that disagrees with the
+                      // picked set means the two ledgers have diverged.
                       slots::slot_count(mutation.returnedMask),
                       known ? 1U : 0U);
     if (written > 0) {
@@ -120,17 +116,26 @@ static void report_lease(const slots::PendingMutation& mutation, bool committed)
     }
 }
 
-[[nodiscard]] static bool report_commit(bool committed, const char* failure) noexcept {
+/**
+ * Reports one failed commit and passes its result through.
+ * @param committed Result of the commit.
+ * @param failure Line written when the commit failed.
+ * @return The commit result unchanged.
+ */
+[[nodiscard]] bool report_commit(bool committed, const char* failure) noexcept {
     if (!committed) {
         core::log::write(core::log::Channel::server, core::log::Level::warn, failure);
     }
     return committed;
 }
 
+} // namespace
+
 /**
  * Commits at most one delayed State transaction.
  * @param outcome Checked service result whose pending transaction is used up.
  * @param publication Gets connection fields to publish after the output copy.
+ * @param reason Gets the transaction kind, for the caller's refusal line.
  * @return True when there is no transaction, or the one transaction commits.
  */
 bool commit(ServiceOutcome& outcome, Publication& publication, const char*& reason) noexcept {
@@ -227,6 +232,7 @@ bool commit(ServiceOutcome& outcome, Publication& publication, const char*& reas
         return state::matchmaking::commit(*mutation);
     }
     if (auto* mutation = transaction_if<state::PendingSettingsUpdate>(outcome)) {
+        reason = "settings";
         const bool committed = state::commit_settings_update(*mutation);
         core::log::write(core::log::Channel::server,
                          committed ? core::log::Level::debug : core::log::Level::warn,
@@ -238,23 +244,21 @@ bool commit(ServiceOutcome& outcome, Publication& publication, const char*& reas
         if (transaction->pending == nullptr) {
             return false;
         }
-        auto& pending = *transaction->pending;
+        state::PendingEquipmentSwap& pending = *transaction->pending;
         const bool isSubclassSlot =
             pending.equipmentSlotIndex
             == static_cast<std::size_t>(state::account::inventory::EquipmentSlot::subclass);
-        const bool committed = state::commit_equipment_swap(*transaction->pending);
+        const bool committed = state::commit_equipment_swap(pending);
         core::log::write(core::log::Channel::server,
                          committed ? core::log::Level::debug : core::log::Level::warn,
                          committed ? "ev=equip stage=transaction_commit result=ok"
                                    : "ev=equip stage=transaction_commit result=fail");
         reason = "equip";
         if (committed && isSubclassSlot) {
-            // The equipped subclass just changed, which makes the published ability buckets
-            // stale the same way an ability-entry pick does. Wake the investment worker so the
-            // character screen stops showing the previous subclass's resolution.
-            client::content::investment::worker::request_slice();
+            // Rebuild the ability buckets keyed by the changed subclass.
+            bap::request_investment_slice();
         }
-        return true;
+        return committed;
     }
     if (auto* transaction = transaction_if<SubclassSelectionTransaction>(outcome)) {
         if (transaction->pending == nullptr) {
@@ -266,7 +270,7 @@ bool commit(ServiceOutcome& outcome, Publication& publication, const char*& reas
             return false;
         }
         // Rebuild the ability buckets keyed by the changed selection.
-        client::content::investment::worker::request_slice();
+        bap::request_investment_slice();
         return true;
     }
     if (auto* transaction = transaction_if<ItemAcquisitionTransaction>(outcome)) {
@@ -277,16 +281,11 @@ bool commit(ServiceOutcome& outcome, Publication& publication, const char*& reas
                          committed ? "ev=acquire stage=transaction_commit result=ok"
                                    : "ev=acquire stage=transaction_commit result=fail");
         reason = "acquire";
-        // The item is in the inventory, so the interaction that offered it is answered. This is
-        // the point the shipped game appends its own entry, and why the answer waited.
-        if (committed && transaction->answeredVendor != state::vendors::kAbsentIndex) {
-            (void)state::vendors::answer_shown(transaction->answeredVendor);
-        }
         return committed;
     }
     if (auto* transaction = transaction_if<SocketPlugTransaction>(outcome)) {
-        const bool committed = transaction->pending != nullptr
-                               && state::commit_socket_plug(*transaction->pending);
+        const bool committed =
+            transaction->pending != nullptr && state::commit_socket_plug(*transaction->pending);
         core::log::write(core::log::Channel::server,
                          committed ? core::log::Level::debug : core::log::Level::warn,
                          committed ? "ev=socket_plug stage=transaction_commit result=ok"
@@ -295,8 +294,8 @@ bool commit(ServiceOutcome& outcome, Publication& publication, const char*& reas
         return committed;
     }
     if (auto* transaction = transaction_if<ItemStateTransaction>(outcome)) {
-        const bool committed = transaction->pending != nullptr
-                               && state::commit_item_state(*transaction->pending);
+        const bool committed =
+            transaction->pending != nullptr && state::commit_item_state(*transaction->pending);
         core::log::write(core::log::Channel::server,
                          committed ? core::log::Level::debug : core::log::Level::warn,
                          committed ? "ev=item_state stage=transaction_commit result=ok"
@@ -321,14 +320,11 @@ bool commit(ServiceOutcome& outcome, Publication& publication, const char*& reas
                          committed ? "ev=profile_acquire stage=transaction_commit result=ok"
                                    : "ev=profile_acquire stage=transaction_commit result=fail");
         reason = "profile_acquire";
-        if (committed && transaction->answeredVendor != state::vendors::kAbsentIndex) {
-            (void)state::vendors::answer_shown(transaction->answeredVendor);
-        }
         return committed;
     }
     if (auto* transaction = transaction_if<ItemDismantleTransaction>(outcome)) {
-        const bool committed = transaction->pending != nullptr
-                               && state::commit_item_dismantle(*transaction->pending);
+        const bool committed =
+            transaction->pending != nullptr && state::commit_item_dismantle(*transaction->pending);
         core::log::write(core::log::Channel::server,
                          committed ? core::log::Level::debug : core::log::Level::warn,
                          committed ? "ev=dismantle stage=transaction_commit result=ok"

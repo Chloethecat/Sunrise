@@ -4,6 +4,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 
 #include "../../../state/build_data/scriptables/scriptable_catalog.h"
@@ -14,8 +15,10 @@ namespace {
 namespace catalog = state::build_data::scriptables;
 namespace lines = hooks::graphics::renderer::world_lines;
 
+// Triangle indices are bytes, so every undirected edge key fits one table.
 constexpr std::size_t kIndexCardinality =
     static_cast<std::size_t>((std::numeric_limits<std::uint8_t>::max)()) + 1U;
+// One slot per ordered index pair keeps the edge table a flat array.
 constexpr std::size_t kEdgeCardinality = kIndexCardinality * kIndexCardinality;
 
 /** @return The canonical key for one undirected byte-indexed edge. */
@@ -40,6 +43,7 @@ void edge(const catalog::TriggerVolumeVertex& first,
 
 /** @return True only for the bit-exact identity SpawnEntry transform proved by the corpus. */
 bool supported_transform(const catalog::TriggerVolumeInstance& instance) noexcept {
+    // Identity transform: zero lanes and a unit w.
     constexpr std::array<std::uint32_t, 4> identity{0, 0, 0, 0x3F800000U};
     for (std::size_t lane = 0; lane < identity.size(); ++lane) {
         if (std::bit_cast<std::uint32_t>(instance.rotation[lane]) != identity[lane]
@@ -82,6 +86,7 @@ Result build(const catalog::Snapshot& source,
                 return result;
             }
         }
+        // The three undirected edges of one triangle.
         constexpr std::array<std::array<std::size_t, 2>, 3> pairs{{{0, 1}, {1, 2}, {2, 0}}};
         for (const auto& pair : pairs) {
             std::uint8_t& uses =
@@ -103,8 +108,9 @@ Result build(const catalog::Snapshot& source,
             }
         }
     }
+    const auto vertexCount = static_cast<std::ptrdiff_t>(vertices.size());
     const std::size_t boundaryVertexCount = static_cast<std::size_t>(
-        std::count(boundaryVertices.begin(), boundaryVertices.begin() + vertices.size(), true));
+        std::count(boundaryVertices.begin(), boundaryVertices.begin() + vertexCount, true));
     const std::size_t required = boundaryEdges * 2U + boundaryVertexCount;
     if (required == 0) {
         return result;

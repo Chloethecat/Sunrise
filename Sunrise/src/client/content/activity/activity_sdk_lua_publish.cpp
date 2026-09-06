@@ -20,11 +20,13 @@
 namespace sunrise::client::content::activity::sdk_generation::lua_artifacts {
 namespace {
 
+// Published Lua tree layout below the artifact root.
 constexpr std::wstring_view kLuaSuffix = L"\\lua";
 constexpr std::wstring_view kActivitiesSuffix = L"\\activities";
 constexpr std::wstring_view kMissionsSuffix = L"\\missions";
 constexpr std::wstring_view kSunriseSuffix = L"\\sunrise";
 constexpr std::wstring_view kTemporarySuffix = L".%08lX.%08lX.%08lX.tmp";
+// Distinct temporary names tried before publication fails.
 constexpr std::size_t kTemporaryAttempts = 16;
 
 volatile LONG g_temporarySequence{};

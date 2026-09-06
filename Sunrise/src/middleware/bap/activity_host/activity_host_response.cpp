@@ -10,12 +10,14 @@ namespace {
 
 /** Fixed offsets for the complete svc-16 host request. */
 struct RequestLayout final {
+    /** Byte offsets from the start of the body. */
     static constexpr std::size_t activityHostId = 0;
     static constexpr std::size_t size = activityHostId + encoding::kU64Size;
 };
 
 /** Fixed offsets for the complete svc-17 relay response. */
 struct ResponseLayout final {
+    /** Byte offsets from the start of the body. */
     static constexpr std::size_t activityHostId = RequestLayout::activityHostId;
     static constexpr std::size_t relayAddress = activityHostId + encoding::kU64Size;
     static constexpr std::size_t neutral = relayAddress + encoding::kU32Size;

@@ -279,8 +279,8 @@ void push_player_trigger(RuntimeInstance& instance, const host::Event& incident)
     event.firstSlotType = source.slotType;
     event.slotSenseSchema = 0;
     event.playerTriggerRegistryKey = source.volumeRegistryKey;
-    event.playerTriggerSlotType = source.volumeSlotType;
-    event.playerTriggerSlotIndex = source.volumeSlotIndex;
+    event.playerTriggerSlotType = static_cast<std::int8_t>(source.volumeSlotType);
+    event.playerTriggerSlotIndex = static_cast<std::int16_t>(source.volumeSlotIndex);
     push_script_event(instance, event);
 }
 

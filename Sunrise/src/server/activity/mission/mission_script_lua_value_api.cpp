@@ -183,6 +183,7 @@ void register_value_metatables(lua_State* state) {
     register_metatable(state, kSquadCountVectorMetatable, &squad_count_vector_index);
 }
 
+/** Pushes one value-type ActivityView member. @return False when the key is not ours. */
 bool push_value_activity_member(lua_State* state, std::string_view key) {
     if (key == "squad_modes") {
         push_handle(state, kSquadModeCollectionMetatable, SquadModeCollectionHandle{});

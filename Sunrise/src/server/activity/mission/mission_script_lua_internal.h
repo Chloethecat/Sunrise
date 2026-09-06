@@ -26,6 +26,7 @@ namespace sunrise::server::activity::mission::lua_vm::detail {
 [[nodiscard]] inline bool decode_sdk_build_sha256(std::string_view text,
                                                   std::array<std::byte, 32>& output) noexcept {
     output = {};
+    // The generated SDK build identity is spelled as this prefix and 64 hex digits.
     constexpr std::string_view kPrefix = "sha256:";
     if (!text.starts_with(kPrefix)) {
         return false;
@@ -162,5 +163,23 @@ void register_slot_metatables(lua_State* state);
 
 /** Reads one member of a Slot row. */
 [[nodiscard]] int slot_index(lua_State* state);
+
+/** @return True when one live Slot row is an exact type-2 combatant. */
+[[nodiscard]] bool exact_combatant_slot(const SlotDefinition& definition) noexcept;
+
+/** Stages one authored native Auth body on the guarded message-5 route. */
+[[nodiscard]] int queue_slot_auth(lua_State* state,
+                                  const SlotDefinition& slot,
+                                  std::uint32_t schema,
+                                  std::size_t bitCount,
+                                  std::span<const std::byte> body);
+
+/** Reads one integer field from a generated declaration table. */
+[[nodiscard]] lua_Integer directive_integer(lua_State* state, int table, const char* field);
+
+// The client-atom program, defined in mission_script_lua_slot_atoms.cpp.
+
+/** Loads the 32-lane client-atom program one type-2 combatant runs on its bound actor. */
+[[nodiscard]] int slot_run_atoms(lua_State* state);
 
 } // namespace sunrise::server::activity::mission::lua_vm::detail

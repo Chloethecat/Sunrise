@@ -9,13 +9,7 @@
 namespace sunrise::client::content::items::packages {
 namespace {
 
-/** Native postfix opcodes for flag, value, literal, and greater-than-or-equal. */
-constexpr std::uint32_t kFlagOpcode = 1;
-constexpr std::uint32_t kValueOpcode = 10;
-constexpr std::uint32_t kLiteralOpcode = 11;
-constexpr std::uint32_t kGreaterEqualOpcode = 14;
-/** Each postfix token is an opcode and one 32-bit operand. */
-constexpr std::size_t kExpressionTokenSize = 8;
+/** One value term is read-value, push-literal, then greater-or-equal. */
 constexpr std::size_t kValueExpressionTokenCount = 3;
 
 /** Adds one unique positive flag term to a bounded condition. */
@@ -58,6 +52,10 @@ void mark_ambiguous(catalysts::CompletionCondition& output) noexcept {
 
 } // namespace
 
+/**
+ * Reads one catalyst's completion flags, value minimums and objective reference.
+ * @param output Receives the unique condition, or its absent or ambiguous state.
+ */
 void read_catalyst_completion_condition(std::span<const std::byte> definition,
                                         std::uint16_t itemDefinitionIndex,
                                         catalysts::CompletionCondition& output) noexcept {
@@ -70,13 +68,15 @@ void read_catalyst_completion_condition(std::span<const std::byte> definition,
         if (!tables::find_array_at(definition, descriptor, expression)) {
             continue;
         }
+        // An objective reference row is one 16-bit objective index; an array of several is skipped.
+        // TODO: read the whole array and pick the objective a multi-objective catalyst completes
+        // on.
         if (expression.elementClass == tables::kObjectiveReferenceArrayClass
             && expression.count == 1 && expression.dataOffset <= definition.size()
             && definition.size() - expression.dataOffset >= 2 * sizeof(std::uint32_t)) {
             std::array<std::uint32_t, 2> reference{};
-            std::memcpy(reference.data(),
-                        definition.data() + expression.dataOffset,
-                        sizeof reference);
+            std::memcpy(
+                reference.data(), definition.data() + expression.dataOffset, sizeof reference);
             if (reference[0] < catalysts::kUnavailableObjectiveIndex
                 && reference[1] == tables::kObjectiveReferenceRowClass) {
                 const auto objective = static_cast<std::uint16_t>(reference[0]);
@@ -91,37 +91,36 @@ void read_catalyst_completion_condition(std::span<const std::byte> definition,
         }
         if (expression.elementClass != tables::kInvestmentExpressionRowClass
             || expression.dataOffset > definition.size()
-            || expression.count
-                   > (definition.size() - expression.dataOffset) / kExpressionTokenSize) {
+            || expression.count > (definition.size() - expression.dataOffset)
+                                      / tables::kUnlockInstructionStride) {
             continue;
         }
         for (std::size_t token = 0; token < expression.count; ++token) {
             std::array<std::uint32_t, 2> current{};
             std::memcpy(current.data(),
                         definition.data() + expression.dataOffset
-                            + token * kExpressionTokenSize,
+                            + token * tables::kUnlockInstructionStride,
                         sizeof current);
-            if (current[0] == kFlagOpcode
+            if (current[0] == tables::kUnlockReadFlagOpcode
                 && current[1] < state::build_data::items::kDefinitionCapacity
                 && !append_flag(output.completion, static_cast<std::uint16_t>(current[1]))) {
                 mark_ambiguous(output);
                 return;
             }
-            if (current[0] != kValueOpcode
+            if (current[0] != tables::kUnlockReadValueOpcode
                 || token + kValueExpressionTokenCount > expression.count) {
                 continue;
             }
             std::array<std::uint32_t, kValueExpressionTokenCount * 2> tokens{};
             std::memcpy(tokens.data(),
                         definition.data() + expression.dataOffset
-                            + token * kExpressionTokenSize,
+                            + token * tables::kUnlockInstructionStride,
                         sizeof tokens);
-            if (tokens[2] != kLiteralOpcode || tokens[4] != kGreaterEqualOpcode
-                || tokens[5] != UINT32_MAX
+            if (tokens[2] != tables::kUnlockLiteralOpcode
+                || tokens[4] != tables::kUnlockGreaterEqualOpcode || tokens[5] != UINT32_MAX
                 || tokens[1] >= catalysts::kUnavailableCompletionValueIndex || tokens[3] == 0
                 || tokens[3]
-                       > static_cast<std::uint32_t>(
-                           (std::numeric_limits<std::int32_t>::max)())) {
+                       > static_cast<std::uint32_t>((std::numeric_limits<std::int32_t>::max)())) {
                 continue;
             }
             if (!upsert_value(output.completion,
@@ -136,8 +135,8 @@ void read_catalyst_completion_condition(std::span<const std::byte> definition,
               output.completion.flags.begin() + output.completion.flagCount);
     std::sort(output.completion.values.begin(),
               output.completion.values.begin() + output.completion.valueCount,
-              [](const catalysts::CompletionValue& left,
-                 const catalysts::CompletionValue& right) { return left.index < right.index; });
+              [](const catalysts::CompletionValue& first,
+                 const catalysts::CompletionValue& second) { return first.index < second.index; });
     if (output.completion.flagCount != 0 || output.completion.valueCount != 0
         || output.objectiveDefinitionIndex != catalysts::kUnavailableObjectiveIndex) {
         output.state = catalysts::CompletionConditionState::present;

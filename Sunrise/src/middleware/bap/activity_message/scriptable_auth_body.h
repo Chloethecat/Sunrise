@@ -21,6 +21,7 @@ inline constexpr std::size_t kType2ChannelRowBitCount = 64;
 inline constexpr std::size_t kType2MaximumChannelBitCount =
     kType2ChannelBaseBitCount + kType2TemperamentCapacity * 32U
     + kType2ChannelCapacity * kType2ChannelRowBitCount;
+/** Buffer the channel set needs at the full temperament and channel counts. */
 inline constexpr std::size_t kType2MaximumChannelByteCount = (kType2MaximumChannelBitCount + 7) / 8;
 
 /** One named float channel written into the actor object's property store on attach or restore. */
@@ -33,6 +34,7 @@ struct Type2Channel final {
 struct TemperamentId final {
     std::uint32_t value{};
 
+    /** @return True when both identities carry the same package value. */
     [[nodiscard]] friend constexpr bool operator==(TemperamentId, TemperamentId) noexcept = default;
 };
 
@@ -122,10 +124,12 @@ struct Type2KeyedLane final {
     Type2LaneSecondary secondary{};
 };
 
+/** Buffer one keyed lane needs at its widest tag pair. */
 inline constexpr std::size_t kType2KeyedLaneMaximumBitCount = 179;
 inline constexpr std::size_t kType2KeyedLaneMaximumByteCount =
     (kType2KeyedLaneMaximumBitCount + 7) / 8;
 
+/** The six-bit lane count caps the atom program. */
 inline constexpr std::size_t kType2AtomCapacity = 32;
 /** Generation, resume lane and count. The `.6` presence bit is already in the channel base. */
 inline constexpr std::size_t kType2AtomBlockBitCount = 43;
@@ -150,9 +154,11 @@ struct Type2Body final {
     Type2AtomProgram atoms{};
 };
 
+/** Buffer one whole type-2 root needs at the full channel and lane counts. */
 inline constexpr std::size_t kType2MaximumBodyBitCount =
     kType2MaximumChannelBitCount + kType2AtomBlockBitCount
     + kType2AtomCapacity * kType2AtomLaneMaximumBitCount;
+/** Same size padded up to whole bytes. */
 inline constexpr std::size_t kType2MaximumBodyByteCount = (kType2MaximumBodyBitCount + 7) / 8;
 
 /** Encodes both keyed-lane tags and their selected native child schemas. */
@@ -264,9 +270,11 @@ struct Type34Body final {
     std::uint8_t count{};
 };
 
+/** Buffer the predicate list needs at its widest child and the full predicate count. */
 inline constexpr std::size_t kType34PredicateMaximumBitCount = 91;
 inline constexpr std::size_t kType34MaximumBitCount =
     4 + kType34PredicateCapacity * kType34PredicateMaximumBitCount;
+/** Same size padded up to whole bytes. */
 inline constexpr std::size_t kType34MaximumByteCount = (kType34MaximumBitCount + 7) / 8;
 
 /** Encodes one present code-34 field: presence, schema handle, and its native child body. */

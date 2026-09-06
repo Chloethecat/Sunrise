@@ -10,18 +10,21 @@ namespace {
 
 namespace bits = encoding::bits;
 
+/** Field widths of the reflected message-54 row, in bits. */
 constexpr std::uint8_t kStateBits = 3;
 constexpr std::uint8_t kSliceSetBits = 10;
 constexpr std::uint8_t kPeerBits = 6;
 constexpr std::uint8_t kSigned32Bits = 32;
 constexpr std::uint8_t kByteBits = 8;
 constexpr std::uint8_t kWideBits = 64;
+/** Value range each biased field can carry at its width. */
 constexpr std::int8_t kMinimumState = -1;
 constexpr std::int8_t kMaximumState = 6;
 constexpr std::int32_t kMinimumSliceSet = -1;
 constexpr std::int32_t kMaximumSliceSet = 1'022;
 constexpr std::int8_t kMinimumPeer = -1;
 constexpr std::int8_t kMaximumPeer = 62;
+/** The host id is sent as an unsigned field biased by the signed 32-bit sign. */
 constexpr std::uint32_t kSigned32Bias = 0x80000000U;
 
 /** @return True when every bounded scalar fits its reflected wire field. */

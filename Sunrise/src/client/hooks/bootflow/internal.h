@@ -11,13 +11,9 @@ using patterns::signature;
 using patterns::signature_length;
 
 /**
- * One boot-step fix resolves its target, then the group attaches every resolved fix together.
- * Splitting the two halves is what lets the group hold one detour transaction instead of one per
- * fix. A transaction enlists every thread on the system to find this process's own, which costs
- * far more than the attach it guards, so the count of transactions is what the boot pays for.
- *
- * A publish call is made only for a fix that staged, and takes a detached handle when the group's
- * attach did not happen.
+ * How far one boot-step fix got before the group's shared attach.
+ * Staging and attaching are split so the whole group holds one detour transaction, not one each.
+ * A fix that staged is always published, with a detached handle when the attach did not happen.
  */
 enum class StageResult : unsigned char {
     /** The target is missing. The fix reported that itself and staged nothing. */
@@ -40,19 +36,6 @@ void publish_character_select_hold(const hooking::detour::Handle& handle) noexce
 
 /** Detaches the character-select hold. */
 void uninstall_character_select_hold() noexcept;
-
-/**
- * Stages the profile-setup skip, which skips the startup setup screens.
- * @param spec Receives the target and replacement.
- * @return staged when the target was found, unavailable on a miss.
- */
-[[nodiscard]] StageResult stage_profile_setup_skip(hooking::detour::Spec& spec) noexcept;
-
-/** Takes the profile-setup skip's attached handle, or a detached one. */
-void publish_profile_setup_skip(const hooking::detour::Handle& handle) noexcept;
-
-/** Detaches the profile-setup skip. */
-void uninstall_profile_setup_skip() noexcept;
 
 /**
  * Stages the orbit slice-set picker, so the sign-in step's map load finds its target.

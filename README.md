@@ -19,8 +19,8 @@ Destiny 2 Offline Exploration Mod
 
 ## WIP
 
-This mod is a work in progress. Things might break or work in unexpected ways. There is also currently
-a lack of documentation. This will improve over the coming weeks.
+This mod is a work in progress. Things might break or work in unexpected ways. There is also
+currently a lack of documentation. This will improve over the coming weeks.
 
 ## Support Me
 

@@ -95,7 +95,15 @@ bool payload_checksum(records::Domains domains, std::uint64_t& checksum) noexcep
            && checksum_domain<records::VendorInstalledRowRecord>(domains.vendorInstalledRows,
                                                                  checksum)
            && checksum_domain<records::PositionProfileRecord>(domains.positionProfiles, checksum)
-           && checksum_domain<records::ObjectTypeRecord>(domains.objectTypes, checksum);
+           && checksum_domain<records::ObjectTypeRecord>(domains.objectTypes, checksum)
+           && checksum_domain<records::RecordObjectiveRecord>(domains.recordObjectives, checksum)
+           && checksum_domain<records::RecordIntervalRecord>(domains.recordIntervals, checksum)
+           && checksum_domain<records::RecordRewardRecord>(domains.recordRewards, checksum)
+           && checksum_domain<records::ProgressionStepRecord>(domains.progressionSteps, checksum)
+           && checksum_domain<records::SeasonPassRewardRecord>(domains.seasonPassRewards, checksum)
+           && checksum_domain<records::SeasonPassPackageRecord>(domains.seasonPassPackages,
+                                                                checksum)
+           && checksum_domain<records::BountyRecord>(domains.bounties, checksum);
 }
 
 /** Writes every array in the same order used by the payload checksum. */
@@ -129,7 +137,14 @@ bool write_payload(HANDLE file, records::Domains domains) noexcept {
            && write_domain<records::VendorSaleRowRecord>(file, domains.vendorSaleRows)
            && write_domain<records::VendorInstalledRowRecord>(file, domains.vendorInstalledRows)
            && write_domain<records::PositionProfileRecord>(file, domains.positionProfiles)
-           && write_domain<records::ObjectTypeRecord>(file, domains.objectTypes);
+           && write_domain<records::ObjectTypeRecord>(file, domains.objectTypes)
+           && write_domain<records::RecordObjectiveRecord>(file, domains.recordObjectives)
+           && write_domain<records::RecordIntervalRecord>(file, domains.recordIntervals)
+           && write_domain<records::RecordRewardRecord>(file, domains.recordRewards)
+           && write_domain<records::ProgressionStepRecord>(file, domains.progressionSteps)
+           && write_domain<records::SeasonPassRewardRecord>(file, domains.seasonPassRewards)
+           && write_domain<records::SeasonPassPackageRecord>(file, domains.seasonPassPackages)
+           && write_domain<records::BountyRecord>(file, domains.bounties);
 }
 
 } // namespace sunrise::state::build_data::cache::writer

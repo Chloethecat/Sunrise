@@ -69,10 +69,8 @@ bool prepare(Scratch& scratch,
     if (!state::ensure_profile_item_identities()) {
         return report_failure("profile_identities");
     }
-    // The emote-collection canonicalization deliberately does not live here. Family zero and
-    // family three build their own images from the same account and neither passes through this
-    // function, so it runs in the shared preflight ahead of the whole dispatch instead
-    // (push::ensure_account_canonical).
+    // Account canonicalization stays out of this builder. Families zero and three do not pass
+    // through it, so push::ensure_account_canonical runs ahead of the whole dispatch.
     const state::AccountState account = state::account_snapshot();
     if (!state::account::valid(account)) {
         return report_failure("account_state");

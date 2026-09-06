@@ -9,6 +9,7 @@
 
 #include "../investment/investment.h"
 #include "abilities/definition.h"
+#include "bounties/definition.h"
 #include "collectibles/collectible_catalog.h"
 #include "constants/definition.h"
 #include "definition.h"
@@ -22,8 +23,9 @@
 #include "nodes/definition.h"
 #include "progressions/definition.h"
 #include "records/definition.h"
-#include "records/rewards/definition.h"
 #include "scenarios/definition.h"
+#include "season_pass/definition.h"
+#include "sobjects/sobject_catalog.h"
 #include "socket_entry_buckets/definition.h"
 #include "socket_entry_lists/definition.h"
 #include "spawn_sets/definition.h"
@@ -106,13 +108,19 @@ publish_item_definitions(std::span<const items::Definition> definitions) noexcep
 [[nodiscard]] bool find_item_definition_index(std::uint16_t definitionIndex,
                                               items::Definition& definition) noexcept;
 
-/** Resolves every installed reward row for one record. Empty output means no usable reward. */
+/**
+ * Reads the items one record grants when it is claimed.
+ * @param definitionIndex Native record row.
+ * @param rewards Receives the granted items; a record granting none leaves the count at zero.
+ * @param rewardCount Receives the granted item count.
+ * @return True when the record exists and its whole reward range read back.
+ */
 [[nodiscard]] bool
-find_generated_record_rewards(std::uint32_t recordHash,
-                              std::array<records::rewards::ResolvedReward,
-                                         records::rewards::kRewardPerRecordCapacity>& rewards,
-                              std::size_t& rewardCount) noexcept;
+find_record_rewards(std::uint16_t definitionIndex,
+                    std::array<records::Reward, records::kRewardPerRecordCapacity>& rewards,
+                    std::size_t& rewardCount) noexcept;
 
+/** @return True when the whole dense collectible definition table is in State. */
 [[nodiscard]] bool collectible_definitions_ready() noexcept;
 
 /**
@@ -299,6 +307,17 @@ void set_exotic_catalyst_completion_enabled(bool enabled) noexcept;
 [[nodiscard]] bool is_consumed_on_apply(std::uint16_t itemDefinitionIndex,
                                         std::uint8_t bucketId) noexcept;
 
+/** @return True when the whole incident-target table is in State. */
+[[nodiscard]] bool sobject_definitions_ready() noexcept;
+
+/**
+ * Publishes the whole incident-target table in one step.
+ * @param definitions Complete rows in wire-target order.
+ * @return True when the rows pass the domain checks and fit fixed State storage.
+ */
+[[nodiscard]] bool
+publish_sobject_definitions(std::span<const sobjects::Definition> definitions) noexcept;
+
 /** @return True when the whole presentation node table is in State. */
 [[nodiscard]] bool node_definitions_ready() noexcept;
 
@@ -314,12 +333,17 @@ publish_node_definitions(std::span<const nodes::Definition> definitions) noexcep
 [[nodiscard]] bool record_definitions_ready() noexcept;
 
 /**
- * Publishes the whole record definition table in one step.
+ * Publishes the whole record catalog in one step.
  * @param definitions Complete dense rows in native record order.
+ * @param objectives Complete flat objective bank in record then row order.
+ * @param intervals Complete flat interval bank in record then step order.
+ * @param rewards Complete flat reward bank in record then row order.
  * @return True when the rows pass the domain checks and fit fixed State storage.
  */
-[[nodiscard]] bool
-publish_record_definitions(std::span<const records::Definition> definitions) noexcept;
+[[nodiscard]] bool publish_record_definitions(std::span<const records::Definition> definitions,
+                                              std::span<const records::Objective> objectives,
+                                              std::span<const records::Interval> intervals,
+                                              std::span<const records::Reward> rewards) noexcept;
 
 /**
  * Resolves the native record row an opcode-1801 claim names.
@@ -334,12 +358,104 @@ publish_record_definitions(std::span<const records::Definition> definitions) noe
 [[nodiscard]] bool progression_definitions_ready() noexcept;
 
 /**
- * Publishes the whole progression definition table in one step.
+ * Publishes the whole progression definition table and its step bank in one step.
  * @param definitions Dense rows in native definition order.
+ * @param steps Complete flat step bank in definition then rank order.
  * @return True when the rows pass the checks and any needed cache write succeeds.
  */
 [[nodiscard]] bool
-publish_progression_definitions(std::span<const progressions::Definition> definitions) noexcept;
+publish_progression_definitions(std::span<const progressions::Definition> definitions,
+                                std::span<const progressions::Step> steps) noexcept;
+
+/**
+ * Reads what each rank of one progression costs, in rank order.
+ * @param definitionIndex Native progression definition index.
+ * @param output Caller-owned fixed row storage.
+ * @param count Receives the copied row count.
+ * @return True when the table is ready and the whole ladder fits.
+ */
+[[nodiscard]] bool find_progression_steps(std::uint16_t definitionIndex,
+                                          std::span<progressions::Step> output,
+                                          std::size_t& count) noexcept;
+
+/** @return True when the season pass reward list is in State. */
+[[nodiscard]] bool season_pass_ready() noexcept;
+
+/**
+ * Publishes the season pass reward list and the wrapper items it grants, in one step.
+ * @param rewards Complete reward rows in native reward order.
+ * @param packages Complete wrapper packages.
+ * @return True when the rows pass the checks and any needed cache write succeeds.
+ */
+[[nodiscard]] bool publish_season_pass(std::span<const season_pass::Reward> rewards,
+                                       std::span<const season_pass::Package> packages) noexcept;
+
+/**
+ * Reads one season pass reward row.
+ * @param rewardIndex Native reward-array index the opcode-2400 claim names.
+ * @param reward Receives the row.
+ * @return True when the catalog is ready and holds that row.
+ */
+[[nodiscard]] bool find_season_pass_reward(std::uint16_t rewardIndex,
+                                           season_pass::Reward& reward) noexcept;
+
+/**
+ * Finds the item set one season pass wrapper opens into.
+ * @param definitionHash Authored wrapper item hash.
+ * @param package Receives the wrapper and its items.
+ * @return True when the catalog is ready and a wrapper carries that hash.
+ */
+[[nodiscard]] bool find_season_pass_package(std::uint32_t definitionHash,
+                                            season_pass::Package& package) noexcept;
+
+/** @return Season pass reward rows in State. */
+[[nodiscard]] std::size_t season_pass_reward_count() noexcept;
+
+/** @return True when the repeatable bounty table is in State. */
+[[nodiscard]] bool repeatable_bounties_ready() noexcept;
+
+/**
+ * Publishes every repeatable bounty and the item-type its pool is keyed by.
+ * @param definitions Complete rows in ascending item-index order.
+ * @return True when the rows pass the checks and any needed cache write succeeds.
+ */
+[[nodiscard]] bool
+publish_repeatable_bounties(std::span<const bounties::Definition> definitions) noexcept;
+
+/**
+ * Lists the item indices one repeatable vendor category rolls from.
+ * @param itemType Item-type pair the pool is keyed by.
+ * @param output Caller-owned fixed item-index storage.
+ * @param count Receives the pool size.
+ * @return True when the table is ready and the whole pool fits.
+ */
+[[nodiscard]] bool repeatable_bounty_pool(const bounties::ItemType& itemType,
+                                          std::span<std::uint16_t> output,
+                                          std::size_t& count) noexcept;
+
+/** Sale rows the seasonal artifact offers. The shipped artifact declares 26. */
+inline constexpr std::size_t kArtifactSaleRowCapacity = 32;
+
+/** One artifact sale row and the unlock buying it sets. */
+struct ArtifactSaleRow {
+    std::uint32_t itemHash{};
+    std::uint16_t itemIndex{};
+    /** Vendor category, which is the mod column the row sits in. */
+    std::int32_t categoryIndex{};
+    /** Global unlock flag slot the purchase sets, or the unavailable slot for the reset row. */
+    std::uint16_t unlockFlagSlot{collectibles::kUnavailableFlagSlot};
+    /** Character flag bank row that slot feeds, or the unavailable row for the reset row. */
+    std::uint16_t characterFlagIndex{collectibles::kUnavailableFlagIndex};
+};
+
+/**
+ * Lists the artifact's sale rows in vendor row order, with the unlock each one buys.
+ * @param output Caller-owned fixed row storage.
+ * @param count Receives the row count.
+ * @return True when the vendor and collectible catalogs are ready and every row resolves.
+ */
+[[nodiscard]] bool artifact_sale_rows(std::span<ArtifactSaleRow> output,
+                                      std::size_t& count) noexcept;
 
 /**
  * Lists the definition index each slot of one scope's progression array carries.

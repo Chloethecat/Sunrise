@@ -35,6 +35,7 @@ core::threading::DataMutex<Listener> g_listener;
 
 /**
  * Takes one waiting connection into a free slot and opens its Server session.
+ * @param listener Listener holding the acceptor and the peer slots.
  * @param slot Peer slot already checked to be free.
  */
 void accept_peer(Listener& listener, std::size_t slot) noexcept {
@@ -69,7 +70,7 @@ void accept_peer(Listener& listener, std::size_t slot) noexcept {
 
 /**
  * Reads at most once from one readable peer.
- * @param slot Live peer slot reported readable.
+ * @param peer Live peer reported readable.
  */
 void receive_peer(Peer& peer) noexcept {
     const std::size_t free = kStreamCapacity - peer.streamSize;
@@ -91,7 +92,7 @@ void receive_peer(Peer& peer) noexcept {
 
 /**
  * Sends at most once from one peer's committed output.
- * @param slot Live peer slot.
+ * @param peer Live peer.
  * @return True while the peer remains usable.
  */
 [[nodiscard]] bool flush_peer(Peer& peer) noexcept {
@@ -111,6 +112,7 @@ void receive_peer(Peer& peer) noexcept {
 
 /**
  * Services one peer with one read, frame, write and due-poll budget.
+ * @param peer Live peer.
  * @param readable Ready-read set from select.
  * @param writable Ready-write set from select.
  * @param wasPending True when select saw output.
@@ -145,10 +147,13 @@ void service_peer(
     }
 }
 
-} // namespace
-
-/** Starts the nonblocking loopback listener on one port. */
-bool initialize_on_port(Listener& listener, std::uint16_t port) noexcept {
+/**
+ * Starts the nonblocking loopback listener on one port.
+ * @param listener Guarded listener to bind.
+ * @param port Host-order loopback port. Zero picks an ephemeral port.
+ * @return True once the acceptor is bound and listening.
+ */
+[[nodiscard]] bool start_listener(Listener& listener, std::uint16_t port) noexcept {
     if (listener.active) {
         return true;
     }
@@ -199,16 +204,21 @@ bool initialize_on_port(Listener& listener, std::uint16_t port) noexcept {
     return true;
 }
 
+} // namespace
+
+/** Starts the nonblocking loopback listener on one port. */
+bool initialize_on_port(std::uint16_t port) noexcept {
+    return g_listener.lock([port](Listener& listener) { return start_listener(listener, port); });
+}
+
 /** Starts the nonblocking listener on the configured BAP port. */
 bool initialize() noexcept {
-    return g_listener.lock([](Listener& listener) {
-        return initialize_on_port(listener, core::settings::get().server.bapPort);
-    });
+    return initialize_on_port(core::settings::get().server.bapPort);
 }
 
 /** Runs one bounded listener slice on the caller thread. @param now Monotonic tick count. */
 void service(std::uint64_t now) noexcept {
-    g_listener.try_lock([now](Listener& listener) {
+    const bool ran = g_listener.try_lock([now](Listener& listener) {
         if (!listener.active) {
             return;
         }
@@ -274,6 +284,11 @@ void service(std::uint64_t now) noexcept {
             }
         }
     });
+    if (!ran) {
+        core::log::write(core::log::Channel::server,
+                         core::log::Level::debug,
+                         "ev=transport stage=service result=busy");
+    }
 }
 
 /** Closes every socket owned by the listener. */

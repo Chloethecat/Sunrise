@@ -13,8 +13,8 @@ namespace sunrise::client::hooks::bootflow {
 namespace {
 
 /**
- * The character sign-in step's enter handler. Anchored on its two setup stores, which write the
- * step's latch field and the paired setup words, so it cannot match a sibling step's handler.
+ * The character sign-in step's enter handler, anchored on its two setup stores.
+ * Those write the step's latch field and the paired setup words, so no sibling step matches.
  */
 constexpr std::string_view kEnterSignatureText =
     "40 53 48 83 EC ? 48 8B D9 C7 41 38 FF FF FF FF 66 C7 41 3C 00 00 33 D2";
@@ -67,7 +67,7 @@ __declspec(noinline) void __fastcall enter_handler(std::byte* step) noexcept {
 /**
  * Stages the character-select hold.
  * @param spec Receives the target and replacement.
- * @return True when the target is found and the fix wants attaching.
+ * @return staged when the target is found, unavailable on a miss.
  */
 StageResult stage_character_select_hold(hooking::detour::Spec& spec) noexcept {
     if (g_handle.attached) {

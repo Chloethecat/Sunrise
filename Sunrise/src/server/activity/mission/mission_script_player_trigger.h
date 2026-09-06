@@ -29,7 +29,7 @@ struct Source final {
 
 /** Resolves one type-31 incident and its generated type-60 target. */
 [[nodiscard]] ResolveStatus
-resolve(const state::build_data::scriptables::Snapshot& catalog,
+resolve(const state::build_data::scriptables::Snapshot& snapshot,
         const middleware::bap::activity_message::player_trigger_incident::Payload& payload,
         Source& output) noexcept;
 

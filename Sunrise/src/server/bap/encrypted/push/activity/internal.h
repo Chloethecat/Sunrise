@@ -182,8 +182,7 @@ client_placement(const Session& session, const RefreshReport* refresh) noexcept;
 
 /**
  * Tests whether the client's destination region is instantiated far enough for the native spawn.
- * Unlike `client_in_world`, this deliberately does not require the post-spawn world-state 8
- * write-back: requiring that signal to release the spawn creates a circular wait.
+ * Never reads the post-spawn world-state 8 write-back; that would be a circular wait.
  * @param session Connection whose activity session the client reports on.
  * @param refresh Refresh being answered, or null.
  */
@@ -269,8 +268,116 @@ struct TailAuthOverride final {
     const RefreshReport* refresh = nullptr,
     std::span<const TailAuthOverride> tailOverrides = {}) noexcept;
 
+/** Result of joining a generated group against every group already staged in this roster. */
+enum class ExistingGroup : std::uint8_t {
+    missing,
+    exact,
+    conflict,
+};
+
+/** Whether one canonical roster row is registered in the bubble the body publishes. */
+enum class CanonicalGroupStatus : std::uint8_t {
+    unknown,
+    inactive,
+    active,
+};
+
+/** Logs which exit refused, since the returned outcome itself carries no reason. */
+[[nodiscard]] RosterOutcome refuse_override(std::string_view reason) noexcept;
+
+/** @return Authored SOID of the character the join named, or of the selected character. */
+[[nodiscard]] std::uint64_t roster_player_key(std::uint64_t joinCharacter) noexcept;
+
+/** @return True when two request-owned generated groups carry the same wire fields. */
+[[nodiscard]] bool
+same_generated_group(const state::build_data::scenarios::RosterGroup& left,
+                     const state::build_data::scenarios::RosterGroup& right) noexcept;
+
+/** Finds one exact same-key group and rejects conflicting or multiply-published keys. */
+[[nodiscard]] ExistingGroup
+find_existing_group(const state::build_data::scenarios::RosterGroup& candidate,
+                    const Scratch& scratch,
+                    const message::Roster& roster,
+                    std::size_t& position) noexcept;
+
+/** Ensures a reused non-top-level group is active in the exact requested bubble. */
+[[nodiscard]] bool activate_existing_group(std::size_t position,
+                                           std::uint32_t bubble,
+                                           Scratch& scratch,
+                                           message::Roster& roster) noexcept;
+
+/** @return One bit per bubble this link hosts; every bubble when no world is bound. */
+[[nodiscard]] std::uint64_t hosted_bubble_mask(const Session& session) noexcept;
+
+/** Copies the destination's published groups into the encoder's fixed input. */
+[[nodiscard]] bool fill_roster(const state::build_data::scenarios::Definition& layout,
+                               std::uint64_t hostedBubbles,
+                               Scratch& scratch,
+                               message::Roster& roster) noexcept;
+
+/** Appends one selected-state group and registers its key in its exact authored bubble. */
+[[nodiscard]] bool
+append_state_local_group(const state::build_data::scenarios::RosterGroup& generatedGroup,
+                         std::uint32_t bubble,
+                         Scratch& scratch,
+                         message::Roster& roster) noexcept;
+
+/** @return True when one retained entry names this exact slot inside its shared group. */
+[[nodiscard]] bool
+same_retained_target(const RetainedSquadGroup& group,
+                     const RetainedSquadAuth& retained,
+                     const server::activity::host::ScriptableTarget& target) noexcept;
+
+/** @return Dense retained-group index for this target, or groupCount when it is new. */
+[[nodiscard]] std::size_t
+retained_group_index(const SquadOverrideLease& lease,
+                     const server::activity::host::ScriptableTarget& target) noexcept;
+
+/** Copies one already-encoded pending body into the compact retained representation. */
+[[nodiscard]] bool
+make_retained_squad_auth(const server::activity::host::PendingScriptableOverride& pending,
+                         std::uint64_t bindingGeneration,
+                         RetainedSquadAuth& output) noexcept;
+
+/** Restores one committed squad body exactly so phase-2 reset cannot clear its slot. */
+[[nodiscard]] bool retained_squad_auth(const SquadOverrideLease& lease,
+                                       std::size_t index,
+                                       message::AuthOverride& output) noexcept;
+
+/** @return True when every retained group and body is safe for cumulative publication. */
+[[nodiscard]] bool valid_retained_squad_lease(const SquadOverrideLease& lease,
+                                              std::uint64_t bindingGeneration) noexcept;
+
+/** @return Whether one canonical group is registered in the selected bubble. */
+[[nodiscard]] CanonicalGroupStatus
+canonical_group_status(const state::build_data::scenarios::Definition& layout,
+                       const EffectiveRegion& region,
+                       std::uint16_t tableIndex) noexcept;
+
+/** Installs an override only when its canonical roster row is registered in this exact bubble. */
+[[nodiscard]] bool install_auth_override(const state::build_data::scenarios::Definition& layout,
+                                         const EffectiveRegion& region,
+                                         Scratch& scratch,
+                                         message::Snapshot& snapshot,
+                                         const message::AuthOverride& value,
+                                         std::uint16_t tableIndex,
+                                         std::uint16_t slotOffset,
+                                         bool stateLocalRosterTarget) noexcept;
+
+/** Copies one delivered Host body into the message codec's value type. */
+[[nodiscard]] bool
+make_auth_override(const server::activity::host::PendingScriptableOverride& retained,
+                   message::AuthOverride& output) noexcept;
+
+/** Advances the epoch once per bubble the client holds, so every group re-registers there. */
+void advance_region_epoch(Session& session, const RefreshReport* refresh) noexcept;
+
+/** Stamps every group's revision from its lease, moved only when that group's identity changes. */
+void stamp_group_sequences(Session& session, message::Roster& roster) noexcept;
+
 /** FNV-1a over one encoded body, so two log lines can say whether the bytes repeated. */
 [[nodiscard]] inline std::uint64_t body_hash(std::span<const std::byte> body) noexcept {
+    // FNV-1a 64-bit offset basis and prime.
     constexpr std::uint64_t kBasis = 0xCBF29CE484222325ULL;
     constexpr std::uint64_t kPrime = 0x100000001B3ULL;
     std::uint64_t hash = kBasis;

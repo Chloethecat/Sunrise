@@ -30,17 +30,22 @@ bool snapshot(const state::activity::SessionBinding& binding,
               std::vector<identities::Identity>& rows) noexcept {
     source = {};
     rows.clear();
-    if (!generation || !state::activity::binding_matches(binding)) return false;
+    if (!generation || !state::activity::binding_matches(binding)) {
+        return false;
+    }
     std::array<identities::Source, identities::kSourceCapacity> sources{};
     const auto count =
         entity_identities::sources(binding.sessionId, binding.createdRevision, sources);
-    if (count > sources.size()) return false;
+    if (count > sources.size()) {
+        return false;
+    }
     std::size_t matches = 0;
-    for (std::size_t i = 0; i < count; ++i)
+    for (std::size_t i = 0; i < count; ++i) {
         if (sources[i].activityClientGeneration == generation) {
             source = sources[i];
             ++matches;
         }
+    }
     return matches == 1
            && entity_identities::snapshot_source(source, rows) == identities::Result::unchanged
            && state::gameplay::entity_object_types::enrich_snapshot(rows);
@@ -48,11 +53,16 @@ bool snapshot(const state::activity::SessionBinding& binding,
 /** Reports bounded release evidence without granting unknown identities any authority. */
 void report_released(const policy::Mask& mask,
                      std::span<const identities::Identity> rows) noexcept {
-    if (!core::log::accepts(core::log::Channel::server, core::log::Level::debug)) return;
+    if (!core::log::accepts(core::log::Channel::server, core::log::Level::debug)) {
+        return;
+    }
+    // Bounds one release report; the mask still carries the whole selection.
     constexpr std::size_t kMaximumReportedSlots = 64;
     std::size_t shown = 0;
     for (std::size_t slot = 0; slot < rows.size() && shown < kMaximumReportedSlots; ++slot) {
-        if ((std::to_integer<unsigned>(mask[slot / 8]) & (1U << (slot % 8))) == 0) continue;
+        if ((std::to_integer<unsigned>(mask[slot / 8]) & (1U << (slot % 8))) == 0) {
+            continue;
+        }
         ++shown;
         const auto& row = rows[slot];
         const auto& actor = row.actorSource;
@@ -81,31 +91,40 @@ void report_released(const policy::Mask& mask,
             actor.key,
             unsigned(actor.type),
             unsigned(actor.index));
-        if (count > 0)
+        if (count > 0) {
             core::log::write(
                 core::log::Channel::server,
                 core::log::Level::debug,
                 {line.data(), (std::min)(static_cast<std::size_t>(count), line.size() - 1)});
+        }
     }
 }
 
 /** Missing parents must remain visible when they block a complete retire tree. */
 void report_hierarchy_gaps(std::span<const identities::Identity> rows) noexcept {
-    if (!core::log::accepts(core::log::Channel::server, core::log::Level::debug)) return;
+    if (!core::log::accepts(core::log::Channel::server, core::log::Level::debug)) {
+        return;
+    }
+    // Bounds one hierarchy-gap report.
     constexpr std::size_t kMaximumReportedGaps = 64;
     std::size_t shown = 0;
     for (std::size_t slot = 0; slot < rows.size() && shown < kMaximumReportedGaps; ++slot) {
         const auto& row = rows[slot];
-        if (!row.present) continue;
+        if (!row.present) {
+            continue;
+        }
         const char* reason = nullptr;
-        if (!row.known || row.conflicted || !row.anchorKnown || row.token.slot != slot)
+        if (!row.known || row.conflicted || !row.anchorKnown || row.token.slot != slot) {
             reason = "identity";
-        else if (row.anchorPresent
-                 && (row.anchor.slot >= rows.size() || !rows[row.anchor.slot].present))
+        } else if (row.anchorPresent
+                   && (row.anchor.slot >= rows.size() || !rows[row.anchor.slot].present)) {
             reason = "missing_parent";
-        else if (row.anchorPresent && rows[row.anchor.slot].token != row.anchor)
+        } else if (row.anchorPresent && rows[row.anchor.slot].token != row.anchor) {
             reason = "parent_lifetime";
-        if (reason == nullptr) continue;
+        }
+        if (reason == nullptr) {
+            continue;
+        }
         ++shown;
         std::array<char, core::log::kLineCapacity> line{};
         const int count = std::snprintf(line.data(),
@@ -116,11 +135,12 @@ void report_hierarchy_gaps(std::span<const identities::Identity> rows) noexcept 
                                         reason,
                                         row.anchorPresent ? int(row.anchor.slot) : -1,
                                         unsigned(row.anchor.incarnation));
-        if (count > 0)
+        if (count > 0) {
             core::log::write(
                 core::log::Channel::server,
                 core::log::Level::debug,
                 {line.data(), (std::min)(static_cast<std::size_t>(count), line.size() - 1)});
+        }
     }
 }
 
@@ -131,10 +151,13 @@ void report(const char* stage,
             const policy::Mask* mask = nullptr) {
     std::array<char, core::log::kLineCapacity> line{};
     std::size_t selected = 0;
-    if (mask)
-        for (auto byte : *mask)
-            for (unsigned bit = 0; bit < 8; ++bit)
+    if (mask) {
+        for (auto byte : *mask) {
+            for (unsigned bit = 0; bit < 8; ++bit) {
                 selected += (std::to_integer<unsigned>(byte) >> bit) & 1U;
+            }
+        }
+    }
     const int prefix =
         std::snprintf(line.data(),
                       line.size(),
@@ -143,18 +166,27 @@ void report(const char* stage,
                       unsigned(bubble),
                       result ? 1U : 0U,
                       selected);
-    if (prefix <= 0) return;
+    if (prefix <= 0) {
+        return;
+    }
     std::size_t length = static_cast<std::size_t>(prefix), shown = 0;
-    if (mask)
+    if (mask) {
         for (std::size_t slot = 0; slot < identities::kSlotCapacity && shown < 32; ++slot) {
-            if ((std::to_integer<unsigned>((*mask)[slot / 8]) & (1U << (slot % 8))) == 0) continue;
+            if ((std::to_integer<unsigned>((*mask)[slot / 8]) & (1U << (slot % 8))) == 0) {
+                continue;
+            }
             const int count = std::snprintf(
                 line.data() + length, line.size() - length, "%s%zu", shown ? "," : "", slot);
-            if (count <= 0 || static_cast<std::size_t>(count) >= line.size() - length) break;
+            if (count <= 0 || static_cast<std::size_t>(count) >= line.size() - length) {
+                break;
+            }
             length += static_cast<std::size_t>(count);
             ++shown;
         }
-    if (shown == 0) line[length++] = '-';
+    }
+    if (shown == 0) {
+        line[length++] = '-';
+    }
     core::log::write(core::log::Channel::server, core::log::Level::info, {line.data(), length});
 }
 } // namespace
@@ -163,8 +195,9 @@ void record_delivered_target(const state::activity::SessionBinding& binding,
                              std::uint64_t generation,
                              const activity::host::PendingScriptableOverride& pending) noexcept {
     if (!generation || pending.target.slotType != 1
-        || pending.expectedActivityClientGeneration != generation)
+        || pending.expectedActivityClientGeneration != generation) {
         return;
+    }
     AcquireSRWLockExclusive(&g_lock);
     try {
         const auto& selected = pending.squadRetirement;
@@ -194,9 +227,10 @@ void record_delivered_target(const state::activity::SessionBinding& binding,
             /** An active source cannot own more actor targets than native entity slots. */
             constexpr std::size_t kMaximumTargets =
                 identities::kSourceCapacity * identities::kSlotCapacity;
-            if (enabled && g_targets.size() < kMaximumTargets)
+            if (enabled && g_targets.size() < kMaximumTargets) {
                 g_targets.push_back(
                     {binding.sessionId, binding.createdRevision, generation, selected});
+            }
         }
     } catch (...) {
         g_store.invalidate_target(
@@ -221,8 +255,9 @@ void observe_abdication(const state::activity::SessionBinding& binding,
     report_released(mask, rows);
     report_hierarchy_gaps(rows);
     if (destination.packageNameLength == 0
-        || destination.packageNameLength > destination.packageName.size())
+        || destination.packageNameLength > destination.packageName.size()) {
         return;
+    }
     const std::string_view name(reinterpret_cast<const char*>(destination.packageName.data()),
                                 destination.packageNameLength);
     policy::CellBubbles cells{};
@@ -230,17 +265,20 @@ void observe_abdication(const state::activity::SessionBinding& binding,
     for (std::size_t i = 0; i < cells.size(); ++i) {
         std::uint8_t owner{};
         if (state::gameplay::entity_position_profiles::lookup_bubble(
-                name, static_cast<std::uint16_t>(i), owner))
+                name, static_cast<std::uint16_t>(i), owner)) {
             cells[i] = owner;
+        }
     }
     AcquireSRWLockExclusive(&g_lock);
     bool accepted = false;
     try {
         std::vector<policy::Eligibility> eligible;
-        for (const auto& row : g_targets)
+        for (const auto& row : g_targets) {
             if (row.session == binding.sessionId && row.revision == binding.createdRevision
-                && row.generation == generation)
+                && row.generation == generation) {
                 eligible.push_back(row.eligibility);
+            }
+        }
         accepted = g_store.capture(source, bubble, mask, rows, eligible, cells);
     } catch (...) {}
     ReleaseSRWLockExclusive(&g_lock);
@@ -261,7 +299,9 @@ bool prepare_retirement(const state::activity::SessionBinding& binding,
     output = {};
     identities::Source source{};
     std::vector<identities::Identity> rows;
-    if (!snapshot(binding, generation, source, rows)) return false;
+    if (!snapshot(binding, generation, source, rows)) {
+        return false;
+    }
     AcquireSRWLockShared(&g_lock);
     const bool ready = g_store.prepare(source, bubble, rows, output);
     ReleaseSRWLockShared(&g_lock);
@@ -273,16 +313,20 @@ bool begin_retirement_publication(const state::activity::SessionBinding& binding
                                   std::uint64_t generation,
                                   const RetirementPlan& plan,
                                   entity_identities::PublicationLease& lease) noexcept {
-    if (lease.held()) return false;
+    if (lease.held()) {
+        return false;
+    }
     if (!plan.pending || plan.source.activitySessionId != binding.sessionId
         || plan.source.activityRevision != binding.createdRevision
         || plan.source.activityClientGeneration != generation
-        || !state::activity::binding_matches(binding))
+        || !state::activity::binding_matches(binding)) {
         return false;
+    }
     std::vector<identities::Identity> rows;
     if (entity_identities::begin_publication(plan.source, rows, lease)
-        != identities::Result::unchanged)
+        != identities::Result::unchanged) {
         return false;
+    }
     if (!state::gameplay::entity_object_types::enrich_snapshot(rows)) {
         lease.release();
         return false;
@@ -295,7 +339,9 @@ bool begin_retirement_publication(const state::activity::SessionBinding& binding
                        && current.lifetimeCount == plan.lifetimeCount
                        && current.revision == plan.revision && current.bubble == plan.bubble;
     ReleaseSRWLockShared(&g_lock);
-    if (!valid) lease.release();
+    if (!valid) {
+        lease.release();
+    }
     return valid;
 }
 /** A stale prepared retirement cannot enter a later transport publication. */
@@ -312,9 +358,10 @@ bool validate_retirement(const state::activity::SessionBinding& binding,
 void commit_retirement(const RetirementPlan& plan) noexcept {
     AcquireSRWLockExclusive(&g_lock);
     const bool committed = g_store.commit(plan);
-    if (committed)
+    if (committed) {
         g_store.returned_slots(
             plan.source.activitySessionId, plan.source.activityClientGeneration, plan.entities);
+    }
     ReleaseSRWLockExclusive(&g_lock);
     if (committed) {
         static_cast<void>(entity_identities::retire(plan.source, plan.retired_lifetimes()));

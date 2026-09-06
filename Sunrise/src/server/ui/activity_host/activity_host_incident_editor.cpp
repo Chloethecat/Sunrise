@@ -12,6 +12,7 @@ namespace {
 namespace host = server::activity::host;
 namespace section = core::ui::components::section;
 
+/** One shared table style, so every table on this page reads the same. */
 constexpr ImGuiTableFlags kTableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
                                         | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit;
 

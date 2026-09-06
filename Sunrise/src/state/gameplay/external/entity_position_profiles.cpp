@@ -11,29 +11,37 @@ SRWLOCK g_lock{SRWLOCK_INIT};
 Rows g_rows;
 Fingerprint g_fingerprint{};
 bool g_confirmed{};
+// An activity name is stored null terminated, so one byte of the capacity is reserved.
 constexpr std::size_t kMaximumName = kNameCapacity - 1;
 } // namespace
 /** Only sorted, unique activity/cell records enter the immutable catalogue. */
 bool validate(std::span<const Row> rows) noexcept {
-    if (rows.empty() || rows.size() > kMaximumRows) return false;
+    if (rows.empty() || rows.size() > kMaximumRows) {
+        return false;
+    }
     const Row* previous = nullptr;
     for (const auto& row : rows) {
-        if (row.activity.empty() || row.activity.size() > kMaximumName || row.cell > 255
-            || row.bubble >= 64 || row.activity.find('\0') != std::string::npos
+        const std::string_view activity = row.activity.view();
+        if (activity.empty() || activity.size() > kMaximumName || row.cell > 255 || row.bubble >= 64
+            || activity.find('\0') != std::string_view::npos
             || std::any_of(
-                row.axisBits.begin(), row.axisBits.end(), [](auto width) { return width > 31; }))
+                row.axisBits.begin(), row.axisBits.end(), [](auto width) { return width > 31; })) {
             return false;
+        }
         if (previous
             && (previous->activity > row.activity
-                || (previous->activity == row.activity && previous->cell >= row.cell)))
+                || (previous->activity == row.activity && previous->cell >= row.cell))) {
             return false;
+        }
         previous = &row;
     }
     return true;
 }
 /** Publication swaps already-validated storage while readers hold the shared lock. */
 bool publish(Rows rows, const Fingerprint& fingerprint) noexcept {
-    if (!validate(rows)) return false;
+    if (!validate(rows)) {
+        return false;
+    }
     AcquireSRWLockExclusive(&g_lock);
     g_rows.swap(rows);
     g_fingerprint = fingerprint;
@@ -56,7 +64,9 @@ void reset() noexcept {
 }
 /** Shared-cache restore keeps rows hidden until the installed manifest is available. */
 bool restore(std::span<const Row> rows, const Fingerprint& fingerprint) noexcept {
-    if (!validate(rows)) return false;
+    if (!validate(rows)) {
+        return false;
+    }
     try {
         Rows copy(rows.begin(), rows.end());
         AcquireSRWLockExclusive(&g_lock);
@@ -111,16 +121,19 @@ bool snapshot(std::span<Row> output, std::size_t& count, Fingerprint& fingerprin
 bool lookup_bubble(std::string_view activity, std::uint16_t cell, std::uint8_t& bubble) noexcept {
     bubble = 255;
     AcquireSRWLockShared(&g_lock);
-    const auto found = std::lower_bound(
-        g_rows.begin(),
-        g_rows.end(),
-        std::pair(activity, cell),
-        [](const Row& row, const auto& key) {
-            return row.activity < key.first || (row.activity == key.first && row.cell < key.second);
-        });
-    const bool result =
-        g_confirmed && found != g_rows.end() && found->activity == activity && found->cell == cell;
-    if (result) bubble = found->bubble;
+    const auto found = std::lower_bound(g_rows.begin(),
+                                        g_rows.end(),
+                                        std::pair(activity, cell),
+                                        [](const Row& row, const auto& key) {
+                                            const std::string_view name = row.activity.view();
+                                            return name < key.first
+                                                   || (name == key.first && row.cell < key.second);
+                                        });
+    const bool result = g_confirmed && found != g_rows.end() && found->activity.view() == activity
+                        && found->cell == cell;
+    if (result) {
+        bubble = found->bubble;
+    }
     ReleaseSRWLockShared(&g_lock);
     return result;
 }
@@ -130,16 +143,19 @@ bool lookup(std::string_view activity,
             std::array<std::uint8_t, 3>& axisBits) noexcept {
     axisBits = {};
     AcquireSRWLockShared(&g_lock);
-    const auto found = std::lower_bound(
-        g_rows.begin(),
-        g_rows.end(),
-        std::pair(activity, cell),
-        [](const Row& row, const auto& key) {
-            return row.activity < key.first || (row.activity == key.first && row.cell < key.second);
-        });
-    const bool result =
-        g_confirmed && found != g_rows.end() && found->activity == activity && found->cell == cell;
-    if (result) axisBits = found->axisBits;
+    const auto found = std::lower_bound(g_rows.begin(),
+                                        g_rows.end(),
+                                        std::pair(activity, cell),
+                                        [](const Row& row, const auto& key) {
+                                            const std::string_view name = row.activity.view();
+                                            return name < key.first
+                                                   || (name == key.first && row.cell < key.second);
+                                        });
+    const bool result = g_confirmed && found != g_rows.end() && found->activity.view() == activity
+                        && found->cell == cell;
+    if (result) {
+        axisBits = found->axisBits;
+    }
     ReleaseSRWLockShared(&g_lock);
     return result;
 }

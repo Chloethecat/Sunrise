@@ -7,13 +7,16 @@
 
 namespace sunrise::middleware::bap::activity_message::bubble_host_state {
 
+/** Message type and schema the client accepts for the bubble host table. */
 inline constexpr std::uint32_t kMessageType = 54;
 inline constexpr std::uint32_t kSchema = 0x80808652U;
+/** The six-bit row count caps the table at 32 rows, and each row is fixed width. */
 inline constexpr std::size_t kMaximumRows = 32;
 inline constexpr std::size_t kSessionIdBytes = 128;
 inline constexpr std::size_t kExternalAddressBytes = 86;
 inline constexpr std::size_t kCountBits = 6;
 inline constexpr std::size_t kRowBits = 1'829;
+/** Body size the encoder buffer must cover at the full row count. */
 inline constexpr std::size_t kMaximumBits = kCountBits + kMaximumRows * kRowBits;
 inline constexpr std::size_t kMaximumBytes = (kMaximumBits + 7U) / 8U;
 

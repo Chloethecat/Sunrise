@@ -145,82 +145,6 @@ bool Parser::dismantle_rewards(state::AccountState& output) noexcept {
     }
 }
 
-/** Parses one optional item grant per record index. */
-bool Parser::record_rewards(state::AccountState& output) noexcept {
-    output.recordRewards = {};
-    output.recordRewardCount = 0;
-    if (!consume('[')) {
-        return false;
-    }
-    if (consume(']')) {
-        return true;
-    }
-    for (;;) {
-        if (output.recordRewardCount >= output.recordRewards.size() || !consume('{')) {
-            return false;
-        }
-        state::RecordRewardPolicy reward{};
-        bool hasRecordIndex = false;
-        bool hasItemIndex = false;
-        bool hasQuantity = false;
-        for (;;) {
-            std::string_view key;
-            if (!string(key) || !consume(':')) {
-                return false;
-            }
-            std::uint64_t value = 0;
-            if (key == "record_index") {
-                if (hasRecordIndex || !unsigned_integer(value)
-                    || value > (std::numeric_limits<std::uint16_t>::max)()) {
-                    return false;
-                }
-                reward.recordIndex = static_cast<std::uint16_t>(value);
-                hasRecordIndex = true;
-            } else if (key == "item_index") {
-                if (hasItemIndex || !unsigned_integer(value)
-                    || value > (std::numeric_limits<std::uint16_t>::max)()) {
-                    return false;
-                }
-                reward.itemIndex = static_cast<std::uint16_t>(value);
-                hasItemIndex = true;
-            } else if (key == "quantity") {
-                if (hasQuantity || !unsigned_integer(value) || value == 0
-                    || value > (std::numeric_limits<std::int32_t>::max)()) {
-                    return false;
-                }
-                reward.quantity = static_cast<std::int32_t>(value);
-                hasQuantity = true;
-            } else if (!skip_value(0)) {
-                return false;
-            }
-            if (consume('}')) {
-                break;
-            }
-            if (!consume(',')) {
-                return false;
-            }
-        }
-        if (!hasRecordIndex || !hasItemIndex) {
-            return false;
-        }
-        if (!hasQuantity) {
-            reward.quantity = 1;
-        }
-        for (std::size_t index = 0; index < output.recordRewardCount; ++index) {
-            if (state::same_record_reward_key(output.recordRewards[index], reward)) {
-                return false;
-            }
-        }
-        output.recordRewards[output.recordRewardCount++] = reward;
-        if (consume(']')) {
-            return true;
-        }
-        if (!consume(',')) {
-            return false;
-        }
-    }
-}
-
 /** Parses the authored account-wide item array. */
 bool Parser::profile_items(state::AccountState& output) noexcept {
     namespace inventory = state::account::inventory;
@@ -386,9 +310,8 @@ bool Parser::character(state::CharacterState& output) noexcept {
             }
         } else if (key == "movement_ability" || key == "grenade_ability" || key == "super_ability"
                    || key == "melee_ability" || key == "class_ability") {
-            // Deliberately ignored on load. The subclass screen's first paint each login shows
-            // the ability-entry struct defaults below, so restoring a persisted pick would leave
-            // that paint disagreeing with what is equipped. Still written out, never read back.
+            // Written out but never read back: the subclass screen's first paint each login shows
+            // the ability-entry defaults, which a restored pick would contradict.
             if (!skip_value(0)) {
                 return false;
             }

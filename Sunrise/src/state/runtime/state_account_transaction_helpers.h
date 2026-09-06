@@ -33,6 +33,7 @@ private:
     Pending& pending_;
 };
 
+/** Where one resolved loadout places an instance, and the serial it published there. */
 struct ResolvedPosition {
     std::uint16_t inventoryRow{};
     std::uint8_t equipmentSlot{};
@@ -103,6 +104,57 @@ valid_profile_mutation_shape(const PendingProfileItemAcquisition& mutation) noex
 [[nodiscard]] bool materialize_profile_acquisition(const AccountState& current,
                                                    const PendingProfileItemAcquisition& mutation,
                                                    AccountState& after) noexcept;
+
+/** What paid for one grant: a Collections row with its material cost, or nothing. */
+struct GrantSource {
+    std::uint32_t materialRequirementSetHash{};
+    std::uint16_t collectibleIndex{};
+    std::uint8_t materialRequirementCount{};
+    bool direct{};
+};
+
+/** @return The selected character's index, or the character count when none is selected. */
+[[nodiscard]] std::size_t selected_character_index(const AccountState& account) noexcept;
+/**
+ * Stages the common selected-character insertion path.
+ * @param chargedAccount Account after any material cost, or account itself when nothing is charged.
+ * @return False when the character has no free row or the after-image does not resolve.
+ */
+[[nodiscard]] bool finalize_item_acquisition(const AccountState& account,
+                                             const AccountState& chargedAccount,
+                                             std::uint32_t definitionHash,
+                                             bool profileChanged,
+                                             const GrantSource& source,
+                                             PendingItemAcquisition& mutation) noexcept;
+/**
+ * Stages the common profile-stack insertion path.
+ * @param chargedAccount Account after any material cost, or account itself when nothing is charged.
+ * @param actionSource True when the stack carries a resident instance soid.
+ * @return False when the quantity does not fit the stack or the after-image is not canonical.
+ */
+[[nodiscard]] bool
+finalize_profile_item_acquisition(const AccountState& account,
+                                  const AccountState& chargedAccount,
+                                  std::uint32_t definitionHash,
+                                  const build_data::items::details::Definition& detail,
+                                  bool actionSource,
+                                  std::int32_t quantity,
+                                  const GrantSource& source,
+                                  PendingProfileItemAcquisition& mutation) noexcept;
+/**
+ * Applies one validated insertion over an exact current account without taking State locks.
+ * @return False when the account moved since the mutation was prepared.
+ */
+[[nodiscard]] bool materialize_item_acquisition(const AccountState& current,
+                                                const PendingItemAcquisition& mutation,
+                                                AccountState& after) noexcept;
+/**
+ * Rebuilds one package from installed policy and rejects any altered after-image.
+ * @return False when the account moved or the rebuilt character differs from the mutation.
+ */
+[[nodiscard]] bool materialize_direct_item_bundle(const AccountState& current,
+                                                  const PendingDirectItemBundle& mutation,
+                                                  AccountState& after) noexcept;
 [[nodiscard]] bool native_equipment_slot(const account::inventory::Item& item,
                                          std::uint8_t& slot) noexcept;
 [[nodiscard]] bool semantic_equipment_slot(std::uint8_t nativeSlot,

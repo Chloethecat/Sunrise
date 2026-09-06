@@ -11,6 +11,7 @@ namespace sunrise::client::content::activity::sdk_generation::worker_internal {
 
 namespace shard_store = state::activity_sdk::generated_world::store;
 
+// Shards are published with the pack extension.
 constexpr std::wstring_view kShardExtension = L".pack";
 
 /** Formats an immutable shard path from its scenario and payload identities. */
@@ -18,6 +19,7 @@ constexpr std::wstring_view kShardExtension = L".pack";
                               std::uint32_t scenarioTag,
                               const generated::Digest& digest,
                               std::wstring& output) noexcept {
+    // A shard leaf spells the digest in lowercase hex.
     static constexpr wchar_t kDigits[] = L"0123456789abcdef";
     std::array<wchar_t, 10> tag{};
     const int length =

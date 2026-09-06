@@ -1,7 +1,8 @@
 #include <algorithm>
-#include <functional>
+#include <cstddef>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 
 #include "../../../state/build_data/scriptables/inline_name_evidence.h"
@@ -89,8 +90,9 @@ bool FailureReasons::add(std::string_view value) noexcept {
 }
 
 void FailureReasons::canonicalize() noexcept {
-    std::sort(values.begin(), values.begin() + count, byte_less);
-    count = static_cast<std::size_t>(std::unique(values.begin(), values.begin() + count)
+    const auto used = static_cast<std::ptrdiff_t>(count);
+    std::sort(values.begin(), values.begin() + used, byte_less);
+    count = static_cast<std::size_t>(std::unique(values.begin(), values.begin() + used)
                                      - values.begin());
 }
 

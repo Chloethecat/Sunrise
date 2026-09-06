@@ -1,9 +1,20 @@
+/**
+ * Clears the twenty-four literal-true presentation gates on the shipped lore books.
+ * A literal gate reads no unlock slot, so no authored unlock policy can clear it.
+ */
+
 #include <Windows.h>
 
 #include <array>
-#include <limits>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <span>
 
 #include "../../../../core/logging/log.h"
+#include "../../../../core/settings/settings.h"
+#include "../../../../middleware/content/packages/tables/definition_index_table.h"
 #include "../../../content/handles/handle_resolver.h"
 #include "../../../memory/current_process_memory.h"
 #include "../../../targets/game/content.h"
@@ -12,14 +23,46 @@
 
 namespace sunrise::client::hooks::network::investment {
 namespace {
+
+namespace tables = middleware::content::packages::tables;
+
+/** Installed tags of the record table and the presentation node table, in that order. */
+constexpr std::array<std::uint32_t, 2> kTableTags{0x81319339U, 0x8131933FU};
+/** Rows each of those tables holds in this build. A different count is a different build. */
+constexpr std::array<std::size_t, 2> kTableRowCounts{2242, 924};
+/** Row size of each of those tables, in the same order. */
+constexpr std::array<std::size_t, 2> kTableRowStrides{tables::kRecordRowStride,
+                                                      tables::kNodeRowStride};
+/** Expression fields swept on a record row. */
+constexpr std::array<std::size_t, 2> kRecordExpressionFields{
+    tables::kRecordCategoryExpressionField, tables::kRecordAlternateExpressionField};
+/** Expression fields swept on a node row. */
+constexpr std::array<std::size_t, 2> kNodeExpressionFields{tables::kNodeExpressionFieldAlternate,
+                                                           tables::kNodeExpressionFieldPrimary};
+/** Table index of the record rows, which is the only table holding a patched gate. */
+constexpr std::size_t kRecordTable = 0;
+/** Both tables carry the row's authored definition hash at this offset. */
+constexpr std::size_t kRowHashOffset = tables::kRecordHashOffset;
+/** Bytes between an array header and the marker that precedes it. */
+constexpr std::size_t kArrayMarkerBack = 4;
+/** An array header is a count then its element class. */
+constexpr std::size_t kArrayClassOffset = 8;
+/** An expression field is a count then a self-relative offset. */
+constexpr std::size_t kFieldPointerOffset = tables::kUnlockExpressionPointerOffset;
+
+/** One expression field: how many instructions it holds and where they sit. */
 struct Descriptor {
     std::uint64_t count;
     std::int64_t relative;
 };
+
+/** One replaced instruction and both values it takes. */
 struct Patch {
     std::uintptr_t address;
-    lore::Instruction before, after;
+    lore::Instruction before;
+    lore::Instruction after;
 };
+
 std::array<Patch, lore::kTargets.size()> g_patches{};
 std::size_t g_count{};
 SRWLOCK g_lock = SRWLOCK_INIT;
@@ -28,27 +71,67 @@ template <class T> bool read(std::uintptr_t address, T& value) noexcept {
     return memory::read_current_process(
         nullptr, address, std::as_writable_bytes(std::span(&value, 1)));
 }
+
+/**
+ * Follows one expression field to its instruction bytes.
+ * @param address Address of the field itself.
+ * @param desc Field contents already read from that address.
+ * @param data Receives the address of the first instruction.
+ * @return False when the header does not repeat the count or is not an installed array.
+ */
 bool data_at(std::uintptr_t address, const Descriptor& desc, std::uintptr_t& data) noexcept {
-    if (address > static_cast<std::uintptr_t>(INT64_MAX) - 24) return false;
-    const auto base = static_cast<std::int64_t>(address) + 8;
-    if (desc.relative < -base || desc.relative > INT64_MAX - base - 16) return false;
+    // Highest field address whose header arithmetic below still fits a signed 64-bit value.
+    constexpr std::uintptr_t kAddressCeiling =
+        static_cast<std::uintptr_t>(INT64_MAX) - tables::kHeaderSkip - kArrayClassOffset;
+    if (address > kAddressCeiling) {
+        return false;
+    }
+    const auto base =
+        static_cast<std::int64_t>(address) + static_cast<std::int64_t>(kFieldPointerOffset);
+    if (desc.relative < -base
+        || desc.relative > INT64_MAX - base - static_cast<std::int64_t>(tables::kHeaderSkip)) {
+        return false;
+    }
     const auto header = static_cast<std::uintptr_t>(base + desc.relative);
     std::uint64_t count{};
-    std::uint32_t marker{}, type{};
-    if (header < 4 || !read(header, count) || count != desc.count || !read(header - 4, marker)
-        || !read(header + 8, type) || marker >> 16 != 0x8080 || type >> 16 != 0x8080)
+    std::uint32_t marker{};
+    std::uint32_t type{};
+    if (header < kArrayMarkerBack || !read(header, count) || count != desc.count
+        || !read(header - kArrayMarkerBack, marker) || !read(header + kArrayClassOffset, type)
+        || marker >> tables::kDefinitionClassShift != tables::kDefinitionClassHigh
+        || type >> tables::kDefinitionClassShift != tables::kDefinitionClassHigh) {
         return false;
-    data = header + 16;
+    }
+    data = header + tables::kHeaderSkip;
     return true;
 }
+
+/** Rebuilds an image pointer without an implementation-defined integer conversion. */
+[[nodiscard]] void* image_pointer(std::uintptr_t address) noexcept {
+    void* pointer = nullptr;
+    static_assert(sizeof pointer == sizeof address);
+    std::memcpy(&pointer, &address, sizeof pointer);
+    return pointer;
+}
+
+/**
+ * Replaces one instruction, or puts the original back.
+ * @param patch Recorded address and both values.
+ * @param restore True to write the original value.
+ * @return False unless the expected value was there and the new one reads back.
+ */
 bool write(const Patch& patch, bool restore) noexcept {
     const auto expected = restore ? patch.after : patch.before;
     const auto desired = restore ? patch.before : patch.after;
     lore::Instruction current{};
-    if (!read(patch.address, current) || current != expected) return false;
-    auto* destination = reinterpret_cast<void*>(patch.address);
+    if (!read(patch.address, current) || current != expected) {
+        return false;
+    }
+    void* destination = image_pointer(patch.address);
     DWORD previous{};
-    if (!VirtualProtect(destination, sizeof desired, PAGE_READWRITE, &previous)) return false;
+    if (!VirtualProtect(destination, sizeof desired, PAGE_READWRITE, &previous)) {
+        return false;
+    }
     SIZE_T written{};
     const bool copied =
         WriteProcessMemory(GetCurrentProcess(), destination, &desired, sizeof desired, &written)
@@ -58,6 +141,8 @@ bool write(const Patch& patch, bool restore) noexcept {
         VirtualProtect(destination, sizeof desired, previous, &ignored) != FALSE;
     return copied && protectedAgain && read(patch.address, current) && current == desired;
 }
+
+/** Puts every recorded instruction back. Ownership is kept when any one of them refuses. */
 bool rollback() noexcept {
     bool ok = true;
     for (std::size_t i = g_count; i > 0; --i) {
@@ -66,75 +151,106 @@ bool rollback() noexcept {
             ok = false;
             continue;
         }
-        if (current == g_patches[i - 1].before) continue;
-        if (!write(g_patches[i - 1], true)) ok = false;
+        if (current == g_patches[i - 1].before) {
+            continue;
+        }
+        if (!write(g_patches[i - 1], true)) {
+            ok = false;
+        }
     }
-    if (ok) g_count = 0;
+    if (ok) {
+        g_count = 0;
+    }
     return ok;
 }
+
+/**
+ * Resolves both tables and stages one patch per target.
+ * @param staged Receives an address and both instruction values for every target.
+ * @return False when any table, row, hash or expression is not the one this build expects.
+ */
 bool prepare(std::array<Patch, lore::kTargets.size()>& staged) noexcept {
     content::handles::Source source{};
     source.tablesSlot =
         reinterpret_cast<std::uintptr_t>(targets::game::content::get().contentHandleTablesSlot);
     source.read = &memory::read_current_process;
-    std::array<std::uintptr_t, 2> rows{};
-    constexpr std::array<std::uint32_t, 2> tags{0x81319339U, 0x8131933FU};
-    constexpr std::array<std::size_t, 2> counts{2242, 924}, strides{216, 168};
-    for (std::size_t i = 0; i < 2; ++i) {
+    std::array<std::uintptr_t, kTableTags.size()> rows{};
+    for (std::size_t i = 0; i < kTableTags.size(); ++i) {
         std::uintptr_t table{};
         Descriptor desc{};
-        if (!content::handles::resolve(source, tags[i], table) || !read(table + 8, desc)
-            || desc.count != counts[i] || !data_at(table + 8, desc, rows[i]))
+        if (!content::handles::resolve(source, kTableTags[i], table)
+            || !read(table + tables::kTableArrayDescriptor, desc)
+            || desc.count != kTableRowCounts[i]
+            || !data_at(table + tables::kTableArrayDescriptor, desc, rows[i])) {
             return false;
+        }
     }
     for (std::size_t i = 0; i < staged.size(); ++i) {
         const auto& target = lore::kTargets[i];
-        const std::size_t kind = target.node ? 1 : 0;
-        const auto row = rows[kind] + target.row * strides[kind];
+        const auto row = rows[kRecordTable] + target.row * kTableRowStrides[kRecordTable];
         std::uint32_t hash{};
         Descriptor desc{};
         std::uintptr_t data{};
-        std::array<lore::Instruction, 59> code{};
-        if (!read(row + 40, hash) || hash != target.hash || !read(row + target.field, desc)
-            || desc.count == 0 || desc.count > code.size()
+        std::array<lore::Instruction, lore::kMaximumInstructions> code{};
+        if (!read(row + kRowHashOffset, hash) || hash != target.hash
+            || !read(row + target.field, desc) || desc.count == 0 || desc.count > code.size()
             || !data_at(row + target.field, desc, data)
             || !memory::read_current_process(
                 nullptr,
                 data,
                 std::as_writable_bytes(std::span(code).first(static_cast<std::size_t>(desc.count))))
-            || !lore::replacement(target.shape,
-                                  std::span(code).first(static_cast<std::size_t>(desc.count)),
-                                  staged[i].after))
+            || !lore::replacement(std::span(code).first(static_cast<std::size_t>(desc.count)),
+                                  staged[i].after)) {
             return false;
+        }
         staged[i].address = data;
         staged[i].before = code[0];
     }
     // Each edited instruction must be owned by exactly one presentation condition. Never mutate
     // a constant shared with another record, even if that record is not in this repair's list.
     std::array<unsigned, lore::kTargets.size()> references{};
-    for (std::size_t kind = 0; kind < 2; ++kind) {
-        for (std::size_t row = 0; row < counts[kind]; ++row) {
-            for (const std::size_t field : (kind == 0 ? std::array<std::size_t, 2>{120, 136}
-                                                      : std::array<std::size_t, 2>{48, 64})) {
-                const auto at = rows[kind] + row * strides[kind] + field;
+    for (std::size_t kind = 0; kind < kTableTags.size(); ++kind) {
+        for (std::size_t row = 0; row < kTableRowCounts[kind]; ++row) {
+            const auto& fields =
+                kind == kRecordTable ? kRecordExpressionFields : kNodeExpressionFields;
+            for (const std::size_t field : fields) {
+                const auto at = rows[kind] + row * kTableRowStrides[kind] + field;
                 Descriptor desc{};
                 std::uintptr_t data{};
-                if (!read(at, desc)) return false;
-                if (desc.count == 0) continue;
-                if (desc.count > 128 || !data_at(at, desc, data)) return false;
-                for (std::size_t i = 0; i < staged.size(); ++i)
-                    if (staged[i].address >= data && staged[i].address - data < desc.count * 8)
+                if (!read(at, desc)) {
+                    return false;
+                }
+                if (desc.count == 0) {
+                    continue;
+                }
+                if (desc.count > static_cast<std::uint64_t>(tables::kNodeExpressionCapacity)
+                    || !data_at(at, desc, data)) {
+                    return false;
+                }
+                const auto span = desc.count * tables::kUnlockInstructionStride;
+                for (std::size_t i = 0; i < staged.size(); ++i) {
+                    if (staged[i].address >= data && staged[i].address - data < span) {
                         ++references[i];
+                    }
+                }
             }
         }
     }
-    for (auto count : references)
-        if (count != 1) return false;
+    for (const unsigned count : references) {
+        if (count != 1) {
+            return false;
+        }
+    }
     return true;
 }
+
 } // namespace
 
+/** Clears every literal lore gate, or leaves all twenty-four exactly as they were. */
 void apply_lore_visibility() noexcept {
+    if (!core::settings::get().client.revealLoreBooks) {
+        return;
+    }
     AcquireSRWLockExclusive(&g_lock);
     if (g_count != 0) {
         ReleaseSRWLockExclusive(&g_lock);
@@ -152,19 +268,29 @@ void apply_lore_visibility() noexcept {
         }
     }
     const bool restored = ok || rollback();
-    core::log::write(core::log::Channel::client,
-                     ok ? core::log::Level::info : core::log::Level::warn,
-                     ok ? "ev=lore_visibility result=applied conditions=36 progress_unchanged=1"
-                     : restored ? "ev=lore_visibility result=refused originals_retained=1"
-                                : "ev=lore_visibility result=rollback_failed");
+    std::array<char, core::log::kLineCapacity> line{};
+    const int written = std::snprintf(line.data(),
+                                      line.size(),
+                                      "ev=lore_visibility result=%s conditions=%zu",
+                                      ok ? "applied" : (restored ? "refused" : "rollback_failed"),
+                                      g_count);
+    if (written > 0) {
+        core::log::write(core::log::Channel::client,
+                         ok ? core::log::Level::info : core::log::Level::warn,
+                         {line.data(), static_cast<std::size_t>(written)});
+    }
     ReleaseSRWLockExclusive(&g_lock);
 }
+
+/** Puts every value the patch replaced back. */
 void restore_lore_visibility() noexcept {
     AcquireSRWLockExclusive(&g_lock);
-    if (!rollback())
+    if (!rollback()) {
         core::log::write(core::log::Channel::client,
                          core::log::Level::warn,
                          "ev=lore_visibility result=restore_failed");
+    }
     ReleaseSRWLockExclusive(&g_lock);
 }
+
 } // namespace sunrise::client::hooks::network::investment

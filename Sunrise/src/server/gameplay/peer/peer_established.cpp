@@ -73,9 +73,13 @@ void log_rejected_hex(std::size_t capture, std::span<const std::byte> payload) n
             capture,
             offset,
             count);
-        if (prefix <= 0 || static_cast<std::size_t>(prefix) >= line.size()) return;
+        if (prefix <= 0 || static_cast<std::size_t>(prefix) >= line.size()) {
+            return;
+        }
         auto length = static_cast<std::size_t>(prefix);
-        if (!core::log::append_hex(line, length, payload.subspan(offset, count))) return;
+        if (!core::log::append_hex(line, length, payload.subspan(offset, count))) {
+            return;
+        }
         core::log::write(
             core::log::Channel::server, core::log::Level::debug, {line.data(), length});
     }
@@ -83,13 +87,10 @@ void log_rejected_hex(std::size_t capture, std::span<const std::byte> payload) n
 
 /**
  * Retains a bounded replay sample only while server debug logging is enabled.
- * @param source
- * Source already admitted for this decode.
+ * @param source Source already admitted for this decode.
  * @param payload Complete decrypted datagram.
- * @param
- * externalOffset Start of the external handler in bits.
- * @param laneOffset Start of the rejected
- * entity lane in bits.
+ * @param externalOffset Start of the external handler in bits.
+ * @param laneOffset Start of the rejected entity lane in bits.
  * @param stoppedOffset Reader position at failure in bits.
  */
 void log_rejected_entity_packet(const gp::entity_identity::Source& source,
@@ -98,8 +99,9 @@ void log_rejected_entity_packet(const gp::entity_identity::Source& source,
                                 std::size_t laneOffset,
                                 std::size_t stoppedOffset) noexcept {
     if (!core::log::accepts(core::log::Channel::server, core::log::Level::debug) || payload.empty()
-        || payload.size() > kRejectedPacketCapacity)
+        || payload.size() > kRejectedPacketCapacity) {
         return;
+    }
     AcquireSRWLockExclusive(&g_rejectedPacketLock);
     bool duplicate = false;
     for (std::size_t index = 0; index < g_rejectedPacketCount; ++index) {
@@ -159,7 +161,9 @@ void log_rejected_entity_packet(const gp::entity_identity::Source& source,
 
 /** Packet ordinals share the receive ring's half-range ordering. */
 std::uint64_t packet_ordinal(const gp::PeerLink& peer, std::uint16_t sequence) noexcept {
-    if (!peer.ringInitialized) return gp::kPacketSequenceModulus + sequence;
+    if (!peer.ringInitialized) {
+        return gp::kPacketSequenceModulus + sequence;
+    }
     const auto forward =
         (sequence + gp::kPacketSequenceModulus - peer.receiveHead) % gp::kPacketSequenceModulus;
     return forward < gp::kPacketSequenceHalf
@@ -283,7 +287,9 @@ read_external(std::span<const std::byte> payload,
     output.commonPresent = false;
     bits::Reader reader(payload);
     const std::unique_ptr<ParsedExternal> candidateStorage(new (std::nothrow) ParsedExternal{});
-    if (!candidateStorage) return ExternalReadResult::lane2;
+    if (!candidateStorage) {
+        return ExternalReadResult::lane2;
+    }
     ParsedExternal& candidate = *candidateStorage;
     bool lanePresent = false;
     bool externalPresent = false;
@@ -337,6 +343,7 @@ read_external(std::span<const std::byte> payload,
 
 /** @return Stable log name for one external read result. */
 [[nodiscard]] const char* external_result_name(ExternalReadResult result) noexcept {
+    // One name per ExternalReadResult, in declaration order.
     constexpr std::array<const char*, 8> names = {
         "accepted", "prefix", "common", "lane0", "lane1", "lane2", "lane3", "filler"};
     const auto index = static_cast<std::size_t>(result);
@@ -458,7 +465,9 @@ void consume_established(const gp::Endpoint& from,
     bool externalValid = true;
     const char* externalFailure = "none";
     const std::unique_ptr<ParsedExternal> externalStorage(new (std::nothrow) ParsedExternal{});
-    if (!externalStorage) return;
+    if (!externalStorage) {
+        return;
+    }
     ParsedExternal& external = *externalStorage;
     state::activity::SessionBinding commonBinding{};
     std::uint64_t commonOwnerGeneration = 0;
@@ -597,7 +606,9 @@ void consume_established(const gp::Endpoint& from,
                 }
             }
             if (externalValid) {
-                if (!commonCandidatePresent) commonCandidate = peer->commonReconciler;
+                if (!commonCandidatePresent) {
+                    commonCandidate = peer->commonReconciler;
+                }
                 const bool currentEntityEpoch = commonCandidate.qualify_entities(
                     external.commonPresent ? &external.common : nullptr,
                     ordinal,
@@ -623,7 +634,9 @@ void consume_established(const gp::Endpoint& from,
                                                              packet.ack.outboundHeadPresent,
                                                              ordinal,
                                                              entityMutation);
-                if (!externalValid) externalFailure = "lane2_prepare";
+                if (!externalValid) {
+                    externalFailure = "lane2_prepare";
+                }
             }
             if (externalValid && externalGroupSessionId != 0
                 && g_lane0Transport.accepted != nullptr) {
@@ -642,7 +655,9 @@ void consume_established(const gp::Endpoint& from,
                                           || g_entityAccepted(g_entityAcceptedContext,
                                                               externalGroupSessionId,
                                                               external.entities);
-                if (!externalValid) externalFailure = "lane2_accept";
+                if (!externalValid) {
+                    externalFailure = "lane2_accept";
+                }
             }
             if (externalValid && commonCandidatePresent) {
                 peer->commonReconciler = commonCandidate;
@@ -706,11 +721,14 @@ void consume_established(const gp::Endpoint& from,
                              commonRequestedGeneration);
     }
     for (std::size_t index = 0; index < deliveredCount; ++index) {
-        if (!deferredView[index]) continue;
+        if (!deferredView[index]) {
+            continue;
+        }
         const auto& body = bodies[index];
         bits::Reader reader({body.bytes.data(), gp::kReassemblyCapacity});
-        if (reader.skip(body.bodyBitOffset))
+        if (reader.skip(body.bodyBitOffset)) {
             static_cast<void>(group::consume(from, body.id, reader, now));
+        }
     }
     notify_external_outcomes(completed, completedCount);
     if (queueCleared) {

@@ -153,7 +153,7 @@ struct MembershipState final {
     /** The character write-back (ws 702) reports the in-world state while a region is held. */
     bool entered{};
     std::uint32_t revision{};
-    /** Stable within one session; changes on world replacement to clear the reused client table. */
+    /** Stable within one session; a world replacement changes it to clear the client table. */
     std::uint32_t epoch{kStableEpoch};
     std::uint32_t acknowledgedRevision{};
     std::uint8_t transitionToken{};

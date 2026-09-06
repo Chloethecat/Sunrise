@@ -5,8 +5,6 @@
 #include <cstring>
 #include <limits>
 #include <span>
-#include <tuple>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -15,6 +13,7 @@
 namespace sunrise::middleware::content::packages::tables::activity_display_names {
 namespace {
 
+/** Field offsets, strides and element classes of the installed string-bank layouts. */
 constexpr std::size_t kActivityIndexFieldOffset = 8;
 constexpr std::size_t kActivityIndexStride = 16;
 constexpr std::size_t kActivityIndexPointerOffset = 8;
@@ -29,14 +28,18 @@ constexpr std::uint32_t kBankIndexElementClass = 0x80805F9EU;
 constexpr std::size_t kContainerHashFieldOffset = 8;
 constexpr std::uint32_t kContainerHashElementClass = 0x80800070U;
 constexpr std::size_t kContainerLanguageOffset = 0x18;
+/** A container carries 13 language slots and English is the first. */
 constexpr std::size_t kLanguageCount = 13;
 constexpr std::size_t kEnglishLanguageIndex = 0;
+/** Field offsets, strides and element classes of the installed combination layouts. */
 constexpr std::size_t kLanguageCombinationFieldOffset = 72;
 constexpr std::size_t kCombinationStride = 16;
 constexpr std::uint32_t kCombinationElementClass = 0x80809A8EU;
 constexpr std::size_t kPartStride = 32;
+/** Ceilings that stop a corrupt array header from driving an unbounded read. */
 constexpr std::size_t kMaximumParts = 64;
 constexpr std::size_t kMaximumArrayRows = 1'000'000;
+/** This hash is the no-name value, so a part carrying it contributes literal text. */
 constexpr std::uint32_t kLiteralPartHash = 0x811C9DC5U;
 
 struct DisplayReference final {
@@ -64,6 +67,12 @@ struct LoadedBank final {
     std::vector<std::byte> language{};
     Array combinations{};
     bool loaded{};
+};
+
+/** One loaded bank and the container it came from. One resolve pass reads a container once. */
+struct LoadedBankEntry final {
+    std::uint32_t containerTag{};
+    LoadedBank bank{};
 };
 
 enum class ResolveStatus : std::uint8_t {
@@ -373,8 +382,8 @@ add_relative(std::size_t member, std::int64_t relative, std::size_t& target) noe
         output.hashes.push_back({candidate, static_cast<std::uint32_t>(index)});
     }
     std::sort(
-        output.hashes.begin(), output.hashes.end(), [](const HashRow& left, const HashRow& right) {
-            return std::tie(left.hash, left.index) < std::tie(right.hash, right.index);
+        output.hashes.begin(), output.hashes.end(), [](const HashRow& row, const HashRow& other) {
+            return row.hash != other.hash ? row.hash < other.hash : row.index < other.index;
         });
     if (std::adjacent_find(output.hashes.begin(),
                            output.hashes.end(),
@@ -500,8 +509,8 @@ bool resolve(const Source& source,
     try {
         Snapshot pending{};
         pending.names.resize(references.size());
-        std::unordered_map<std::uint32_t, LoadedBank> loaded{};
-        loaded.reserve(references.size());
+        // Banks stay ordered by container tag, so a repeated container costs a search, not a read.
+        std::vector<LoadedBankEntry> loaded{};
         for (std::size_t index = 0; index < references.size(); ++index) {
             const Reference& reference = references[index];
             if (reference.containerTag == 0 || reference.stringHash == kLiteralPartHash) {
@@ -509,10 +518,15 @@ bool resolve(const Source& source,
                 ++pending.authoredEmptyCount;
                 continue;
             }
-            auto found = loaded.find(reference.containerTag);
-            if (found == loaded.end()) {
-                found = loaded.try_emplace(reference.containerTag).first;
-                if (!load_bank(source, Bank{0, reference.containerTag}, found->second)) {
+            auto found = std::lower_bound(loaded.begin(),
+                                          loaded.end(),
+                                          reference.containerTag,
+                                          [](const LoadedBankEntry& entry, std::uint32_t tag) {
+                                              return entry.containerTag < tag;
+                                          });
+            if (found == loaded.end() || found->containerTag != reference.containerTag) {
+                found = loaded.insert(found, LoadedBankEntry{reference.containerTag, {}});
+                if (!load_bank(source, Bank{0, reference.containerTag}, found->bank)) {
                     pending.names[index].authoredEmpty = true;
                     ++pending.authoredEmptyCount;
                     continue;
@@ -520,7 +534,7 @@ bool resolve(const Source& source,
             }
             Name& name = pending.names[index];
             name.stringHash = reference.stringHash;
-            const ResolveStatus status = resolve_name(found->second, reference.stringHash, name);
+            const ResolveStatus status = resolve_name(found->bank, reference.stringHash, name);
             if (status == ResolveStatus::invalid) {
                 name = {};
                 name.stringHash = reference.stringHash;

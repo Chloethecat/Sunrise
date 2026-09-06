@@ -44,6 +44,7 @@ contains(std::span<const std::byte> blob, std::size_t offset, std::size_t size) 
 /** Adds one signed self-relative field without wrapping host size arithmetic. */
 [[nodiscard]] bool
 relative_offset(std::size_t base, std::int64_t relative, std::size_t& output) noexcept {
+    /** Signed range the addition must stay inside. */
     constexpr std::int64_t kMaximum = (std::numeric_limits<std::int64_t>::max)();
     constexpr std::int64_t kMinimum = (std::numeric_limits<std::int64_t>::min)();
     if (base > static_cast<std::size_t>(kMaximum)) {

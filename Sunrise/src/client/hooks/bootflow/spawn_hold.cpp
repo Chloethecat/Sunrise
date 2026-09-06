@@ -1,10 +1,10 @@
-#include <windows.h>
+#include <Windows.h>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <cstdio>
 #include <cstdint>
+#include <cstdio>
 #include <string_view>
 
 #include "../../../core/logging/log.h"
@@ -31,6 +31,9 @@ constexpr auto kSpawnGateSignature =
 /** Answer that holds the spawn for this tick. The gate is polled, so a refusal only delays it. */
 constexpr bool kHeld = false;
 
+/** The gate runs every frame, so an unchanged refusal is repeated only this often. */
+constexpr std::uint64_t kRefusalRepeatMs = 5'000;
+
 using SpawnGate = bool(__fastcall*)(std::int32_t) noexcept;
 
 hooking::detour::Handle g_handle{};
@@ -46,7 +49,7 @@ void report_spawn_refusal(std::int32_t datum,
     const std::uint64_t now = GetTickCount64();
     const spawn::Refusal previous = g_lastRefusal.exchange(reading.refusal);
     const std::uint64_t last = g_lastProbeTick.load(std::memory_order_relaxed);
-    if (reading.refusal == previous && now - last < 5'000U) {
+    if (reading.refusal == previous && now - last < kRefusalRepeatMs) {
         return;
     }
     g_lastProbeTick.store(now, std::memory_order_relaxed);
@@ -55,16 +58,17 @@ void report_spawn_refusal(std::int32_t datum,
     std::array<char, core::log::kLineCapacity> line{};
     const int written = std::snprintf(line.data(),
                                       line.size(),
-                                      "ev=bootflow stage=spawn_gate result=blocked phase=%u age=%llu %.*s",
+                                      "ev=bootflow stage=spawn_gate result=blocked phase=%u "
+                                      "age=%llu %.*s",
                                       static_cast<unsigned>(phase),
                                       static_cast<unsigned long long>(age),
                                       static_cast<int>(count),
                                       fields.data());
     if (written > 0) {
-        core::log::write(core::log::Channel::client,
-                         core::log::Level::warn,
-                         {line.data(),
-                          (std::min)(static_cast<std::size_t>(written), line.size() - 1U)});
+        core::log::write(
+            core::log::Channel::client,
+            core::log::Level::warn,
+            {line.data(), (std::min)(static_cast<std::size_t>(written), line.size() - 1U)});
     }
 }
 

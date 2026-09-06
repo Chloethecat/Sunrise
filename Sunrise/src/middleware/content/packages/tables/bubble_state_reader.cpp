@@ -38,15 +38,9 @@ constexpr std::size_t kMaxStateReports = 4096;
 std::atomic<std::size_t> g_stateReports{};
 
 /**
- * Dumps one slice-set state whole, so its map-global bubble index can be located rather than
- * assumed.
- *
- * `kStateMapBubbleIndexOffset` is an inference, and the values it produces do not behave like a
- * map-global index: within one destination most bubbles resolve to zero, and the field is what a
- * container's bubble mask is keyed by, so a wrong offset collapses every bubble's spawn sets and
- * components onto whichever bubble reads zero. The bubble name hash is the same for one bubble
- * whichever destination walks it, so grouping these rows by hash decides the offset outright: the
- * right one agrees across every destination that names the bubble and differs between bubbles.
+ * Dumps one slice-set state whole, so its map-global bubble index can be located.
+ * `kStateMapBubbleIndexOffset` is unverified; a wrong offset collapses every bubble's spawn sets
+ * and components onto whichever bubble reads zero.
  * @param ordinal Bubble ordinal within its scenario.
  * @param nameHash The bubble's own name hash, stable across destinations.
  * @param state Raw inline bytes of slice-set state zero.
@@ -110,10 +104,10 @@ bool bubble_states(std::span<const std::byte> scenario, BubbleStates& output) no
             && element_offset(
                 bubble.stateDataOffset, bubble.stateCount, kSliceStateStride, 0, stateOffset)
             && stateOffset + kSliceStateStride <= scenario.size()) {
-            report_state(index,
-                         bubble.nameHash,
-                         scenario.subspan(static_cast<std::size_t>(stateOffset),
-                                          kSliceStateStride));
+            report_state(
+                index,
+                bubble.nameHash,
+                scenario.subspan(static_cast<std::size_t>(stateOffset), kSliceStateStride));
         }
         if (bubble.stateCount != 0 && slice_state_at(scenario, bubble, 0, state)) {
             value = state.enabled ? kBubbleEnabledByte : kBubbleDisabledByte;

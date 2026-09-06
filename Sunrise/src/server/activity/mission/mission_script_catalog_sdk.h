@@ -66,13 +66,16 @@ enum class CatalogFieldKind : std::uint8_t {
     bytes,
 };
 
+// Holds the widest raw row a catalog field copies, the 40-byte RSAT schema field row.
+inline constexpr std::size_t kCatalogFieldByteCapacity = 40;
+
 /** One copied or immediately consumed immutable runtime-pack field. */
 struct CatalogFieldDefinition final {
     CatalogFieldKind kind{CatalogFieldKind::absent};
     std::uint64_t unsignedValue{};
     std::int64_t signedValue{};
     std::string_view stringValue{};
-    std::array<std::byte, 40> bytesValue{};
+    std::array<std::byte, kCatalogFieldByteCapacity> bytesValue{};
     std::uint8_t valueCount{};
 };
 

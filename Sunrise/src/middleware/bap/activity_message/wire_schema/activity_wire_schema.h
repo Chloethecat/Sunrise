@@ -8,8 +8,10 @@
 
 namespace sunrise::middleware::bap::activity_message::wire_schema {
 
+/** Rows the generated catalog holds. Every table is sized to these exactly. */
 inline constexpr std::size_t kMessageCount = 59;
 inline constexpr std::size_t kFieldCount = 786;
+/** All-ones is the absent value for an unsigned catalog field. */
 inline constexpr std::uint32_t kAbsentUnsigned = 0xFFFFFFFFU;
 
 /** How much of a packet's layout the catalog fixes. */

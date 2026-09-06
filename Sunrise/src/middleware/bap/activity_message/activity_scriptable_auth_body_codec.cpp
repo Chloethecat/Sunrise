@@ -13,6 +13,7 @@ namespace {
 
 namespace bits = encoding::bits;
 
+/** The lane ClientRef slot type is sent unsigned, biased so its absent value is zero. */
 constexpr std::uint32_t kClientRefTypeBias = 1;
 /** Highest 31-bit actor-control revision the client accepts. */
 constexpr std::uint32_t kMaximumRevision = 0x7FFFFFFFU;
@@ -165,10 +166,11 @@ constexpr std::uint8_t kType2AtomFieldMaximum = 0x3F;
         return false;
     }
     for (std::size_t index = 0; index < state.temperamentCount; ++index) {
+        const auto scanned = static_cast<std::ptrdiff_t>(index);
         if (std::find(state.temperaments.begin(),
-                      state.temperaments.begin() + index,
+                      state.temperaments.begin() + scanned,
                       state.temperaments[index])
-            != state.temperaments.begin() + index) {
+            != state.temperaments.begin() + scanned) {
             return false;
         }
     }
@@ -245,6 +247,7 @@ constexpr std::uint8_t kType2AtomFieldMaximum = 0x3F;
     return encoded && writer.write(0, kBoolWidth);
 }
 
+/** Child schema the client selects for each type-34 predicate tag, in tag order. */
 constexpr std::array<std::uint32_t, 13> kType34PredicateSchemas{
     0x80809571U,
     0x80809572U,
@@ -261,6 +264,7 @@ constexpr std::array<std::uint32_t, 13> kType34PredicateSchemas{
     0x8080957DU,
 };
 
+/** Bits each predicate child body occupies, in the same tag order. */
 constexpr std::array<std::size_t, 13> kType34PredicateChildBits{
     34,
     34,
@@ -390,8 +394,9 @@ bool set_type2_temperaments(Type2ChannelState& state,
     }
     std::array<TemperamentId, kType2TemperamentCapacity> retained{};
     for (std::size_t index = 0; index < temperaments.size(); ++index) {
-        if (std::find(retained.begin(), retained.begin() + index, temperaments[index])
-            != retained.begin() + index) {
+        const auto scanned = static_cast<std::ptrdiff_t>(index);
+        if (std::find(retained.begin(), retained.begin() + scanned, temperaments[index])
+            != retained.begin() + scanned) {
             return false;
         }
         retained[index] = temperaments[index];
@@ -572,8 +577,9 @@ bool validate_type2_body(std::span<const std::byte> input, std::size_t bitCount)
             return false;
         }
         temperaments[index] = static_cast<std::uint32_t>(value);
-        if (std::find(temperaments.begin(), temperaments.begin() + index, temperaments[index])
-            != temperaments.begin() + index) {
+        const auto scanned = static_cast<std::ptrdiff_t>(index);
+        if (std::find(temperaments.begin(), temperaments.begin() + scanned, temperaments[index])
+            != temperaments.begin() + scanned) {
             return false;
         }
     }
@@ -589,8 +595,9 @@ bool validate_type2_body(std::span<const std::byte> input, std::size_t bitCount)
             return false;
         }
         channels[index] = static_cast<std::uint32_t>(value);
-        if (std::find(channels.begin(), channels.begin() + index, channels[index])
-            != channels.begin() + index) {
+        const auto scanned = static_cast<std::ptrdiff_t>(index);
+        if (std::find(channels.begin(), channels.begin() + scanned, channels[index])
+            != channels.begin() + scanned) {
             return false;
         }
     }

@@ -13,8 +13,10 @@
 namespace sunrise::client::hooks::bootflow {
 namespace {
 
+using core::log::kLineCapacity;
+
 /**
- * `World_CheckActivityBubbles`*. Matched from its prologue through the activity object load
+ * `World_CheckActivityBubbles`*, matched from its prologue through the activity object load
  * and the handle shift, which is unique in the image.
  */
 constexpr std::string_view kCheckSignatureText =
@@ -25,8 +27,8 @@ constexpr auto kCheckSignature =
     signature<signature_length(kCheckSignatureText)>(kCheckSignatureText);
 
 /**
- * Slot written into the container. Any non-zero value pins the record. 1 is what the game's own
- * activity-swap path passes, so nothing downstream sees a number it cannot make itself.
+ * Slot written into the container; any non-zero value pins the record.
+ * 1 is what the game's own activity-swap path passes.
  */
 constexpr std::int32_t kRemoteSlot = 1;
 
@@ -35,9 +37,6 @@ constexpr std::uint8_t kNotArmed = 0;
 
 /** Lines allowed per run. The check runs once per activity container. */
 constexpr unsigned kMaxReports = 4;
-
-/** Size of one forcing line, set by its slot fields. */
-constexpr std::size_t kLineCapacity = 96;
 
 using CheckBubbles =
     std::uint8_t(__fastcall*)(void*, void*, std::int32_t, void*, std::int64_t, std::int32_t);

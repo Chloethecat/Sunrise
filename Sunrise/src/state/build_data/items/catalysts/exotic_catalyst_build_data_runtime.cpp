@@ -64,6 +64,12 @@ bool exotic_catalysts_ready() noexcept {
     return items::catalysts::count() != 0;
 }
 
+/**
+ * Derives the whole catalyst catalog from the installed packages and records the outcome.
+ * @param output Receives the derived rows.
+ * @param count Gets the number of rows written; zero on an unsupported build.
+ * @return False when the build has no active identity or the derivation failed.
+ */
 bool derive_exotic_catalysts(const items::catalysts::Source& source,
                              std::span<items::catalysts::Definition> output,
                              std::size_t& count,
@@ -83,6 +89,11 @@ bool derive_exotic_catalysts(const items::catalysts::Source& source,
     return derived;
 }
 
+/**
+ * Publishes the catalyst catalog after a fresh derivation reproduces it exactly.
+ * @param definitions Candidate rows to publish.
+ * @return False when re-derivation disagrees or no publication transaction is open.
+ */
 bool publish_exotic_catalysts(const items::catalysts::Source& source,
                               std::span<const items::catalysts::Definition> definitions) noexcept {
     if (!valid_publication(source, definitions)) {

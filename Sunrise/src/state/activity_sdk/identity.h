@@ -38,6 +38,7 @@ derive(const Digest& sourceFingerprint, const Digest& payloadSha256, Expected& o
     if (!valid(sourceFingerprint) || !valid(payloadSha256)) {
         return false;
     }
+    // Domain tags separate the two derived digests; the build tag changes with the pack layout.
     constexpr auto kLogicalDomain = std::to_array("sunrise-activity-sdk-logical-ir-v1");
     constexpr auto kBuildDomain = std::to_array("sunrise-activity-sdk-build-v13");
     const auto logicalDomain = std::as_bytes(std::span(kLogicalDomain));
@@ -49,7 +50,9 @@ derive(const Digest& sourceFingerprint, const Digest& payloadSha256, Expected& o
     }
     std::array<std::byte, 64> buildMaterial{};
     std::copy(sourceFingerprint.begin(), sourceFingerprint.end(), buildMaterial.begin());
-    std::copy(logical.begin(), logical.end(), buildMaterial.begin() + sourceFingerprint.size());
+    std::copy(logical.begin(),
+              logical.end(),
+              buildMaterial.begin() + static_cast<std::ptrdiff_t>(sourceFingerprint.size()));
     Digest build{};
     if (!middleware::crypto::sha256::hash_pair(buildDomain, buildMaterial, build)
         || !valid(build)) {

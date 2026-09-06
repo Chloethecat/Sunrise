@@ -39,6 +39,7 @@ lua_client_message_status_name(host::ClientMessageStatus status) noexcept {
 [[nodiscard]] int message_matches(lua_State* state) {
     const auto* const handle =
         static_cast<const MessageHandle*>(luaL_checkudata(state, 1, kMessageMetatable));
+    // Named arguments this call accepts. Any other key is refused.
     static constexpr std::array<std::string_view, 1> kDeclared{"event"};
     refuse_unknown_arguments(state, kDeclared);
     static_cast<void>(push_argument(state, "event"));

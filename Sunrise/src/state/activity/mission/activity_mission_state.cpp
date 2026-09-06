@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <new>
 #include <span>
@@ -9,10 +10,10 @@
 
 #include "../../runtime/storage/internal.h"
 #include "../transactions/internal.h"
+#include "internal.h"
 #include "runtime.h"
 
 namespace sunrise::state::activity::mission {
-namespace {
 
 /** True when every hash, tag and index of a program key is set. */
 [[nodiscard]] bool valid_program(const ProgramKey& program) noexcept {
@@ -37,6 +38,82 @@ namespace {
            && left.worldScenarioTag == right.worldScenarioTag
            && left.activityIndex == right.activityIndex && left.publicTarget == right.publicTarget;
 }
+
+[[nodiscard]] SessionRecord* find_record(ActivityState& state,
+                                         const SessionBinding& binding) noexcept {
+    const std::size_t slot = transactions::find_session(state, binding.sessionId);
+    return slot < state.sessions.size()
+                   && transactions::record_matches(state.sessions[slot], binding)
+               ? &state.sessions[slot]
+               : nullptr;
+}
+
+[[nodiscard]] const SessionRecord* find_record(const ActivityState& state,
+                                               const SessionBinding& binding) noexcept {
+    const std::size_t slot = transactions::find_session(state, binding.sessionId);
+    return slot < state.sessions.size()
+                   && transactions::record_matches(state.sessions[slot], binding)
+               ? &state.sessions[slot]
+               : nullptr;
+}
+
+/** Publishes one committed record to the caller. */
+[[nodiscard]] bool copy_snapshot(const ActivityState& activity,
+                                 const SessionBinding&,
+                                 const SessionRecord& record,
+                                 Snapshot& output) noexcept {
+    try {
+        output.state = record.mission;
+    } catch (const std::bad_alloc&) {
+        output = {};
+        return false;
+    }
+    output.activityStateRevision = activity.stateRevision;
+    return true;
+}
+
+/** Copies one durable mission value without letting allocation cross a State boundary. */
+[[nodiscard]] bool copy_mission_state(const MissionState& source, MissionState& output) noexcept {
+    try {
+        output = source;
+        return true;
+    } catch (const std::bad_alloc&) {
+        output = {};
+        return false;
+    }
+}
+
+[[nodiscard]] bool publish(ActivityState& activity, SessionRecord& record) noexcept {
+    if (activity.stateRevision == kMaximumRevision) {
+        return false;
+    }
+    ++activity.stateRevision;
+    record.recordRevision = activity.stateRevision;
+    return true;
+}
+
+/** @return The exact head intent after common delivery compare guards pass. */
+[[nodiscard]] Status checked_head(SessionRecord& record,
+                                  const ProgramKey& program,
+                                  std::uint64_t expectedMissionRevision,
+                                  std::uint64_t expectedIntentSequence,
+                                  PendingIntent*& output) noexcept {
+    output = nullptr;
+    if (!record.mission.programBound || !same_program(record.mission.program, program)) {
+        return Status::programMismatch;
+    }
+    if (record.mission.revision != expectedMissionRevision) {
+        return Status::revisionMismatch;
+    }
+    if (record.mission.pendingIntents.empty()
+        || record.mission.pendingIntents[0].sequence != expectedIntentSequence) {
+        return Status::intentMismatch;
+    }
+    output = &record.mission.pendingIntents[0];
+    return Status::ready;
+}
+
+namespace {
 
 /** Field-by-field equality of two typed intents. */
 [[nodiscard]] bool same_intent(const TypedIntent& left, const TypedIntent& right) noexcept {
@@ -188,59 +265,6 @@ namespace {
     return true;
 }
 
-[[nodiscard]] SessionRecord* find_record(ActivityState& state,
-                                         const SessionBinding& binding) noexcept {
-    const std::size_t slot = transactions::find_session(state, binding.sessionId);
-    return slot < state.sessions.size()
-                   && transactions::record_matches(state.sessions[slot], binding)
-               ? &state.sessions[slot]
-               : nullptr;
-}
-
-[[nodiscard]] const SessionRecord* find_record(const ActivityState& state,
-                                               const SessionBinding& binding) noexcept {
-    const std::size_t slot = transactions::find_session(state, binding.sessionId);
-    return slot < state.sessions.size()
-                   && transactions::record_matches(state.sessions[slot], binding)
-               ? &state.sessions[slot]
-               : nullptr;
-}
-
-/** Publishes one committed record to the caller. */
-[[nodiscard]] bool copy_snapshot(const ActivityState& activity,
-                                 const SessionBinding&,
-                                 const SessionRecord& record,
-                                 Snapshot& output) noexcept {
-    try {
-        output.state = record.mission;
-    } catch (const std::bad_alloc&) {
-        output = {};
-        return false;
-    }
-    output.activityStateRevision = activity.stateRevision;
-    return true;
-}
-
-/** Copies one durable mission value without letting allocation cross a State boundary. */
-[[nodiscard]] bool copy_mission_state(const MissionState& source, MissionState& output) noexcept {
-    try {
-        output = source;
-        return true;
-    } catch (const std::bad_alloc&) {
-        output = {};
-        return false;
-    }
-}
-
-[[nodiscard]] bool publish(ActivityState& activity, SessionRecord& record) noexcept {
-    if (activity.stateRevision == kMaximumRevision) {
-        return false;
-    }
-    ++activity.stateRevision;
-    record.recordRevision = activity.stateRevision;
-    return true;
-}
-
 /** Extends the current durable queue with the VM's complete ordered outbox. */
 [[nodiscard]] Status merge_intents(const MissionState& current,
                                    std::uint64_t nextMissionRevision,
@@ -283,70 +307,23 @@ namespace {
     return Status::ready;
 }
 
-/** @return The exact head intent after common delivery compare guards pass. */
-[[nodiscard]] Status checked_head(SessionRecord& record,
-                                  const ProgramKey& program,
-                                  std::uint64_t expectedMissionRevision,
-                                  std::uint64_t expectedIntentSequence,
-                                  PendingIntent*& output) noexcept {
-    output = nullptr;
-    if (!record.mission.programBound || !same_program(record.mission.program, program)) {
-        return Status::programMismatch;
-    }
-    if (record.mission.revision != expectedMissionRevision) {
-        return Status::revisionMismatch;
-    }
-    if (record.mission.pendingIntents.empty()
-        || record.mission.pendingIntents[0].sequence != expectedIntentSequence) {
-        return Status::intentMismatch;
-    }
-    output = &record.mission.pendingIntents[0];
-    return Status::ready;
-}
-
-/** Retires an exact durable head that never owns a Host output revision. */
-[[nodiscard]] Status retire_unassigned_intent(const SessionBinding& binding,
-                                              const ProgramKey& program,
-                                              std::uint64_t expectedMissionRevision,
-                                              std::uint64_t expectedIntentSequence,
-                                              Snapshot& output) noexcept {
-    output = {};
-    if (!valid_program(program)) {
-        return Status::invalidProgram;
-    }
-    if (expectedIntentSequence == kAbsentIntentSequence) {
+/**
+ * Orders the mission preconditions so the first failing one names the refusal.
+ * @return Ready when the transaction may advance the stored mission.
+ */
+[[nodiscard]] Status transition_status(const MissionState& mission,
+                                       const CommitCandidate& transaction) noexcept {
+    if (transaction.nextInputSequence > mission.issuedInputSequence
+        || (!transaction.started && mission.started) || mission.faulted) {
         return Status::invalidTransition;
     }
-    AcquireSRWLockExclusive(&runtime::storage::g_stateLock);
-    ActivityState& activity = runtime::storage::g_state.activity;
-    SessionRecord* const record = find_record(activity, binding);
-    Status status = record == nullptr ? Status::invalidBinding : Status::ready;
-    PendingIntent* pending = nullptr;
-    if (status == Status::ready) {
-        status = checked_head(
-            *record, program, expectedMissionRevision, expectedIntentSequence, pending);
+    if (!valid_timers(mission, transaction.timers, transaction.nextTimerSequence)) {
+        return Status::invalidTimer;
     }
-    if (status == Status::ready && pending->hostOutputRevision != kAbsentHostOutputRevision) {
-        status = Status::hostRevisionMismatch;
+    if (transaction.nextIntentKey < mission.nextIntentKey) {
+        return Status::invalidTransition;
     }
-    if (status == Status::ready) {
-        MissionState candidate{};
-        if (!copy_mission_state(record->mission, candidate)) {
-            status = Status::outOfMemory;
-        } else {
-            candidate.pendingIntents.erase(candidate.pendingIntents.begin());
-            if (!publish(activity, *record)) {
-                status = Status::revisionExhausted;
-            } else {
-                record->mission = std::move(candidate);
-            }
-        }
-    }
-    if (status == Status::ready && !copy_snapshot(activity, binding, *record, output)) {
-        status = Status::outOfMemory;
-    }
-    ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
-    return status;
+    return Status::ready;
 }
 
 } // namespace
@@ -578,14 +555,9 @@ Status commit(const SessionBinding& binding,
         status = Status::revisionMismatch;
     } else if (record->mission.inputSequence != expectedInputSequence) {
         status = Status::inputSequenceMismatch;
-    } else if (transaction.nextInputSequence > record->mission.issuedInputSequence) {
-        status = Status::invalidTransition;
-    } else if ((!transaction.started && record->mission.started) || record->mission.faulted) {
-        status = Status::invalidTransition;
-    } else if (!valid_timers(record->mission, transaction.timers, transaction.nextTimerSequence)) {
-        status = Status::invalidTimer;
-    } else if (transaction.nextIntentKey < record->mission.nextIntentKey) {
-        status = Status::invalidTransition;
+    } else if (const Status transition = transition_status(record->mission, transaction);
+               transition != Status::ready) {
+        status = transition;
     } else {
         MissionState candidate{};
         status = merge_intents(
@@ -611,12 +583,14 @@ Status commit(const SessionBinding& binding,
             std::copy(transaction.variables.begin(),
                       transaction.variables.end(),
                       candidate.variables.begin());
-            std::fill(candidate.variables.begin() + transaction.variables.size(),
+            std::fill(candidate.variables.begin()
+                          + static_cast<std::ptrdiff_t>(transaction.variables.size()),
                       candidate.variables.end(),
                       ScriptVariable{});
             std::copy(
                 transaction.timers.begin(), transaction.timers.end(), candidate.timers.begin());
-            std::fill(candidate.timers.begin() + transaction.timers.size(),
+            std::fill(candidate.timers.begin()
+                          + static_cast<std::ptrdiff_t>(transaction.timers.size()),
                       candidate.timers.end(),
                       MissionTimer{});
             candidate.revision = transaction.nextRevision;
@@ -641,195 +615,6 @@ Status commit(const SessionBinding& binding,
     }
     ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
     return status;
-}
-
-/** Assigns the exact next Host output revision to the durable head intent. */
-Status assign_intent_output(const SessionBinding& binding,
-                            const ProgramKey& program,
-                            std::uint64_t expectedMissionRevision,
-                            std::uint64_t expectedIntentSequence,
-                            std::uint64_t hostOutputRevision,
-                            Snapshot& output) noexcept {
-    output = {};
-    if (!valid_program(program)) {
-        return Status::invalidProgram;
-    }
-    if (expectedIntentSequence == kAbsentIntentSequence
-        || hostOutputRevision == kAbsentHostOutputRevision) {
-        return Status::invalidTransition;
-    }
-    AcquireSRWLockExclusive(&runtime::storage::g_stateLock);
-    ActivityState& activity = runtime::storage::g_state.activity;
-    SessionRecord* const record = find_record(activity, binding);
-    Status status = record == nullptr ? Status::invalidBinding : Status::ready;
-    PendingIntent* pending = nullptr;
-    if (status == Status::ready) {
-        status = checked_head(
-            *record, program, expectedMissionRevision, expectedIntentSequence, pending);
-    }
-    if (status == Status::ready && record->mission.faulted) {
-        status = Status::invalidTransition;
-    }
-    if (status == Status::ready && pending->hostOutputRevision != kAbsentHostOutputRevision
-        && pending->hostOutputRevision != hostOutputRevision) {
-        status = Status::hostRevisionMismatch;
-    }
-    // A fresh assignment must leave one Activity State revision for its exact release or ack.
-    if (status == Status::ready && pending->hostOutputRevision == kAbsentHostOutputRevision
-        && activity.stateRevision >= kMaximumRevision - 1) {
-        status = Status::revisionExhausted;
-    }
-    if (status == Status::ready && pending->hostOutputRevision == kAbsentHostOutputRevision) {
-        MissionState candidate{};
-        if (!copy_mission_state(record->mission, candidate)) {
-            status = Status::outOfMemory;
-        } else {
-            candidate.pendingIntents[0].hostOutputRevision = hostOutputRevision;
-            if (!publish(activity, *record)) {
-                status = Status::revisionExhausted;
-            } else {
-                record->mission = std::move(candidate);
-            }
-        }
-    }
-    if (status == Status::ready && !copy_snapshot(activity, binding, *record, output)) {
-        status = Status::outOfMemory;
-    }
-    ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
-    return status;
-}
-
-/** Reads whether the exact durable head still owns one queued Host output revision. */
-bool intent_output_assigned(const SessionBinding& binding,
-                            std::uint64_t expectedIntentSequence,
-                            std::uint64_t expectedHostOutputRevision) noexcept {
-    if (expectedIntentSequence == kAbsentIntentSequence
-        || expectedHostOutputRevision == kAbsentHostOutputRevision) {
-        return false;
-    }
-    AcquireSRWLockShared(&runtime::storage::g_stateLock);
-    const ActivityState& activity = runtime::storage::g_state.activity;
-    const SessionRecord* const record = find_record(activity, binding);
-    const bool assigned =
-        record != nullptr && record->mission.programBound && !record->mission.pendingIntents.empty()
-        && record->mission.pendingIntents[0].sequence == expectedIntentSequence
-        && record->mission.pendingIntents[0].hostOutputRevision == expectedHostOutputRevision;
-    ReleaseSRWLockShared(&runtime::storage::g_stateLock);
-    return assigned;
-}
-
-/** Releases an unstaged Host output assignment while retaining the durable intent. */
-Status release_intent_output(const SessionBinding& binding,
-                             const ProgramKey& program,
-                             std::uint64_t expectedMissionRevision,
-                             std::uint64_t expectedIntentSequence,
-                             std::uint64_t expectedHostOutputRevision,
-                             Snapshot& output) noexcept {
-    output = {};
-    if (!valid_program(program)) {
-        return Status::invalidProgram;
-    }
-    if (expectedIntentSequence == kAbsentIntentSequence
-        || expectedHostOutputRevision == kAbsentHostOutputRevision) {
-        return Status::invalidTransition;
-    }
-    AcquireSRWLockExclusive(&runtime::storage::g_stateLock);
-    ActivityState& activity = runtime::storage::g_state.activity;
-    SessionRecord* const record = find_record(activity, binding);
-    Status status = record == nullptr ? Status::invalidBinding : Status::ready;
-    PendingIntent* pending = nullptr;
-    if (status == Status::ready) {
-        status = checked_head(
-            *record, program, expectedMissionRevision, expectedIntentSequence, pending);
-    }
-    if (status == Status::ready && pending->hostOutputRevision != expectedHostOutputRevision) {
-        status = Status::hostRevisionMismatch;
-    }
-    if (status == Status::ready) {
-        MissionState candidate{};
-        if (!copy_mission_state(record->mission, candidate)) {
-            status = Status::outOfMemory;
-        } else {
-            candidate.pendingIntents[0].hostOutputRevision = kAbsentHostOutputRevision;
-            if (!publish(activity, *record)) {
-                status = Status::revisionExhausted;
-            } else {
-                record->mission = std::move(candidate);
-            }
-        }
-    }
-    if (status == Status::ready && !copy_snapshot(activity, binding, *record, output)) {
-        status = Status::outOfMemory;
-    }
-    ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
-    return status;
-}
-
-/** Removes the durable head only after its exact Host output revision was staged. */
-Status acknowledge_intent_output(const SessionBinding& binding,
-                                 const ProgramKey& program,
-                                 std::uint64_t expectedMissionRevision,
-                                 std::uint64_t expectedIntentSequence,
-                                 std::uint64_t expectedHostOutputRevision,
-                                 Snapshot& output) noexcept {
-    output = {};
-    if (!valid_program(program)) {
-        return Status::invalidProgram;
-    }
-    if (expectedIntentSequence == kAbsentIntentSequence
-        || expectedHostOutputRevision == kAbsentHostOutputRevision) {
-        return Status::invalidTransition;
-    }
-    AcquireSRWLockExclusive(&runtime::storage::g_stateLock);
-    ActivityState& activity = runtime::storage::g_state.activity;
-    SessionRecord* const record = find_record(activity, binding);
-    Status status = record == nullptr ? Status::invalidBinding : Status::ready;
-    PendingIntent* pending = nullptr;
-    if (status == Status::ready) {
-        status = checked_head(
-            *record, program, expectedMissionRevision, expectedIntentSequence, pending);
-    }
-    if (status == Status::ready && pending->hostOutputRevision != expectedHostOutputRevision) {
-        status = Status::hostRevisionMismatch;
-    }
-    if (status == Status::ready) {
-        MissionState candidate{};
-        if (!copy_mission_state(record->mission, candidate)) {
-            status = Status::outOfMemory;
-        } else {
-            candidate.pendingIntents.erase(candidate.pendingIntents.begin());
-            if (!publish(activity, *record)) {
-                status = Status::revisionExhausted;
-            } else {
-                record->mission = std::move(candidate);
-            }
-        }
-    }
-    if (status == Status::ready && !copy_snapshot(activity, binding, *record, output)) {
-        status = Status::outOfMemory;
-    }
-    ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
-    return status;
-}
-
-/** Removes one successfully applied local effect that owns no Host output revision. */
-Status acknowledge_intent(const SessionBinding& binding,
-                          const ProgramKey& program,
-                          std::uint64_t expectedMissionRevision,
-                          std::uint64_t expectedIntentSequence,
-                          Snapshot& output) noexcept {
-    return retire_unassigned_intent(
-        binding, program, expectedMissionRevision, expectedIntentSequence, output);
-}
-
-/** Drops the durable head after a request was refused. */
-Status discard_intent(const SessionBinding& binding,
-                      const ProgramKey& program,
-                      std::uint64_t expectedMissionRevision,
-                      std::uint64_t expectedIntentSequence,
-                      Snapshot& output) noexcept {
-    return retire_unassigned_intent(
-        binding, program, expectedMissionRevision, expectedIntentSequence, output);
 }
 
 /** Marks an exact mission revision faulted without changing its phase. */

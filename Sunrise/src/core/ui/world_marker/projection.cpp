@@ -5,6 +5,7 @@
 namespace sunrise::core::ui::world_marker {
 namespace {
 
+// Projection tolerances, and pi as the upper bound on a valid field of view.
 constexpr float kDepthEpsilon = 0.001F;
 constexpr float kLengthEpsilon = 0.000001F;
 constexpr float kPi = 3.14159265358979323846F;

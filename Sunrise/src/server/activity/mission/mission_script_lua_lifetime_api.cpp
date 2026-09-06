@@ -23,6 +23,7 @@ namespace sunrise::server::activity::mission::lua_vm::detail {
 /** Sets the activity lifetime state the roster reports. Only a named state has a spelling. */
 [[nodiscard]] int lifetime_set(lua_State* state) {
     static_cast<void>(luaL_checkudata(state, 1, kLifetimeMetatable));
+    // Named arguments this call accepts. Any other key is refused.
     static constexpr std::array<std::string_view, 1> kDeclared{"state"};
     refuse_unknown_arguments(state, kDeclared);
     const LifetimeStateHandle requested =

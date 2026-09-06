@@ -25,6 +25,7 @@ namespace topology = topology_inventory;
 /** One reusable CNG hash operation for the hundreds of thousands of canonical squad ids. */
 class SquadIdHasher final {
 public:
+    /** Opens the reusable CNG hash; the object stays not ready when CNG refuses. */
     SquadIdHasher() noexcept {
         if (BCryptOpenAlgorithmProvider(&algorithm_, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0
             || BCryptCreateHash(
@@ -167,6 +168,7 @@ template <typename Value>
     if (!hasher.hash(input, digest)) {
         return false;
     }
+    // Squad ids are published in lowercase hex.
     static constexpr std::array<char, 16> kHex{
         '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
     output.resize(digest.size() * 2U);
@@ -303,11 +305,12 @@ bool link(const topology::Snapshot& topology,
         }
         for (auto& [key, occurrences] : occurrencesByConfigObjectScenario) {
             (void)key;
-            std::sort(occurrences.begin(), occurrences.end(), [&topology](auto left, auto right) {
-                std::string_view leftId{};
-                std::string_view rightId{};
-                return text_view(topology.occurrences[left].id, leftId)
-                       && text_view(topology.occurrences[right].id, rightId) && leftId < rightId;
+            std::sort(occurrences.begin(), occurrences.end(), [&topology](auto first, auto second) {
+                std::string_view firstId{};
+                std::string_view secondId{};
+                return text_view(topology.occurrences[first].id, firstId)
+                       && text_view(topology.occurrences[second].id, secondId)
+                       && firstId < secondId;
             });
             occurrences.erase(std::unique(occurrences.begin(), occurrences.end()),
                               occurrences.end());
@@ -563,11 +566,11 @@ bool link(const topology::Snapshot& topology,
 
         std::sort(pending.begin(),
                   pending.end(),
-                  [](const PendingSquad& left, const PendingSquad& right) {
-                      const auto leftNatural = squad_natural(left);
-                      const auto rightNatural = squad_natural(right);
-                      return leftNatural != rightNatural ? leftNatural < rightNatural
-                                                         : left.row.id < right.row.id;
+                  [](const PendingSquad& first, const PendingSquad& second) {
+                      const auto firstNatural = squad_natural(first);
+                      const auto secondNatural = squad_natural(second);
+                      return firstNatural != secondNatural ? firstNatural < secondNatural
+                                                           : first.row.id < second.row.id;
                   });
         for (std::size_t index = 1; index < pending.size(); ++index) {
             if (squad_natural(pending[index - 1]) == squad_natural(pending[index])) {

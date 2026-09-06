@@ -361,9 +361,8 @@ apply_action_materials(const AccountState& before,
 /** @return True when a pending profile acquisition carries canonical dense before/after images. */
 [[nodiscard]] bool
 valid_profile_mutation_shape(const PendingProfileItemAcquisition& mutation) noexcept {
-    // An exchange is the other shape this mutation carries. Its quantities move by more than one
-    // and it changes more than one row, so the single-increment rules below cannot describe it -
-    // they exist to pin the Collections pull, which is the only thing that should reach them.
+    // The single-increment rules below pin a Collections pull. An exchange moves several rows by
+    // more than one, so it has its own shape.
     if (mutation.changeCount != 0) {
         if (!mutation.prepared || mutation.accountSoid == 0 || mutation.actionSource
             || mutation.appended || mutation.acquiredInstanceSoid != 0
@@ -388,9 +387,8 @@ valid_profile_mutation_shape(const PendingProfileItemAcquisition& mutation) noex
                 return false;
             }
         }
-        // Every announced row has to exist exactly once in the after-image, carrying the serial and
-        // quantity the change names. The account's change ring points at rows by serial, so a
-        // serial naming no row or two rows would announce a gain the Client cannot resolve.
+        // The change ring points at rows by serial, so each announced serial must name exactly one
+        // after-image row carrying the quantity the change names.
         for (std::size_t change = 0; change < mutation.changeCount; ++change) {
             const ProfileStackChange& announced = mutation.changes[change];
             if (announced.mutationSerial <= 0 || announced.afterQuantity <= 0) {
@@ -491,9 +489,8 @@ valid_profile_mutation_shape(const PendingProfileItemAcquisition& mutation) noex
         || !same_profile_inventory(current, mutation.beforeItems, mutation.expectedItemCount)) {
         return false;
     }
-    // An exchange names no collectible, no bucket and no single acquired row, so none of the
-    // acquisition's definition checks apply to it. Its after-image was already checked whole when
-    // it was prepared, and the shape check above proved every announced row is in it.
+    // An exchange names no collectible, bucket or single acquired row, so the acquisition's
+    // definition checks do not apply. The shape check above already covered its after-image.
     if (mutation.changeCount != 0) {
         after = current;
         after.profileItems = mutation.afterItems;
@@ -593,9 +590,8 @@ bool prepare_vendor_exchange(std::uint32_t costDefinitionHash,
         || after.profileItems[costIndex].quantity < costQuantity) {
         return false;
     }
-    // The charged row keeps its ordering token. Only a gain is announced, and the decrement is
-    // read straight off the republished account object, so bumping it would buy nothing and would
-    // move the charged stack to the front of its bucket for no reason the player asked for.
+    // The charged row keeps its ordering token: only a gain is announced, and a fresh serial would
+    // move the charged stack to the front of its bucket.
     after.profileItems[costIndex].quantity -= costQuantity;
 
     // Serials rise from the greatest already in the profile, so every announced row is unique and
@@ -604,18 +600,16 @@ bool prepare_vendor_exchange(std::uint32_t costDefinitionHash,
     for (std::size_t index = 0; index < after.profileItemCount; ++index) {
         serial = (std::max)(serial, after.profileItems[index].mutationSerial);
     }
-    if (serial > (std::numeric_limits<std::int32_t>::max)()
-                     - static_cast<std::int32_t>(payouts.size())) {
+    if (serial
+        > (std::numeric_limits<std::int32_t>::max)() - static_cast<std::int32_t>(payouts.size())) {
         return false;
     }
     std::size_t changeCount = 0;
     for (const ProfileExchangePayout& payout : payouts) {
         std::int32_t limit = 0;
         const std::size_t at = find_stack(after, payout.definitionHash);
-        // Paying back into the stack being charged is refused rather than netted out. It says
-        // nothing a recycle could mean, and it would leave the charged row's emptiness decided by
-        // payout order - the row is removed when the charge empties it, and a credit arriving
-        // afterwards would be crediting a row that is about to leave the array.
+        // Paying back into the charged stack is refused, not netted out: the charge removes an
+        // emptied row, so a later credit would land on a row about to leave the array.
         if (payout.quantity <= 0 || payout.definitionHash == costDefinitionHash
             || !stack_limit(payout.definitionHash, limit) || at >= after.profileItemCount) {
             return false;

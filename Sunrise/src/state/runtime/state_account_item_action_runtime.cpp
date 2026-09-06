@@ -136,9 +136,8 @@ bool prepare_character_selector_socket_plug(std::uint64_t instanceIdentityToken,
         && targetDetail.bucketId == targetDefinition.bucketId
         && targetDetail.ordinarySocketState == item_details::OrdinarySocketState::present
         && targetDetail.ordinarySocketCount <= authored_inventory::kPlugCapacity) {
-        // Most action kinds are the physical ordinary-socket lane. Prefer that exact lane when
-        // its pool accepts the plug, which disambiguates armour with two mod sockets on one pool.
-        // Some kinds are semantic instead (shaders), so keep the unique-compatible-lane fallback.
+        // Most action kinds name the physical lane, so prefer it when its pool accepts the plug.
+        // Shaders are semantic instead, so the unique-compatible-lane fallback stays.
         if (requestedSocketLane < targetDetail.ordinarySocketCount
             && build_data::is_socket_plug_allowed(
                 targetDefinition.definitionIndex, requestedSocketLane, plugDefinitionIndex)) {

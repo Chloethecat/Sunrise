@@ -36,8 +36,9 @@ bool weapon(const identities::Identity& row, const Eligibility& eligibility) {
     constexpr std::uint8_t kWeaponObjectType = 14;
     if (row.type != 0 || !row.metadata.hasRsat || !row.metadata.hasObjectType
         || row.metadata.objectType != kWeaponObjectType || row.metadata.hasPlayerBroadcast
-        || !row.anchorKnown || !row.anchorPresent)
+        || !row.anchorKnown || !row.anchorPresent) {
         return false;
+    }
     return !row.actorSource.known || !row.actorSource.present
            || (row.actorSource.type == eligibility.squad.type
                && row.actorSource.key == eligibility.squad.key
@@ -45,16 +46,22 @@ bool weapon(const identities::Identity& row, const Eligibility& eligibility) {
 }
 /** Every live anchor must resolve before a root's complete child set is trustworthy. */
 bool hierarchy(std::span<const identities::Identity> rows) {
-    if (rows.size() != identities::kSlotCapacity) return false;
+    if (rows.size() != identities::kSlotCapacity) {
+        return false;
+    }
     for (std::size_t slot = 0; slot < rows.size(); ++slot) {
         const auto& row = rows[slot];
-        if (!row.present) continue;
-        if (!row.known || row.conflicted || !row.anchorKnown || row.token.slot != slot)
+        if (!row.present) {
+            continue;
+        }
+        if (!row.known || row.conflicted || !row.anchorKnown || row.token.slot != slot) {
             return false;
+        }
         if (row.anchorPresent
             && (row.anchor.slot >= rows.size() || !rows[row.anchor.slot].present
-                || rows[row.anchor.slot].token != row.anchor))
+                || rows[row.anchor.slot].token != row.anchor)) {
             return false;
+        }
     }
     return true;
 }
@@ -67,21 +74,24 @@ bool closure(identities::Token root,
     output = {};
     if (root.slot >= rows.size() || rows[root.slot].token != root
         || !actor(rows[root.slot], eligibility) || rows[root.slot].anchorPresent
-        || !bit(released, root.slot))
+        || !bit(released, root.slot)) {
         return false;
+    }
     set(output, root.slot);
     bool changed = true;
     while (changed) {
         changed = false;
         for (const auto& row : rows) {
             if (!row.present || !row.anchorPresent || !bit(output, row.anchor.slot)
-                || bit(output, row.token.slot))
+                || bit(output, row.token.slot)) {
                 continue;
+            }
             const bool squad =
                 row.type == 1 && row.metadata.hasSquad && row.metadata.squad == eligibility.squad;
             if (!bit(released, row.token.slot)
-                || (!actor(row, eligibility) && !weapon(row, eligibility) && !squad))
+                || (!actor(row, eligibility) && !weapon(row, eligibility) && !squad)) {
                 return false;
+            }
             set(output, row.token.slot);
             changed = true;
         }
@@ -98,17 +108,25 @@ bool Store::capture(const identities::Source& source,
                     const CellBubbles& cells) noexcept {
     try {
         if (source.activitySessionId == 0 || source.activityClientGeneration == 0 || bubble >= 64
-            || !hierarchy(rows))
+            || !hierarchy(rows)) {
             return false;
+        }
         for (auto& previous : releases_) {
-            if (previous.source != source || previous.bubble == bubble) continue;
+            if (previous.source != source || previous.bubble == bubble) {
+                continue;
+            }
             const auto count = previous.groups.size();
             std::erase_if(previous.groups, [&](const Release::Group& group) {
-                for (std::size_t i = 0; i < released.size(); ++i)
-                    if ((released[i] & group.entities[i]) != std::byte{}) return true;
+                for (std::size_t i = 0; i < released.size(); ++i) {
+                    if ((released[i] & group.entities[i]) != std::byte{}) {
+                        return true;
+                    }
+                }
                 return false;
             });
-            if (previous.groups.size() != count) previous.revision = ++revision_;
+            if (previous.groups.size() != count) {
+                previous.revision = ++revision_;
+            }
         }
         std::erase_if(releases_, [](const Release& previous) { return previous.groups.empty(); });
         Release next;
@@ -117,10 +135,11 @@ bool Store::capture(const identities::Source& source,
         next.revision = ++revision_;
         for (const auto& row : rows) {
             if (!row.present || row.anchorPresent || !bit(released, row.token.slot)
-                || row.cell >= cells.size() || cells[row.cell] != bubble)
+                || row.cell >= cells.size() || cells[row.cell] != bubble) {
                 continue;
+            }
             const Eligibility* selected = nullptr;
-            for (const auto& candidate : eligibility)
+            for (const auto& candidate : eligibility) {
                 if (candidate.enabled && candidate.bubble == bubble && actor(row, candidate)) {
                     if (selected) {
                         selected = nullptr;
@@ -128,16 +147,20 @@ bool Store::capture(const identities::Source& source,
                     }
                     selected = &candidate;
                 }
+            }
             if (!selected || std::count_if(rows.begin(), rows.end(), [&](const auto& candidate) {
                                  return !candidate.anchorPresent && actor(candidate, *selected);
-                             }) != 1)
+                             }) != 1) {
                 continue;
+            }
             Release::Group group;
             group.root = row.token;
             group.eligibility = *selected;
-            if (!closure(row.token, *selected, released, rows, group.entities)) continue;
+            if (!closure(row.token, *selected, released, rows, group.entities)) {
+                continue;
+            }
             bool valid = true;
-            for (std::size_t slot = 0; slot < rows.size(); ++slot)
+            for (std::size_t slot = 0; slot < rows.size(); ++slot) {
                 if (bit(group.entities, slot)) {
                     const auto& member = rows[slot];
                     if (member.cell >= cells.size() || cells[member.cell] != bubble) {
@@ -146,27 +169,37 @@ bool Store::capture(const identities::Source& source,
                     }
                     group.captured.push_back(member);
                 }
-            if (valid) next.groups.push_back(std::move(group));
+            }
+            if (valid) {
+                next.groups.push_back(std::move(group));
+            }
         }
         for (const auto& old : releases_) {
-            if (old.source != source || old.bubble != bubble) continue;
+            if (old.source != source || old.bubble != bubble) {
+                continue;
+            }
             for (const auto& group : old.groups) {
                 bool overlaps = false;
-                for (std::size_t i = 0; i < released.size(); ++i)
+                for (std::size_t i = 0; i < released.size(); ++i) {
                     if ((released[i] & group.entities[i]) != std::byte{}) {
                         overlaps = true;
                         break;
                     }
-                if (overlaps) continue;
+                }
+                if (overlaps) {
+                    continue;
+                }
                 Mask current{};
                 if (!closure(group.root, group.eligibility, group.entities, rows, current)
-                    || current != group.entities)
+                    || current != group.entities) {
                     continue;
+                }
                 if (std::all_of(
                         group.captured.begin(), group.captured.end(), [&](const auto& before) {
                             return same(before, rows[before.token.slot]);
-                        }))
+                        })) {
                     next.groups.push_back(group);
+                }
             }
         }
         std::erase_if(releases_, [&](const Release& old) {
@@ -176,7 +209,9 @@ bool Store::capture(const identities::Source& source,
         });
         /** Pending releases are bounded by the native source and bubble domains. */
         constexpr std::size_t kMaximumReleases = identities::kSourceCapacity * 64;
-        if (next.groups.empty() || releases_.size() >= kMaximumReleases) return false;
+        if (next.groups.empty() || releases_.size() >= kMaximumReleases) {
+            return false;
+        }
         releases_.push_back(std::move(next));
         return true;
     } catch (...) {
@@ -189,33 +224,44 @@ bool Store::prepare(const identities::Source& source,
                     std::span<const identities::Identity> rows,
                     RetirementPlan& output) const noexcept {
     output = {};
-    if (!hierarchy(rows)) return false;
+    if (!hierarchy(rows)) {
+        return false;
+    }
     for (const auto& release : releases_) {
-        if (release.source != source || release.bubble != bubble) continue;
+        if (release.source != source || release.bubble != bubble) {
+            continue;
+        }
         for (const auto& group : release.groups) {
             if (std::count_if(rows.begin(),
                               rows.end(),
                               [&](const auto& row) {
                                   return !row.anchorPresent && actor(row, group.eligibility);
                               })
-                != 1)
+                != 1) {
                 continue;
+            }
             Mask current{};
             if (!closure(group.root, group.eligibility, group.entities, rows, current)
-                || current != group.entities)
+                || current != group.entities) {
                 continue;
+            }
             bool valid = true;
-            for (const auto& before : group.captured)
+            for (const auto& before : group.captured) {
                 if (!same(before, rows[before.token.slot])) {
                     valid = false;
                     break;
                 }
-            if (valid)
-                for (std::size_t index = 0; index < output.entities.size(); ++index)
+            }
+            if (valid) {
+                for (std::size_t index = 0; index < output.entities.size(); ++index) {
                     output.entities[index] |= group.entities[index];
+                }
+            }
         }
-        if (!any(output.entities)) return false;
-        for (std::size_t slot = 0; slot < rows.size(); ++slot)
+        if (!any(output.entities)) {
+            return false;
+        }
+        for (std::size_t slot = 0; slot < rows.size(); ++slot) {
             if ((std::to_integer<unsigned>(output.entities[slot / 8]) & (1U << (slot % 8))) != 0) {
                 if (output.lifetimeCount == output.lifetimes.size()) {
                     output = {};
@@ -226,6 +272,7 @@ bool Store::prepare(const identities::Source& source,
                                                             rows[slot].allocationEpoch,
                                                             rows[slot].allocationDomain};
             }
+        }
         output.source = source;
         output.bubble = bubble;
         output.revision = release.revision;
@@ -237,82 +284,109 @@ bool Store::prepare(const identities::Source& source,
 /** A discarded or obsolete plan consumes no released entity. */
 bool Store::commit(const RetirementPlan& plan) noexcept {
     if (!plan.pending || !any(plan.entities) || plan.lifetimeCount == 0
-        || plan.lifetimeCount > plan.lifetimes.size())
+        || plan.lifetimeCount > plan.lifetimes.size()) {
         return false;
-    for (auto& release : releases_)
+    }
+    for (auto& release : releases_) {
         if (release.source == plan.source && release.bubble == plan.bubble
             && release.revision == plan.revision) {
             Mask covered{};
             for (const auto& group : release.groups) {
                 bool complete = true;
-                for (std::size_t i = 0; i < plan.entities.size(); ++i)
+                for (std::size_t i = 0; i < plan.entities.size(); ++i) {
                     if ((group.entities[i] & plan.entities[i]) != group.entities[i]) {
                         complete = false;
                         break;
                     }
-                if (complete)
-                    for (std::size_t i = 0; i < covered.size(); ++i)
+                }
+                if (complete) {
+                    for (std::size_t i = 0; i < covered.size(); ++i) {
                         covered[i] |= group.entities[i];
+                    }
+                }
             }
-            if (covered != plan.entities) return false;
+            if (covered != plan.entities) {
+                return false;
+            }
             Mask exact{};
             for (const auto& lifetime : plan.retired_lifetimes()) {
-                if (lifetime.token.slot >= identities::kSlotCapacity) return false;
+                if (lifetime.token.slot >= identities::kSlotCapacity) {
+                    return false;
+                }
                 const auto byte = lifetime.token.slot / 8;
                 const auto bit = static_cast<std::byte>(1U << (lifetime.token.slot % 8));
                 if ((plan.entities[byte] & bit) == std::byte{}
-                    || (exact[byte] & bit) != std::byte{})
+                    || (exact[byte] & bit) != std::byte{}) {
                     return false;
+                }
                 bool found = false;
-                for (const auto& group : release.groups)
-                    for (const auto& row : group.captured)
+                for (const auto& group : release.groups) {
+                    for (const auto& row : group.captured) {
                         if (row.token == lifetime.token
                             && row.allocationSequence == lifetime.allocationSequence
                             && row.allocationEpoch == lifetime.allocationEpoch
-                            && row.allocationDomain == lifetime.allocationDomain)
+                            && row.allocationDomain == lifetime.allocationDomain) {
                             found = true;
-                if (!found) return false;
+                        }
+                    }
+                }
+                if (!found) {
+                    return false;
+                }
                 exact[byte] |= bit;
             }
-            if (exact != plan.entities) return false;
+            if (exact != plan.entities) {
+                return false;
+            }
             std::erase_if(release.groups, [&](const Release::Group& group) {
-                for (std::size_t i = 0; i < plan.entities.size(); ++i)
-                    if ((group.entities[i] & plan.entities[i]) != group.entities[i]) return false;
+                for (std::size_t i = 0; i < plan.entities.size(); ++i) {
+                    if ((group.entities[i] & plan.entities[i]) != group.entities[i]) {
+                        return false;
+                    }
+                }
                 return true;
             });
             release.revision = ++revision_;
             return true;
         }
+    }
     return false;
 }
 /** Returning any member invalidates its entire captured tree. */
 void Store::returned_slots(std::uint64_t session,
                            std::uint64_t generation,
                            const Mask& mask) noexcept {
-    for (auto& release : releases_)
+    for (auto& release : releases_) {
         if (release.source.activitySessionId == session
             && release.source.activityClientGeneration == generation) {
             std::erase_if(release.groups, [&](const Release::Group& group) {
-                for (std::size_t i = 0; i < mask.size(); ++i)
-                    if ((group.entities[i] & mask[i]) != std::byte{}) return true;
+                for (std::size_t i = 0; i < mask.size(); ++i) {
+                    if ((group.entities[i] & mask[i]) != std::byte{}) {
+                        return true;
+                    }
+                }
                 return false;
             });
             release.revision = ++revision_;
         }
+    }
 }
 /** Changing one authored target cannot consume another squad's pending release. */
 void Store::invalidate_target(std::uint64_t session,
                               std::uint64_t generation,
                               identities::SquadReference target) noexcept {
-    for (auto& release : releases_)
+    for (auto& release : releases_) {
         if (release.source.activitySessionId == session
             && release.source.activityClientGeneration == generation) {
             const auto old = release.groups.size();
             std::erase_if(release.groups, [&](const Release::Group& group) {
                 return group.eligibility.squad == target;
             });
-            if (release.groups.size() != old) release.revision = ++revision_;
+            if (release.groups.size() != old) {
+                release.revision = ++revision_;
+            }
         }
+    }
 }
 void Store::reset() noexcept {
     releases_.clear();

@@ -17,6 +17,7 @@ namespace {
 namespace catalog = state::build_data::scriptables;
 namespace tables = middleware::content::packages::tables;
 
+// Fixed capacities for one scenario's type-23 links and their candidates.
 constexpr std::size_t kLinkCapacity = 262'144;
 constexpr std::size_t kCandidateCapacity = 1'048'576;
 
@@ -168,7 +169,7 @@ descriptor_object(const catalog::Snapshot& source, const catalog::Descriptor& de
     }
     std::uint64_t active = 0;
     for (std::size_t offset = 0; offset < retained; ++offset) {
-        const PlacementIndex& indexed = first[offset];
+        const PlacementIndex& indexed = first[static_cast<std::ptrdiff_t>(offset)];
         catalog::Type23PlacementCandidate candidate{};
         candidate.linkRow = linkRow;
         candidate.placementRow = indexed.placementRow;
@@ -254,10 +255,10 @@ bool append_type23_placement_links(catalog::Snapshot& output,
         }
         std::sort(index.begin(),
                   index.end(),
-                  [](const PlacementIndex& left, const PlacementIndex& right) noexcept {
-                      return left.identifier != right.identifier
-                                 ? left.identifier < right.identifier
-                                 : left.placementRow < right.placementRow;
+                  [](const PlacementIndex& first, const PlacementIndex& second) noexcept {
+                      return first.identifier != second.identifier
+                                 ? first.identifier < second.identifier
+                                 : first.placementRow < second.placementRow;
                   });
         output.type23PlacementLinks.reserve((std::min)(output.descriptors.size(), kLinkCapacity));
         output.type23PlacementCandidates.reserve(

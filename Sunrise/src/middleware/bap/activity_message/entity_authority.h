@@ -34,6 +34,7 @@ inline constexpr std::int32_t kReasonBias = 1;
 /** Msg 26 is one selector byte, the mask, then the 3-bit reason. */
 inline constexpr std::size_t kAbandonBits =
     kSelectorWidth + entity_slots::kSlotCount + kReasonWidth;
+/** The msg-26 body pads to a whole byte. */
 inline constexpr std::size_t kAbandonByteCount = (kAbandonBits + 7) / 8;
 /** Msg 27 is the 3-bit field then the mask, so its mask is not byte aligned. */
 inline constexpr std::size_t kRequestPurgeBits = kReasonWidth + entity_slots::kSlotCount;
@@ -46,6 +47,7 @@ inline constexpr std::size_t kCorrelationSize = sizeof(std::uint32_t);
 inline constexpr std::size_t kResetAcknowledgementByteCount = kCorrelationSize;
 inline constexpr std::size_t kQueryPerBubbleByteCount =
     kCorrelationSize + kSelectorSize + entity_slots::kEncodedSize;
+/** Msg 32 is the correlation then the whole mask, with no selector. */
 inline constexpr std::size_t kQueryResponseByteCount =
     kCorrelationSize + entity_slots::kEncodedSize;
 

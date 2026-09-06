@@ -79,16 +79,12 @@ struct CurrentActivityTransaction {
 struct ItemAcquisitionTransaction {
     std::unique_ptr<state::PendingItemAcquisition> pending{};
     queuez::ItemAcquisition update{};
-    /** Vendor whose shown interaction this grant answers once it commits, or `kAbsentIndex`. */
-    std::uint16_t answeredVendor{state::vendors::kAbsentIndex};
 };
 
 /** Profile acquisition and its exact account/resident QueueZ after-image. */
 struct ProfileItemAcquisitionTransaction {
     std::unique_ptr<state::PendingProfileItemAcquisition> pending{};
     queuez::ProfileItemAcquisition update{};
-    /** Vendor whose shown interaction this grant answers once it commits, or `kAbsentIndex`. */
-    std::uint16_t answeredVendor{state::vendors::kAbsentIndex};
 };
 
 /** Dismantle mutation and its exact QueueZ after-image. */
@@ -197,7 +193,6 @@ struct ServiceRoute {
     ResponseMode responseMode{};
     middleware::bap::ResponseService response{};
     BodyCodec bodyCodec{};
-    std::string_view successEvent{};
 };
 
 /** Owns encrypted service-to-response routing. */
@@ -275,14 +270,9 @@ namespace body {
 namespace push {
 
 /**
- * Canonicalizes the account ahead of the family-specific snapshot dispatch.
- * Families 0, 3 and 4 each take their own account snapshot, and the roster is built before the
- * account companion, so a migration performed inside one family's builder would leave the others
- * describing a different account: a Family-3 character record naming an emote instance the
- * Family-4 manifest has already replaced, with no correction published afterwards. Running it
- * ahead of every builder is what keeps the three images talking about one account.
- * Idempotent, and one relaxed load once the answer can no longer change, so calling it from every
- * entry point that reaches a builder costs nothing.
+ * Canonicalizes the account before any family builder reads it.
+ * Families 0, 3 and 4 each snapshot the account, so a migration inside one builder would leave
+ * the others describing a different account. Idempotent.
  */
 void ensure_account_canonical() noexcept;
 
@@ -342,7 +332,6 @@ void append_queuez_notification(Scratch& scratch,
     const queuez::SessionState& before,
     const queuez::RecordRewardGrant& update,
     const state::PendingRecordRewardGrant& mutation,
-    std::optional<std::uint16_t> pendingSeasonReward,
     std::span<const queuez::AcquisitionPresentationRow> acquisitionPresentationRows,
     std::span<const std::byte, state::kAesKeySize> key,
     std::span<const std::byte, state::kBapNonceSize> nonce,
@@ -474,24 +463,42 @@ append_current_activity_notification(Scratch& scratch,
     std::span<std::byte> response,
     std::size_t& written) noexcept;
 
+/**
+ * Appends the global family-five unlock overrides as one full-snapshot notification.
+ * @param scratch Lock-owned transform buffers.
+ * @param version Family version this frame carries; -1 is refused by the Client.
+ * @param key Active AES-GCM session key.
+ * @param nonce Push-direction nonce after any correlated response.
+ * @param response Caller-owned output containing prior frames.
+ * @param written Existing byte count, updated by a complete frame.
+ * @return True when State encodes and the whole frame fits.
+ */
+[[nodiscard]] bool
+append_family5_override_notification(Scratch& scratch,
+                                     std::int32_t version,
+                                     std::span<const std::byte, state::kAesKeySize> key,
+                                     std::span<const std::byte, state::kBapNonceSize> nonce,
+                                     std::span<std::byte> response,
+                                     std::size_t& written) noexcept;
+
 /** Appends the account and selected-character state changed by an artifact reset. */
-[[nodiscard]] bool append_artifact_reset_notification(
-    Scratch& scratch,
-    const queuez::EquipmentSwap& update,
-    std::span<const std::byte, state::kAesKeySize> key,
-    std::span<const std::byte, state::kBapNonceSize> nonce,
-    std::span<std::byte> response,
-    std::size_t& written) noexcept;
+[[nodiscard]] bool
+append_artifact_reset_notification(Scratch& scratch,
+                                   const queuez::EquipmentSwap& update,
+                                   std::span<const std::byte, state::kAesKeySize> key,
+                                   std::span<const std::byte, state::kBapNonceSize> nonce,
+                                   std::span<std::byte> response,
+                                   std::size_t& written) noexcept;
 
 /** Appends one current item resident after artifact reset cleared an authored socket. */
-[[nodiscard]] bool append_artifact_item_refresh_notification(
-    Scratch& scratch,
-    const queuez::EquipmentSwap& update,
-    std::uint64_t instanceSoid,
-    std::span<const std::byte, state::kAesKeySize> key,
-    std::span<const std::byte, state::kBapNonceSize> nonce,
-    std::span<std::byte> response,
-    std::size_t& written) noexcept;
+[[nodiscard]] bool
+append_artifact_item_refresh_notification(Scratch& scratch,
+                                          const queuez::EquipmentSwap& update,
+                                          std::uint64_t instanceSoid,
+                                          std::span<const std::byte, state::kAesKeySize> key,
+                                          std::span<const std::byte, state::kBapNonceSize> nonce,
+                                          std::span<std::byte> response,
+                                          std::size_t& written) noexcept;
 
 /**
  * Appends the same-character Family-0 appearance upsert paired with one equipment swap.
@@ -601,7 +608,6 @@ append_subclass_selection_notification(Scratch& scratch,
     Scratch& scratch,
     const queuez::ItemAcquisition& acquisition,
     const state::PendingItemAcquisition& mutation,
-    std::optional<std::uint16_t> pendingSeasonReward,
     std::span<const queuez::AcquisitionPresentationRow> acquisitionPresentationRows,
     std::span<const std::byte, state::kAesKeySize> key,
     std::span<const std::byte, state::kBapNonceSize> nonce,
@@ -613,7 +619,6 @@ append_subclass_selection_notification(Scratch& scratch,
 append_profile_item_acquisition_notification(Scratch& scratch,
                                              const queuez::ProfileItemAcquisition& acquisition,
                                              const state::PendingProfileItemAcquisition& mutation,
-                                             std::optional<std::uint16_t> pendingSeasonReward,
                                              std::span<const std::byte, state::kAesKeySize> key,
                                              std::span<const std::byte, state::kBapNonceSize> nonce,
                                              std::span<std::byte> response,

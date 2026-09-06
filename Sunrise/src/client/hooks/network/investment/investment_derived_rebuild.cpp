@@ -48,23 +48,19 @@ std::array<hooking::detour::Handle, 2> g_handles{};
 std::atomic<Freshness> g_originalFreshness{nullptr};
 std::atomic<Family4Lookup> g_originalFamily4Lookup{nullptr};
 std::atomic_bool g_rebuildArmed{false};
-std::atomic_bool g_reportedRebuild{false};
 std::atomic<void*> g_committedFamily4{nullptr};
-std::atomic_uint32_t g_pendingFamily4Publications{0};
 
 /** @return True while either primary rebuild detour is attached. */
 [[nodiscard]] bool any_primary_attached() noexcept {
     return g_handles[kFreshnessHandle].attached || g_handles[kFamily4Handle].attached;
 }
 
-/** Clears call targets and the once-per-lifecycle log flags after full detach. */
+/** Clears call targets and the pending arm after full detach. */
 void clear_runtime() noexcept {
     g_originalFreshness.store(nullptr, std::memory_order_release);
     g_originalFamily4Lookup.store(nullptr, std::memory_order_release);
     g_rebuildArmed.store(false, std::memory_order_release);
-    g_reportedRebuild.store(false, std::memory_order_release);
     g_committedFamily4.store(nullptr, std::memory_order_release);
-    g_pendingFamily4Publications.store(0, std::memory_order_release);
 }
 
 /**
@@ -74,52 +70,34 @@ void clear_runtime() noexcept {
  */
 __declspec(noinline) char __fastcall freshness(void* accessor) noexcept {
     const Freshness original = g_originalFreshness.load(std::memory_order_acquire);
-    // The native verdict performs the Family-4 lookup. That lookup is what arms the initial
-    // rebuild, so it must run before the arm is consumed; checking first left the arm stranded
-    // when sign-on made only one freshness query and every Triumph card kept its stale action.
+    // The native verdict runs the Family-4 lookup that arms the first rebuild, so call it before
+    // consuming the arm.
     const char nativeVerdict = original != nullptr ? original(accessor) : kStale;
     if (g_rebuildArmed.exchange(false, std::memory_order_acq_rel)) {
-        if (!g_reportedRebuild.exchange(true, std::memory_order_relaxed)) {
-            core::log::write(core::log::Channel::client,
-                             core::log::Level::info,
-                             "ev=investment stage=derived result=rebuilt");
-        }
+        core::log::write(core::log::Channel::client,
+                         core::log::Level::debug,
+                         "ev=investment stage=derived result=rebuilt");
         return kStale;
     }
     return nativeVerdict;
 }
 
 /**
- * Arms a rebuild whenever the state-three lookup observes a different committed Family-4 object.
- * The freshness verdict itself performs this lookup, so a simple "nonnull" test would re-arm on
- * every query and keep the derived state permanently stale. Object identity changes only when the
- * queuez replacement has committed, which gives initial sign-on and later account after-images the
- * same boundary without an unrelated Family-5 publication.
+ * Arms a rebuild when the state-three lookup returns a different committed Family-4 object.
+ * Arm on identity change, never on nonnull: the freshness verdict runs this lookup itself.
  * @param key Borrowed account key.
  * @return The native lookup result, unchanged.
  */
 __declspec(noinline) void* __fastcall family4_lookup(std::uint64_t* key) noexcept {
     const Family4Lookup original = g_originalFamily4Lookup.load(std::memory_order_acquire);
     void* const resolved = original != nullptr ? original(key) : nullptr;
-    if (resolved != nullptr) {
-        std::uint32_t pending = g_pendingFamily4Publications.load(std::memory_order_acquire);
-        while (pending != 0
-               && !g_pendingFamily4Publications.compare_exchange_weak(
-                   pending, pending - 1, std::memory_order_acq_rel, std::memory_order_acquire)) {}
-        if (pending != 0) {
-            arm_derived_rebuild();
-            core::log::write(core::log::Channel::client,
-                             core::log::Level::info,
-                             "ev=investment stage=family4_commit result=armed source=publication");
-        }
-    }
     void* previous = g_committedFamily4.load(std::memory_order_acquire);
     if (resolved != nullptr && resolved != previous
         && g_committedFamily4.compare_exchange_strong(
             previous, resolved, std::memory_order_acq_rel, std::memory_order_acquire)) {
         arm_derived_rebuild();
         core::log::write(core::log::Channel::client,
-                         core::log::Level::info,
+                         core::log::Level::debug,
                          "ev=investment stage=family4_commit result=armed");
     }
     return resolved;
@@ -132,12 +110,12 @@ void arm_derived_rebuild() noexcept {
     g_rebuildArmed.store(true, std::memory_order_release);
 }
 
-/** Carries an exact committed account publication to its next native Family-4 lookup. */
-void notify_family4_publication() noexcept {
-    g_pendingFamily4Publications.fetch_add(1, std::memory_order_release);
+/** Arms the rebuild on a committed publication. Repeat publications reuse the one arm. */
+void notify_investment_publication() noexcept {
+    arm_derived_rebuild();
     core::log::write(core::log::Channel::client,
-                     core::log::Level::info,
-                     "ev=investment stage=family4_publication result=pending");
+                     core::log::Level::debug,
+                     "ev=investment stage=publication result=armed");
 }
 
 /** @return True when freshness and both real-arrival rebuild arms are attached. */

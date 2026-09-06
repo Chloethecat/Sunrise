@@ -279,10 +279,12 @@ bool append_embedded_placements(const package_reader::Source& source,
             ++output.embeddedPlacementDiagnostics.applicableDescriptors;
             requests.push_back({descriptor.configTag, static_cast<std::uint32_t>(row)});
         }
-        std::sort(requests.begin(), requests.end(), [](const Request& left, const Request& right) {
-            return left.configTag != right.configTag ? left.configTag < right.configTag
-                                                     : left.descriptorRow < right.descriptorRow;
-        });
+        std::sort(
+            requests.begin(), requests.end(), [](const Request& first, const Request& second) {
+                return first.configTag != second.configTag
+                           ? first.configTag < second.configTag
+                           : first.descriptorRow < second.descriptorRow;
+            });
         output.embeddedPlacementLinks.reserve((std::min)(requests.size(), kLinkCapacity));
         output.embeddedPlacements.reserve((std::min)(requests.size(), kPlacementCapacity));
         BuildContext context{&source, &scratch, &output, cancel};

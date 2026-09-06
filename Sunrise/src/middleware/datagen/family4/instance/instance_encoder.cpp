@@ -151,11 +151,8 @@ bool encode(const ResolvedInstance& input, std::span<std::byte> output) noexcept
             const std::optional<std::uint16_t>& plug = input.ordinarySockets.plugs[index];
             if (plug.has_value()) {
                 object.ordinarySockets.sockets[index].plugDefinitionIndex = *plug;
-                // There is no universally safe constant for the two auxiliary hashes; a wrong
-                // one silently blanks the socket's render instead of failing loudly. Each
-                // socket's own plug definition hash is what the client expects here. Falls back
-                // to the zero fill from initialize_empty_fields if the hash cannot be resolved,
-                // so this cannot regress a working socket into a worse state than before.
+                // The client reads each socket's own plug definition hash here. A wrong value
+                // blanks the socket's render, so an unresolved hash keeps the zero fill.
                 state::build_data::items::Definition plugDefinition{};
                 if (state::build_data::find_item_definition_index(*plug, plugDefinition)) {
                     object.ordinarySockets.sockets[index].auxiliaryHashes.fill(

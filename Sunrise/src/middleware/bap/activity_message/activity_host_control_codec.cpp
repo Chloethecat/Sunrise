@@ -17,6 +17,7 @@ constexpr std::uint8_t kSigned32Width = 32;
 constexpr std::uint32_t kSigned32Bias = 0x80000000U;
 constexpr std::uint8_t kBoolWidth = 1;
 
+/** @return True when the reason fits the 3-bit biased range the wire allows. */
 [[nodiscard]] constexpr bool valid_reason(std::int8_t reason) noexcept {
     return reason >= kMinimumReason && reason <= kMaximumReason;
 }

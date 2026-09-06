@@ -60,7 +60,9 @@ void clear(records::MutableDomains output) noexcept {
     std::fill(output.positionProfiles.begin(),
               output.positionProfiles.end(),
               gameplay::entity_position_profiles::Row{});
-    if (output.positionFingerprint) *output.positionFingerprint = {};
+    if (output.positionFingerprint != nullptr) {
+        *output.positionFingerprint = {};
+    }
     std::fill(
         output.objectTypes.begin(), output.objectTypes.end(), gameplay::entity_object_types::Row{});
     if (output.constants != nullptr) {
@@ -110,6 +112,20 @@ void clear(records::MutableDomains output) noexcept {
     std::fill(output.vendorInstalledRows.begin(),
               output.vendorInstalledRows.end(),
               vendors::InstalledRow{});
+    std::fill(output.recordObjectives.begin(),
+              output.recordObjectives.end(),
+              build_data::records::Objective{});
+    std::fill(output.recordIntervals.begin(),
+              output.recordIntervals.end(),
+              build_data::records::Interval{});
+    std::fill(
+        output.recordRewards.begin(), output.recordRewards.end(), build_data::records::Reward{});
+    std::fill(output.progressionSteps.begin(), output.progressionSteps.end(), progressions::Step{});
+    std::fill(
+        output.seasonPassRewards.begin(), output.seasonPassRewards.end(), season_pass::Reward{});
+    std::fill(
+        output.seasonPassPackages.begin(), output.seasonPassPackages.end(), season_pass::Package{});
+    std::fill(output.bounties.begin(), output.bounties.end(), bounties::Definition{});
 }
 
 /** Computes the exact file size for every record array. */
@@ -145,7 +161,14 @@ bool expected_size(const records::DomainCounts& counts, std::uint64_t& size) noe
            && add_records(
                counts.vendorInstalledRows, sizeof(records::VendorInstalledRowRecord), size)
            && add_records(counts.positionProfiles, sizeof(records::PositionProfileRecord), size)
-           && add_records(counts.objectTypes, sizeof(records::ObjectTypeRecord), size);
+           && add_records(counts.objectTypes, sizeof(records::ObjectTypeRecord), size)
+           && add_records(counts.recordObjectives, sizeof(records::RecordObjectiveRecord), size)
+           && add_records(counts.recordIntervals, sizeof(records::RecordIntervalRecord), size)
+           && add_records(counts.recordRewards, sizeof(records::RecordRewardRecord), size)
+           && add_records(counts.progressionSteps, sizeof(records::ProgressionStepRecord), size)
+           && add_records(counts.seasonPassRewards, sizeof(records::SeasonPassRewardRecord), size)
+           && add_records(counts.seasonPassPackages, sizeof(records::SeasonPassPackageRecord), size)
+           && add_records(counts.bounties, sizeof(records::BountyRecord), size);
 }
 
 /** Reads every payload array and checks the decoded domains as one transaction. */
@@ -244,6 +267,27 @@ bool read_payload(HANDLE file,
     valid = valid
             && read_domain<records::ObjectTypeRecord>(
                 file, output.objectTypes.first(counts.objectTypes), checksum);
+    valid = valid
+            && read_domain<records::RecordObjectiveRecord>(
+                file, output.recordObjectives.first(counts.recordObjectives), checksum);
+    valid = valid
+            && read_domain<records::RecordIntervalRecord>(
+                file, output.recordIntervals.first(counts.recordIntervals), checksum);
+    valid = valid
+            && read_domain<records::RecordRewardRecord>(
+                file, output.recordRewards.first(counts.recordRewards), checksum);
+    valid = valid
+            && read_domain<records::ProgressionStepRecord>(
+                file, output.progressionSteps.first(counts.progressionSteps), checksum);
+    valid = valid
+            && read_domain<records::SeasonPassRewardRecord>(
+                file, output.seasonPassRewards.first(counts.seasonPassRewards), checksum);
+    valid = valid
+            && read_domain<records::SeasonPassPackageRecord>(
+                file, output.seasonPassPackages.first(counts.seasonPassPackages), checksum);
+    valid = valid
+            && read_domain<records::BountyRecord>(
+                file, output.bounties.first(counts.bounties), checksum);
     if (!valid) {
         return false;
     }
@@ -281,6 +325,13 @@ bool read_payload(HANDLE file,
             output.positionProfiles.first(counts.positionProfiles),
             fingerprint,
             output.objectTypes.first(counts.objectTypes),
+            output.recordObjectives.first(counts.recordObjectives),
+            output.recordIntervals.first(counts.recordIntervals),
+            output.recordRewards.first(counts.recordRewards),
+            output.progressionSteps.first(counts.progressionSteps),
+            output.seasonPassRewards.first(counts.seasonPassRewards),
+            output.seasonPassPackages.first(counts.seasonPassPackages),
+            output.bounties.first(counts.bounties),
         });
 }
 

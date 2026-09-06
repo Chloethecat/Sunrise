@@ -29,9 +29,8 @@ using patterns::signature;
 using patterns::signature_length;
 
 /**
- * `ActivityMsg12_ReplicateMembership_Recv`.
- * Its first argument is the ActivityClient. It commits the membership block at `+27696`, then
- * sets bit `0x100` of the status word at `+304` unconditionally, before returning 1.
+ * `ActivityMsg12_ReplicateMembership_Recv`. Its first argument is the ActivityClient.
+ * It commits the membership block, then sets the status bit unconditionally and returns 1.
  */
 constexpr std::string_view kReceiveText = "40 55 53 41 56 41 57 48 8D AC 24 ? ? ? ? B8 C8 96 05 00";
 constexpr auto kReceive = signature<signature_length(kReceiveText)>(kReceiveText);
@@ -41,9 +40,8 @@ constexpr std::size_t kStatusWordOffset = 304;
 /** Membership header. Its leading qword is the member key the client matches itself by. */
 constexpr std::size_t kMembershipHeaderOffset = 27696;
 /**
- * The two slot axes and the printable label the constructor builds from them.
- * Axis 1 is PRIVATE or PUBLIC, axis 2 is CURRENT or TARGET, indexed as `axis1 + 2 * axis2`. A
- * TARGET slot is index 2 or 3, which the public-first current-slot pick never reads.
+ * The two slot axes and the label built from them, indexed as `axis1 + 2 * axis2`.
+ * Axis 1 is PRIVATE or PUBLIC, axis 2 is CURRENT or TARGET. Index 2 or 3 is a TARGET slot.
  */
 constexpr std::size_t kSlotAxisOneOffset = 24;
 constexpr std::size_t kSlotAxisTwoOffset = 28;
@@ -52,8 +50,7 @@ constexpr std::size_t kSlotLabelOffset = 32;
 constexpr std::size_t kSlotLabelCapacity = 32;
 /**
  * Established session id, returned by the client's own vtable slot 1.
- * The rebind skips a slot outright when this is zero, with no log and no other symptom. Msg 4's
- * accept arm is its only writer, from `join_request` field 1 inside the `join_result` we send.
+ * Zero makes the rebind skip the slot with no log. Msg 4's accept arm is its only writer.
  */
 constexpr std::size_t kEstablishedSessionOffset = 16352;
 /**
@@ -64,9 +61,8 @@ constexpr std::size_t kSlotRecordOffset = 27672;
 /** The slot's roster container. The public-first current-slot pick requires it non-null. */
 constexpr std::size_t kRosterContainerOffset = 27680;
 /**
- * Sticky bind receipt. Zero from construction, one the moment a world container binds, and back
- * to zero only on a session reset. The grant dirty byte is cleared within a tick, so a sample can
- * miss it; this one cannot be missed.
+ * Sticky bind receipt: one the moment a world container binds, zero again only on session reset.
+ * The grant dirty byte clears within a tick, so a sample can miss that one but never this.
  */
 constexpr std::size_t kBindReceiptOffset = 27689;
 /** Bit the handler sets, which the world-container bind and the player watcher both read. */
@@ -78,8 +74,7 @@ constexpr std::size_t kPendingMaskSize = 1024;
 constexpr std::size_t kGrantDirtyOffset = 393880;
 /**
  * Start of the host-state tail msg 12 writes after its 64 region records, header-relative.
- * The tail holds the spawn byte and state, then the teleport state, token, slice-set index and
- * name hash. Their field bases are not settled, so the window is dumped raw rather than indexed.
+ * Field bases inside the tail are not settled, so the window is dumped raw rather than indexed.
  */
 constexpr std::size_t kHostTailOffset = 365064;
 /** Bytes of the tail to dump. Reaches past the name hash under either base. */
@@ -155,9 +150,8 @@ void report(const std::byte* client, std::uint16_t before, std::uint16_t after) 
 }
 
 /**
- * Reports the four bind inputs the rebind reads, none of which needs a call.
- * A zero established id skips the slot silently. A null roster container keeps the slot out of
- * the public-first pick. Between them they name which reader can ever see this client.
+ * Reports the four bind inputs the rebind reads.
+ * A zero established id skips the slot; a null roster container keeps it out of the public pick.
  * @param client ActivityClient.
  */
 void report_bind_inputs(const std::byte* client) noexcept {
@@ -180,129 +174,6 @@ void report_bind_inputs(const std::byte* client) noexcept {
                          core::log::Level::info,
                          {line.data(), static_cast<std::size_t>(written)});
     }
-}
-
-/** Bytes per hex log line. Two characters a byte keeps a line well inside its capacity. */
-constexpr std::size_t kHexBytesPerLine = 64;
-/** Bytes at the membership header to dump, which is where the decoded member table starts. */
-constexpr std::size_t kMemberDumpBytes = 512;
-/** Most of one region record to dump. A record carrying a 128-byte descriptor still fits. */
-constexpr std::size_t kRegionDumpBytes = 320;
-/** The wire numbers regions 0, 8, 16 ... 504, so consecutive terms differ by this. */
-constexpr std::int32_t kRegionIndexStride = 8;
-/** Terms matched before a candidate is accepted as the region table. */
-constexpr std::size_t kRegionMatchTerms = 4;
-/** Largest in-memory stride between two region records that is still worth testing. */
-constexpr std::size_t kMaximumRegionStride = 8'192;
-/** End of the searchable span. The entity-slot mask sits above it and holds no region table. */
-constexpr std::size_t kScanEndOffset = kPendingMaskOffset;
-/** Clients whose region table is dumped. Later messages repeat a table that has already been read.
- */
-constexpr std::uint32_t kRegionDumpBudget = 3;
-
-std::atomic<std::uint32_t> g_regionDumps{0};
-
-/**
- * Emits one labelled hex run over as many lines as it needs.
- * @param stage Log stage name.
- * @param base Offset the run starts at, so a line names where its bytes came from.
- * @param data First byte of the run.
- * @param size Bytes to emit.
- */
-void report_hex(const char* stage,
-                std::size_t base,
-                const std::byte* data,
-                std::size_t size) noexcept {
-    for (std::size_t offset = 0; offset < size; offset += kHexBytesPerLine) {
-        std::array<char, core::log::kLineCapacity> line{};
-        const std::size_t run =
-            (size - offset) < kHexBytesPerLine ? size - offset : kHexBytesPerLine;
-        int written = std::snprintf(
-            line.data(), line.size(), "ev=probe stage=%s at=%zu raw=", stage, base + offset);
-        for (std::size_t index = 0; written > 0 && index < run; ++index) {
-            const int part =
-                std::snprintf(line.data() + written,
-                              line.size() - static_cast<std::size_t>(written),
-                              "%02X",
-                              std::to_integer<unsigned>(data[offset + index]));
-            if (part <= 0) {
-                break;
-            }
-            written += part;
-        }
-        if (written > 0) {
-            core::log::write(core::log::Channel::client,
-                             core::log::Level::info,
-                             {line.data(), static_cast<std::size_t>(written)});
-        }
-    }
-}
-
-/**
- * Reports one found region table and the two records that differ by the advertisement.
- * @param client ActivityClient.
- * @param offset Offset of the record holding region 8.
- * @param stride Bytes between two consecutive records.
- */
-void report_region_table(const std::byte* client, std::size_t offset, std::size_t stride) noexcept {
-    std::array<char, core::log::kLineCapacity> line{};
-    const int written = std::snprintf(line.data(),
-                                      line.size(),
-                                      "ev=probe stage=regions result=found client=0x%llX "
-                                      "at=%zu stride=%zu",
-                                      address_of(client),
-                                      offset,
-                                      stride);
-    if (written > 0) {
-        core::log::write(core::log::Channel::client,
-                         core::log::Level::info,
-                         {line.data(), static_cast<std::size_t>(written)});
-    }
-    // Region 8 is the one the advertisement rides in and region 16 never carries one, so the
-    // bytes that differ between them are exactly what the client kept of the descriptor.
-    const std::size_t dump = stride < kRegionDumpBytes ? stride : kRegionDumpBytes;
-    report_hex("members", kMembershipHeaderOffset, client + kMembershipHeaderOffset, kMemberDumpBytes);
-    report_hex("region8", offset, client + offset, dump);
-    if (offset + stride + dump <= kScanEndOffset) {
-        report_hex("region16", offset + stride, client + offset + stride, dump);
-    }
-}
-
-/**
- * Finds the client's decoded region table with no signature and dumps two of its records.
- * Four consecutive terms of the 8-step region sequence at one fixed stride name the table, and
- * nothing else in the object is expected to hold that run.
- * @param client ActivityClient the handler has just committed a body into.
- */
-void report_regions(const std::byte* client) noexcept {
-    if (g_regionDumps.fetch_add(1, std::memory_order_relaxed) >= kRegionDumpBudget) {
-        return;
-    }
-    for (std::size_t offset = kMembershipHeaderOffset; offset + sizeof(std::int32_t) <= kScanEndOffset;
-         offset += sizeof(std::int32_t)) {
-        if (field<std::int32_t>(client, offset) != kRegionIndexStride) {
-            continue;
-        }
-        for (std::size_t stride = sizeof(std::int32_t); stride <= kMaximumRegionStride;
-             stride += sizeof(std::int32_t)) {
-            if (offset + kRegionMatchTerms * stride > kScanEndOffset) {
-                break;
-            }
-            bool matched = true;
-            for (std::size_t term = 1; matched && term < kRegionMatchTerms; ++term) {
-                matched = field<std::int32_t>(client, offset + term * stride)
-                          == kRegionIndexStride * static_cast<std::int32_t>(term + 1);
-            }
-            if (!matched) {
-                continue;
-            }
-            report_region_table(client, offset, stride);
-            return;
-        }
-    }
-    core::log::write(core::log::Channel::client,
-                     core::log::Level::info,
-                     "ev=probe stage=regions result=absent");
 }
 
 /** @param client ActivityClient. @return Entity-slot bits it holds but has not applied. */
@@ -349,15 +220,13 @@ char __fastcall receive(const std::byte* client, std::int64_t body, int size) no
     const auto after = field<std::uint16_t>(client, kStatusWordOffset);
     report(client, before, after);
     report_bind_inputs(client);
-    report_regions(client);
     track(client, GetTickCount64());
     return result;
 }
 
 /**
  * Dumps the host-state tail the client decoded out of msg 12.
- * The host arms a teleport there and the client's four-step machine reads it. Nothing else says
- * whether the arm reached the client at all, and the field bases are not settled.
+ * The field bases inside it are not settled, so the window is dumped raw.
  * @param client ActivityClient.
  */
 void sample_host_tail(const std::byte* client) noexcept {
@@ -481,6 +350,12 @@ bool uninstall() noexcept {
     }
     const bool detached = hooking::detour::uninstall(g_handle);
     g_installed.store(!detached, std::memory_order_release);
+    if (detached) {
+        // Clear the tracked clients so a later install cannot sample a torn-down pointer.
+        AcquireSRWLockExclusive(&g_lock);
+        g_tracked = {};
+        ReleaseSRWLockExclusive(&g_lock);
+    }
     return detached;
 }
 

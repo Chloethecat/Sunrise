@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cstddef>
 #include <cstring>
 #include <limits>
 
@@ -19,6 +20,8 @@ namespace generated = state::activity_sdk::generated_world;
 namespace catalog = state::build_data::scriptables;
 namespace crypto = middleware::crypto::sha256;
 
+// Program generation is hashed over this domain string, a separator byte, five 32-byte
+// digests, and the 4-byte scenario tag.
 constexpr std::string_view kProgramGenerationDomain = "sunrise.mission.world-generation.v1";
 constexpr std::size_t kGenerationDigestCount = 5;
 constexpr std::size_t kScenarioTagBytes = 4;
@@ -675,7 +678,7 @@ bool world_program_generation_sha256(const generated::GeneratedWorldView& world,
     std::memcpy(input.data(), kProgramGenerationDomain.data(), kProgramGenerationDomain.size());
     cursor += kProgramGenerationDomain.size() + 1U;
     const auto append = [&input, &cursor](const std::array<std::byte, 32>& value) noexcept {
-        std::copy(value.begin(), value.end(), input.begin() + cursor);
+        std::copy(value.begin(), value.end(), input.begin() + static_cast<std::ptrdiff_t>(cursor));
         cursor += value.size();
     };
     append(generation.sourceFingerprint);

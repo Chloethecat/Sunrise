@@ -106,6 +106,7 @@ namespace {
     return 1;
 }
 
+/** Pushes the message at one 1-based row. Raises a Lua error when the row is unavailable. */
 [[nodiscard]] int message_collection_at(lua_State* state) {
     static_cast<void>(luaL_checkudata(state, 1, kMessageCollectionMetatable));
     const lua_Integer row = luaL_checkinteger(state, 2);
@@ -118,6 +119,7 @@ namespace {
     return 1;
 }
 
+/** Pushes the message carrying one message id. Raises a Lua error when the id is unavailable. */
 [[nodiscard]] int message_collection_by_id(lua_State* state) {
     static_cast<void>(luaL_checkudata(state, 1, kMessageCollectionMetatable));
     const lua_Integer id = luaL_checkinteger(state, 2);

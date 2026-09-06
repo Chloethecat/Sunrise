@@ -30,9 +30,11 @@ namespace overlay = client::ui::activity::authored_spatial_overlay;
 namespace render_controls = server::ui::activity_host::anchor_render_controls;
 namespace tag_names = server::ui::activity_host::package_tag_names;
 
+/** One shared table style, so every table on this page reads the same. */
 constexpr ImGuiTableFlags kTableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
                                         | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX
                                         | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit;
+/** Listed rows kept before the browser reports it capped; a package holds far fewer. */
 constexpr std::size_t kBrowserRowCapacity = 262'144;
 
 /** One owner and one exact root-identity candidate; no-instance tables retain a sentinel row. */
@@ -102,6 +104,7 @@ bool g_browserCapped{};
 
 /** @return True when an object belongs to the shared browser scope. */
 [[nodiscard]] bool scope_matches(const catalog::Object& object, int scope) noexcept {
+    // Registry descriptor values the scope combo selects, in its entry order.
     constexpr std::array<std::uint16_t, 4> descriptors{0, 8, 24, 40};
     return scope <= 0 || scope >= static_cast<int>(descriptors.size())
            || object.registryDescriptor == descriptors[static_cast<std::size_t>(scope)];
@@ -310,8 +313,10 @@ void draw_world_render_controls(const marker::Context& context, marker::State& s
         || count > snapshot.triggerVolumeIncomingReferences.size() - first) {
         return false;
     }
-    return std::any_of(snapshot.triggerVolumeIncomingReferences.begin() + first,
-                       snapshot.triggerVolumeIncomingReferences.begin() + first + count,
+    const auto begin =
+        snapshot.triggerVolumeIncomingReferences.begin() + static_cast<std::ptrdiff_t>(first);
+    return std::any_of(begin,
+                       begin + static_cast<std::ptrdiff_t>(count),
                        [slotRow](const catalog::TriggerVolumeIncomingReference& incoming) noexcept {
                            return incoming.sourceSlotRow == slotRow;
                        });

@@ -57,6 +57,7 @@ namespace sunrise::server::activity::mission::lua_vm::detail {
     if (!current_squad(state, *handle, definition)) {
         return luaL_error(state, "activity squad is stale");
     }
+    // Only these named arguments are accepted; any other key is refused.
     static constexpr std::array<std::string_view, 2> kDeclared{"command", "value"};
     refuse_unknown_arguments(state, kDeclared);
     const lua_Integer command = checked_integer_argument(state, "command");
@@ -93,6 +94,7 @@ namespace sunrise::server::activity::mission::lua_vm::detail {
         || definition.memberCount > kSquadMemberCapacity) {
         return luaL_error(state, "activity squad is stale or invalid");
     }
+    // Only these named arguments are accepted; any other key is refused.
     static constexpr std::array<std::string_view, 3> kDeclared{
         "counts", "mode", "retire_on_return"};
     refuse_unknown_arguments(state, kDeclared);

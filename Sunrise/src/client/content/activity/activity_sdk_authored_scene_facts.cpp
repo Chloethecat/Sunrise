@@ -310,7 +310,7 @@ descriptor_config(void* opaque, std::uint32_t configTag, std::span<const std::by
     }
     std::sort(walk.descriptors.begin(),
               walk.descriptors.end(),
-              [](const auto& left, const auto& right) { return left.id < right.id; });
+              [](const auto& first, const auto& second) { return first.id < second.id; });
     std::vector<squad::DescriptorFact> unique{};
     unique.reserve(walk.descriptors.size());
     for (squad::DescriptorFact& descriptor : walk.descriptors) {
@@ -359,11 +359,11 @@ bool collect_facts(const topology::Snapshot& topology,
         }
         std::sort(pending.descriptors.begin(),
                   pending.descriptors.end(),
-                  [](const auto& left, const auto& right) { return left.id < right.id; });
+                  [](const auto& first, const auto& second) { return first.id < second.id; });
         if (std::adjacent_find(
                 pending.descriptors.begin(),
                 pending.descriptors.end(),
-                [](const auto& left, const auto& right) { return left.id == right.id; })
+                [](const auto& first, const auto& second) { return first.id == second.id; })
             != pending.descriptors.end()) {
             return false;
         }

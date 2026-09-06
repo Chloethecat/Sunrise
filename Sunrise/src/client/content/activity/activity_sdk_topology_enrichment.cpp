@@ -6,7 +6,6 @@
 #include <limits>
 #include <span>
 #include <string_view>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -355,7 +354,7 @@ bool build_impl(const topology_inventory::Snapshot& topology,
             if (!resolve_slot(topology, source, pending.slotAliases, slot)) {
                 return false;
             }
-            pending.slots.push_back(std::move(slot));
+            pending.slots.push_back(slot);
         }
         if (validateOutput && !validate(topology, pending)) {
             return false;

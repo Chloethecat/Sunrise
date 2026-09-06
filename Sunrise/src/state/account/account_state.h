@@ -13,8 +13,6 @@ namespace sunrise::state {
 inline constexpr std::size_t kCharacterCapacity = 3;
 /** A server-authored dismantle policy: a few rows per rarity and gear class. */
 inline constexpr std::size_t kDismantleRewardPolicyCapacity = 32;
-/** Maximum authored Triumph reward overrides. */
-inline constexpr std::size_t kRecordRewardPolicyCapacity = 256;
 /** Native sentinel used when a character has no title equipped. */
 inline constexpr std::uint16_t kUnequippedTitleRecordIndex = 0xFFFFU;
 
@@ -53,18 +51,6 @@ same_dismantle_policy_key(const DismantleRewardPolicy& left,
            && left.classMask == right.classMask && left.masterwork == right.masterwork;
 }
 
-/** Settings override for one Triumph claim reward. */
-struct RecordRewardPolicy {
-    std::uint16_t recordIndex{};
-    std::uint16_t itemIndex{};
-    std::int32_t quantity{};
-};
-
-[[nodiscard]] constexpr bool same_record_reward_key(const RecordRewardPolicy& left,
-                                                    const RecordRewardPolicy& right) noexcept {
-    return left.recordIndex == right.recordIndex;
-}
-
 /** Stable character race values authored independently of package definition mappings. */
 enum class CharacterRace : std::uint8_t {
     /** Wire value 0 is a Human character. */
@@ -95,10 +81,10 @@ enum class CharacterClass : std::uint8_t {
 
 /** Default movement entry. Each subclass offers 3, as entries 4, 5 and 6 of its group. */
 inline constexpr std::uint8_t kDefaultMovementAbilityEntry = 4;
+
 /**
- * Socket entries of the other abilities a subclass lets the player choose. Each names one entry
- * of that ability's group. The subclass offers several and the character picks one. These
- * defaults are the first option of each group, where every shipped subclass starts.
+ * Default grenade entry. Each of the ability defaults names one entry of that ability's group.
+ * They are the first option of each group, where every shipped subclass starts.
  */
 inline constexpr std::uint8_t kDefaultGrenadeAbilityEntry = 7;
 /** Default super entry. It is the lane that carries no plug source and kind 34. */
@@ -192,8 +178,6 @@ struct AccountState {
     /** Economy policy comes from configuration, never from item-specific runtime constants. */
     std::array<DismantleRewardPolicy, kDismantleRewardPolicyCapacity> dismantleRewards{};
     std::size_t dismantleRewardCount{};
-    std::array<RecordRewardPolicy, kRecordRewardPolicyCapacity> recordRewards{};
-    std::size_t recordRewardCount{};
     /** Account-wide currencies and materials, placed by bucket rather than by authored slot. */
     std::array<account::inventory::ProfileItem, account::inventory::kProfileItemCapacity>
         profileItems{};
@@ -222,11 +206,6 @@ namespace account {
  * @return The character's SOID, or zero when the account owns none.
  */
 [[nodiscard]] std::uint64_t banner_character_soid(const AccountState& state) noexcept;
-
-/** Finds the settings override for a record claim. */
-[[nodiscard]] bool find_record_reward(const AccountState& state,
-                                      std::uint16_t recordIndex,
-                                      RecordRewardPolicy& reward) noexcept;
 
 } // namespace account
 

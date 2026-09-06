@@ -25,39 +25,90 @@ using patterns::signature;
 using patterns::signature_length;
 
 /**
- * Resourcerer's GPU-entry dispatcher. Its second argument is the TagHash and its third and fourth
- * arguments are the decoded entry pointer and byte count. The switch immediately after this
- * prologue distinguishes the GPU resource classes.
+ * Resourcerer's GPU-entry dispatcher, whose switch follows this prologue.
+ * Arguments are the resource class, the TagHash, and the decoded entry pointer and byte count.
  */
 constexpr std::string_view kGpuEntryDispatcherText =
     "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 20 "
     "49 8B F9 49 8B F0 8B DA 8B E9 E8 ? ? ? ? 84 C0 0F 85 ? ? ? ? "
     "8D 45 FF 83 F8 12";
+/** Compiled form of that prologue, scanned for as a unique site in the main image. */
 constexpr auto kGpuEntryDispatcher =
     signature<signature_length(kGpuEntryDispatcherText)>(kGpuEntryDispatcherText);
 
+/** Bytes of one Tiger texture descriptor; the dispatcher reads exactly this much. */
 constexpr std::size_t kTigerTextureHeaderSize = 0x28;
+/** DDS magic plus its 124-byte header, which is where a legacy file's pixels start. */
 constexpr std::size_t kDdsLegacyHeaderSize = 4 + 124;
+/** A DX10 file adds a 20-byte extension header before its pixels. */
 constexpr std::size_t kDdsDx10HeaderSize = kDdsLegacyHeaderSize + 20;
+/** "DDS " in file order. */
 constexpr std::uint32_t kDdsMagic = 0x20534444U;
+/** "DX10" in the FourCC field, which marks the extension header. */
 constexpr std::uint32_t kDx10FourCc = 0x30315844U;
-constexpr std::uint32_t kDdsPixelAlphaPixels = 0x1U;
-constexpr std::uint32_t kDdsPixelAlpha = 0x2U;
+/** DDS header size the format fixes at 124 bytes. */
+constexpr std::uint32_t kDdsHeaderSizeValue = 124U;
+/** DDS pixel-format block size the format fixes at 32 bytes. */
+constexpr std::uint32_t kDdsPixelFormatSize = 32U;
+/** DDPF_FOURCC: the pixel format is named by the FourCC field. */
 constexpr std::uint32_t kDdsPixelFourCc = 0x4U;
+/** DDPF_RGB: the pixel format is named by the channel masks. */
 constexpr std::uint32_t kDdsPixelRgb = 0x40U;
-constexpr std::uint32_t kDdsPixelLuminance = 0x20000U;
+/** D3D10_RESOURCE_DIMENSION_TEXTURE2D, the only shape this override accepts. */
 constexpr std::uint32_t kDdsResourceTexture2d = 3U;
+/** D3D10_RESOURCE_MISC_TEXTURECUBE, which this override refuses. */
 constexpr std::uint32_t kDdsResourceMiscCube = 0x4U;
+/** DXGI_FORMAT_R8G8B8A8_UNORM, the one legacy layout the embedded assets use. */
+constexpr std::uint32_t kDxgiR8G8B8A8Unorm = 28U;
+/** Bits per pixel of that layout. */
+constexpr std::uint32_t kRgba8BitCount = 32U;
+/** Channel masks of that layout, in DDS field order. */
+constexpr std::uint32_t kRgba8RedMask = 0x000000FFU;
+constexpr std::uint32_t kRgba8GreenMask = 0x0000FF00U;
+constexpr std::uint32_t kRgba8BlueMask = 0x00FF0000U;
+constexpr std::uint32_t kRgba8AlphaMask = 0xFF000000U;
+/** Largest width, height or array size a Tiger descriptor field can hold. */
+constexpr std::uint32_t kTigerDimensionLimit = 0xFFFFU;
+/** A Tiger texture descriptor carries this marker; anything else is not one. */
 constexpr std::uint16_t kTigerTextureMarker = 0xCAFEU;
+/** Resource class the dispatcher uses for GPU textures. */
 constexpr std::uint32_t kGpuTextureClass = 1U;
+/** The dispatcher's own bad-argument result, returned when the trampoline is gone. */
+constexpr std::uint64_t kDispatchUnavailable = 7U;
 
-constexpr std::size_t kTigerDataSizeOffset = 0x00;
-constexpr std::size_t kTigerFormatOffset = 0x04;
-constexpr std::size_t kTigerMarkerOffset = 0x0C;
-constexpr std::size_t kTigerWidthOffset = 0x0E;
-constexpr std::size_t kTigerHeightOffset = 0x10;
-constexpr std::size_t kTigerDepthOffset = 0x12;
-constexpr std::size_t kTigerArraySizeOffset = 0x14;
+/** Fields of a DDS file header, as byte offsets from the magic. */
+struct DdsLayout {
+    // The DDS file format fixes every offset below.
+    static constexpr std::size_t magic = 0x00;
+    static constexpr std::size_t headerSize = 0x04;
+    static constexpr std::size_t height = 0x0C;
+    static constexpr std::size_t width = 0x10;
+    static constexpr std::size_t depth = 0x18;
+    static constexpr std::size_t pixelFormatSize = 0x4C;
+    static constexpr std::size_t pixelFlags = 0x50;
+    static constexpr std::size_t fourCc = 0x54;
+    static constexpr std::size_t bitCount = 0x58;
+    static constexpr std::size_t redMask = 0x5C;
+    static constexpr std::size_t greenMask = 0x60;
+    static constexpr std::size_t blueMask = 0x64;
+    static constexpr std::size_t alphaMask = 0x68;
+    static constexpr std::size_t dxgiFormat = 0x80;
+    static constexpr std::size_t resourceDimension = 0x84;
+    static constexpr std::size_t miscFlag = 0x88;
+    static constexpr std::size_t arraySize = 0x8C;
+};
+
+/** Fields of a Tiger texture descriptor, as byte offsets from its base. */
+struct TigerLayout {
+    // The client's descriptor layout fixes every offset below.
+    static constexpr std::size_t dataSize = 0x00;
+    static constexpr std::size_t format = 0x04;
+    static constexpr std::size_t marker = 0x0C;
+    static constexpr std::size_t width = 0x0E;
+    static constexpr std::size_t height = 0x10;
+    static constexpr std::size_t depth = 0x12;
+    static constexpr std::size_t arraySize = 0x14;
+};
 
 /** Exact stock texture-header/data pairs selected from package 0x010A. */
 struct AssetSpec final {
@@ -66,6 +117,7 @@ struct AssetSpec final {
     int resourceId{};
 };
 
+/** One row per replaced texture; the dispatcher is intercepted on both of its tags. */
 constexpr std::array kAssetSpecs{
     AssetSpec{0x80A145FEU, 0x80A145FFU, IDR_BOOTFLOW_TEXTURE_80A145FF},
     AssetSpec{0x80A14602U, 0x80A14601U, IDR_BOOTFLOW_TEXTURE_80A14601},
@@ -131,95 +183,45 @@ void store_value(std::span<std::byte> bytes, std::size_t offset, Value value) no
     }
 }
 
-[[nodiscard]] constexpr std::uint32_t
-four_cc(char first, char second, char third, char fourth) noexcept {
-    return static_cast<std::uint32_t>(static_cast<unsigned char>(first))
-           | (static_cast<std::uint32_t>(static_cast<unsigned char>(second)) << 8U)
-           | (static_cast<std::uint32_t>(static_cast<unsigned char>(third)) << 16U)
-           | (static_cast<std::uint32_t>(static_cast<unsigned char>(fourth)) << 24U);
-}
-
-/** Converts the legacy DDS formats used by the supplied bootflow assets to DXGI values. */
+/**
+ * Names the DXGI format of a legacy DDS pixel block.
+ * Only R8G8B8A8_UNORM is accepted; any other authored layout is refused rather than converted.
+ * @param bytes DDS file bytes.
+ * @param size Bytes available.
+ * @param output Receives the DXGI format value.
+ * @return False when the file is not the accepted layout.
+ */
 [[nodiscard]] bool
 legacy_format(const std::byte* bytes, std::size_t size, std::uint32_t& output) noexcept {
     std::uint32_t flags = 0;
-    std::uint32_t formatFourCc = 0;
     std::uint32_t bits = 0;
     std::uint32_t red = 0;
     std::uint32_t green = 0;
     std::uint32_t blue = 0;
     std::uint32_t alpha = 0;
-    if (!load_value(bytes, size, 0x50, flags) || !load_value(bytes, size, 0x54, formatFourCc)
-        || !load_value(bytes, size, 0x58, bits) || !load_value(bytes, size, 0x5C, red)
-        || !load_value(bytes, size, 0x60, green) || !load_value(bytes, size, 0x64, blue)
-        || !load_value(bytes, size, 0x68, alpha)) {
+    if (!load_value(bytes, size, DdsLayout::pixelFlags, flags)
+        || !load_value(bytes, size, DdsLayout::bitCount, bits)
+        || !load_value(bytes, size, DdsLayout::redMask, red)
+        || !load_value(bytes, size, DdsLayout::greenMask, green)
+        || !load_value(bytes, size, DdsLayout::blueMask, blue)
+        || !load_value(bytes, size, DdsLayout::alphaMask, alpha)) {
         return false;
     }
-    if ((flags & kDdsPixelFourCc) != 0) {
-        switch (formatFourCc) {
-        case four_cc('D', 'X', 'T', '1'):
-            output = 71U;
-            return true;
-        case four_cc('D', 'X', 'T', '3'):
-            output = 74U;
-            return true;
-        case four_cc('D', 'X', 'T', '5'):
-            output = 77U;
-            return true;
-        case four_cc('A', 'T', 'I', '1'):
-        case four_cc('B', 'C', '4', 'U'):
-            output = 80U;
-            return true;
-        case four_cc('A', 'T', 'I', '2'):
-        case four_cc('B', 'C', '5', 'U'):
-            output = 83U;
-            return true;
-        default:
-            return false;
-        }
+    if ((flags & kDdsPixelRgb) == 0 || bits != kRgba8BitCount || red != kRgba8RedMask
+        || green != kRgba8GreenMask || blue != kRgba8BlueMask || alpha != kRgba8AlphaMask) {
+        return false;
     }
-    if ((flags & kDdsPixelRgb) != 0 && bits == 32U) {
-        if (red == 0x000000FFU && green == 0x0000FF00U && blue == 0x00FF0000U
-            && alpha == 0xFF000000U) {
-            output = 28U;
-            return true;
-        }
-        if (red == 0x00FF0000U && green == 0x0000FF00U && blue == 0x000000FFU) {
-            output = alpha == 0xFF000000U ? 87U : 88U;
-            return alpha == 0xFF000000U || alpha == 0U;
-        }
-    }
-    if ((flags & kDdsPixelRgb) != 0 && bits == 16U) {
-        if (red == 0xF800U && green == 0x07E0U && blue == 0x001FU && alpha == 0U) {
-            output = 85U;
-            return true;
-        }
-        if (red == 0x7C00U && green == 0x03E0U && blue == 0x001FU && alpha == 0x8000U) {
-            output = 86U;
-            return true;
-        }
-        if (red == 0x0F00U && green == 0x00F0U && blue == 0x000FU && alpha == 0xF000U) {
-            output = 115U;
-            return true;
-        }
-    }
-    if ((flags & kDdsPixelLuminance) != 0 && bits == 8U && red == 0xFFU) {
-        output = 61U;
-        return true;
-    }
-    if ((flags & kDdsPixelLuminance) != 0 && (flags & kDdsPixelAlphaPixels) != 0 && bits == 16U
-        && red == 0x00FFU && alpha == 0xFF00U) {
-        output = 49U;
-        return true;
-    }
-    if ((flags & kDdsPixelAlpha) != 0 && bits == 8U && alpha == 0xFFU) {
-        output = 65U;
-        return true;
-    }
-    return false;
+    output = kDxgiR8G8B8A8Unorm;
+    return true;
 }
 
-/** Parses one embedded 2D DDS without allocating or copying its pixel payload. */
+/**
+ * Parses one embedded 2D DDS without allocating or copying its pixel payload.
+ * @param bytes DDS file bytes, which outlive the view.
+ * @param size Bytes available.
+ * @param output Receives a view over the file's pixels; cleared on failure.
+ * @return False when the file is not an accepted 2D texture.
+ */
 [[nodiscard]] bool parse_dds(const std::byte* bytes, std::size_t size, DdsView& output) noexcept {
     output = {};
     std::uint32_t magic = 0;
@@ -227,41 +229,41 @@ legacy_format(const std::byte* bytes, std::size_t size, std::uint32_t& output) n
     std::uint32_t pixelHeaderSize = 0;
     std::uint32_t pixelFlags = 0;
     std::uint32_t formatFourCc = 0;
-    if (size < kDdsLegacyHeaderSize || !load_value(bytes, size, 0x00, magic)
-        || !load_value(bytes, size, 0x04, headerSize)
-        || !load_value(bytes, size, 0x4C, pixelHeaderSize)
-        || !load_value(bytes, size, 0x50, pixelFlags)
-        || !load_value(bytes, size, 0x54, formatFourCc) || magic != kDdsMagic || headerSize != 124U
-        || pixelHeaderSize != 32U) {
+    if (size < kDdsLegacyHeaderSize || !load_value(bytes, size, DdsLayout::magic, magic)
+        || !load_value(bytes, size, DdsLayout::headerSize, headerSize)
+        || !load_value(bytes, size, DdsLayout::pixelFormatSize, pixelHeaderSize)
+        || !load_value(bytes, size, DdsLayout::pixelFlags, pixelFlags)
+        || !load_value(bytes, size, DdsLayout::fourCc, formatFourCc) || magic != kDdsMagic
+        || headerSize != kDdsHeaderSizeValue || pixelHeaderSize != kDdsPixelFormatSize) {
         return false;
     }
     const bool dx10 = (pixelFlags & kDdsPixelFourCc) != 0 && formatFourCc == kDx10FourCc;
     const std::size_t pixelOffset = dx10 ? kDdsDx10HeaderSize : kDdsLegacyHeaderSize;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
-    std::uint32_t depth = 0;
     std::uint32_t arraySize = 1;
     std::uint32_t resourceDimension = kDdsResourceTexture2d;
     std::uint32_t miscFlag = 0;
     std::uint32_t format = 0;
-    if (size <= pixelOffset || !load_value(bytes, size, 0x10, width)
-        || !load_value(bytes, size, 0x0C, height) || !load_value(bytes, size, 0x18, depth)) {
+    if (size <= pixelOffset || !load_value(bytes, size, DdsLayout::width, width)
+        || !load_value(bytes, size, DdsLayout::height, height)) {
         return false;
     }
     if (dx10) {
-        if (!load_value(bytes, size, 0x80, format)
-            || !load_value(bytes, size, 0x84, resourceDimension)
-            || !load_value(bytes, size, 0x88, miscFlag)
-            || !load_value(bytes, size, 0x8C, arraySize)) {
+        if (!load_value(bytes, size, DdsLayout::dxgiFormat, format)
+            || !load_value(bytes, size, DdsLayout::resourceDimension, resourceDimension)
+            || !load_value(bytes, size, DdsLayout::miscFlag, miscFlag)
+            || !load_value(bytes, size, DdsLayout::arraySize, arraySize)) {
             return false;
         }
     } else if (!legacy_format(bytes, size, format)) {
         return false;
     }
     const std::size_t pixelSize = size - pixelOffset;
-    if (width == 0 || height == 0 || width > 0xFFFFU || height > 0xFFFFU || pixelSize == 0
-        || pixelSize > 0xFFFFFFFFULL || format == 0 || resourceDimension != kDdsResourceTexture2d
-        || (miscFlag & kDdsResourceMiscCube) != 0 || arraySize == 0 || arraySize > 0xFFFFU) {
+    if (width == 0 || height == 0 || width > kTigerDimensionLimit || height > kTigerDimensionLimit
+        || pixelSize == 0 || format == 0 || resourceDimension != kDdsResourceTexture2d
+        || (miscFlag & kDdsResourceMiscCube) != 0 || arraySize == 0
+        || arraySize > kTigerDimensionLimit) {
         return false;
     }
     output = DdsView{bytes + pixelOffset,
@@ -325,15 +327,15 @@ prepare_header(Asset& asset, const void* stock, std::uint64_t stockSize, bool& r
     if (!asset.headerReady) {
         std::memcpy(asset.header.data(), stock, asset.header.size());
         std::uint16_t marker = 0;
-        std::memcpy(&marker, asset.header.data() + kTigerMarkerOffset, sizeof marker);
+        std::memcpy(&marker, asset.header.data() + TigerLayout::marker, sizeof marker);
         if (marker == kTigerTextureMarker) {
             const std::span header(asset.header);
-            store_value(header, kTigerDataSizeOffset, asset.dds.pixelSize);
-            store_value(header, kTigerFormatOffset, asset.dds.format);
-            store_value(header, kTigerWidthOffset, asset.dds.width);
-            store_value(header, kTigerHeightOffset, asset.dds.height);
-            store_value(header, kTigerDepthOffset, asset.dds.depth);
-            store_value(header, kTigerArraySizeOffset, asset.dds.arraySize);
+            store_value(header, TigerLayout::dataSize, asset.dds.pixelSize);
+            store_value(header, TigerLayout::format, asset.dds.format);
+            store_value(header, TigerLayout::width, asset.dds.width);
+            store_value(header, TigerLayout::height, asset.dds.height);
+            store_value(header, TigerLayout::depth, asset.dds.depth);
+            store_value(header, TigerLayout::arraySize, asset.dds.arraySize);
             asset.headerReady = true;
         }
     }
@@ -346,8 +348,9 @@ prepare_header(Asset& asset, const void* stock, std::uint64_t stockSize, bool& r
     return result;
 }
 
+/** Reports one asset the first time its descriptor is handed to the dispatcher. */
 void report_override(const Asset& asset) noexcept {
-    std::array<char, 160> line{};
+    std::array<char, core::log::kLineCapacity> line{};
     const int written = std::snprintf(line.data(),
                                       line.size(),
                                       "ev=bootflow_texture stage=entry tag=0x%08X size=%u "
@@ -371,7 +374,7 @@ std::uint64_t __fastcall dispatch(std::uint32_t resourceClass,
                                   std::uint64_t decodedSize) noexcept {
     const auto original = reinterpret_cast<GpuEntryDispatcher>(g_handle.original);
     if (original == nullptr) {
-        return 7;
+        return kDispatchUnavailable;
     }
     bool header = false;
     Asset* const asset = resourceClass == kGpuTextureClass ? find_asset(tag, header) : nullptr;
@@ -428,7 +431,7 @@ bool install(void* module) noexcept {
                          "ev=bootflow_texture stage=attach result=fail");
         return false;
     }
-    std::array<char, 80> line{};
+    std::array<char, core::log::kLineCapacity> line{};
     const int written = std::snprintf(line.data(),
                                       line.size(),
                                       "ev=bootflow_texture stage=attach count=%zu result=ok",

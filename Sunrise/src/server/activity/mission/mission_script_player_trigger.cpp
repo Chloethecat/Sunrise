@@ -8,6 +8,7 @@ namespace {
 
 namespace catalog = state::build_data::scriptables;
 
+// A player trigger arrives on the type-31 volume slot and resolves to a type-60 target slot.
 constexpr std::uint16_t kSourceSlotType = 31;
 constexpr std::uint8_t kTargetSlotType = 60;
 
@@ -22,6 +23,7 @@ constexpr std::uint8_t kTargetSlotType = 60;
 
 } // namespace
 
+/** Resolves the type-31 volume the payload names and its generated type-60 target. */
 ResolveStatus
 resolve(const catalog::Snapshot& snapshot,
         const middleware::bap::activity_message::player_trigger_incident::Payload& payload,

@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
-#include <string>
+#include <string_view>
 #include <utility>
 
 #include "../../content_manifest/content_manifest_state_runtime.h"
@@ -14,13 +14,14 @@ namespace {
 
 namespace catalog = build_data::scriptables;
 
+// Retained shards, and the two generated-world paths built under the SDK artifact directory.
 constexpr std::size_t kCacheCapacity = 8;
 constexpr std::wstring_view kManifestSuffix = L"\\sdk\\catalog.bin";
 constexpr std::wstring_view kScenarioDirectorySuffix = L"\\sdk\\scenarios";
 
 /** One decoded immutable shard retained by its complete authenticated identity. */
 struct CacheEntry final {
-    std::wstring scenarioDirectory{};
+    core::path::Buffer scenarioDirectory{};
     std::uint32_t scenarioTag{};
     std::array<char, catalog::kScenarioNameCapacity> scenarioName{};
     std::uint8_t scenarioNameLength{};
@@ -79,20 +80,19 @@ destination_name(const activity::destination::DestinationSelection& destination)
 }
 
 /** Joins one owned directory and suffix without changing either input. */
-[[nodiscard]] bool
-joined_path(std::wstring_view directory, std::wstring_view suffix, std::wstring& output) noexcept {
-    output.clear();
+[[nodiscard]] bool joined_path(std::wstring_view directory,
+                               std::wstring_view suffix,
+                               core::path::Buffer& output) noexcept {
+    output = {};
     if (directory.empty() || suffix.empty()) {
         return false;
     }
-    try {
-        output.assign(directory);
-        output.append(suffix);
-        return true;
-    } catch (...) {
-        output.clear();
-        return false;
-    }
+    return core::path::assign(output, directory) && core::path::append(output, suffix);
+}
+
+/** @return The stored path text, without its terminator. */
+[[nodiscard]] std::wstring_view path_view(const core::path::Buffer& value) noexcept {
+    return {value.chars.data(), value.length};
 }
 
 /** Checks every cache key field without trusting only a content-addressed filename. */
@@ -105,7 +105,7 @@ joined_path(std::wstring_view directory, std::wstring_view suffix, std::wstring&
                                      const Digest& sourceFingerprint,
                                      const Digest& manifestPayloadSha256,
                                      const Digest& shardPayloadSha256) noexcept {
-    return entry.snapshot != nullptr && entry.scenarioDirectory == scenarioDirectory
+    return entry.snapshot != nullptr && path_view(entry.scenarioDirectory) == scenarioDirectory
            && entry.scenarioTag == scenarioTag && entry.scenarioNameLength == scenarioName.size()
            && std::equal(scenarioName.begin(), scenarioName.end(), entry.scenarioName.begin())
            && entry.sdkBuildSha256 == sdkBuildSha256 && entry.sdkPayloadSha256 == sdkPayloadSha256
@@ -170,21 +170,21 @@ void retain_cached(std::wstring_view scenarioDirectory,
             return;
         }
     }
-    CacheEntry pending{};
-    try {
-        pending.scenarioDirectory.assign(scenarioDirectory);
-        pending.scenarioTag = scenarioTag;
-        pending.scenarioNameLength = static_cast<std::uint8_t>(scenarioName.size());
-        std::copy(scenarioName.begin(), scenarioName.end(), pending.scenarioName.begin());
-        pending.sdkBuildSha256 = sdkBuildSha256;
-        pending.sdkPayloadSha256 = sdkPayloadSha256;
-        pending.sourceFingerprint = sourceFingerprint;
-        pending.manifestPayloadSha256 = manifestPayloadSha256;
-        pending.shardPayloadSha256 = shardPayloadSha256;
-        pending.snapshot = snapshot;
-        g_cache[g_nextCacheEntry] = std::move(pending);
+    CacheEntry& slot = g_cache[g_nextCacheEntry];
+    if (scenarioDirectory.size() < slot.scenarioDirectory.chars.size()) {
+        slot = {};
+        (void)core::path::assign(slot.scenarioDirectory, scenarioDirectory);
+        slot.scenarioTag = scenarioTag;
+        slot.scenarioNameLength = static_cast<std::uint8_t>(scenarioName.size());
+        std::copy(scenarioName.begin(), scenarioName.end(), slot.scenarioName.begin());
+        slot.sdkBuildSha256 = sdkBuildSha256;
+        slot.sdkPayloadSha256 = sdkPayloadSha256;
+        slot.sourceFingerprint = sourceFingerprint;
+        slot.manifestPayloadSha256 = manifestPayloadSha256;
+        slot.shardPayloadSha256 = shardPayloadSha256;
+        slot.snapshot = snapshot;
         g_nextCacheEntry = (g_nextCacheEntry + 1U) % g_cache.size();
-    } catch (...) {}
+    }
     ReleaseSRWLockExclusive(&g_cacheLock);
 }
 
@@ -413,8 +413,8 @@ BindStatus resolve(const activity_sdk::BoundView& activitySdkView,
     if (!state::content_manifest::visit_snapshot(&copy_live_fingerprint, &sourceFingerprint)) {
         return BindStatus::contentManifestUnavailable;
     }
-    std::wstring manifestPath;
-    std::wstring scenarioDirectory;
+    core::path::Buffer manifestPath;
+    core::path::Buffer scenarioDirectory;
     if (!joined_path(activitySdkView.catalog->artifact_directory(), kManifestSuffix, manifestPath)
         || !joined_path(activitySdkView.catalog->artifact_directory(),
                         kScenarioDirectorySuffix,
@@ -423,8 +423,8 @@ BindStatus resolve(const activity_sdk::BoundView& activitySdkView,
     }
     Resolved resolved{};
     const BindStatus status = resolve_paths(activitySdkView,
-                                            manifestPath.c_str(),
-                                            scenarioDirectory.c_str(),
+                                            manifestPath.chars.data(),
+                                            scenarioDirectory.chars.data(),
                                             sourceFingerprint,
                                             resolved);
     if (status == BindStatus::ready) {

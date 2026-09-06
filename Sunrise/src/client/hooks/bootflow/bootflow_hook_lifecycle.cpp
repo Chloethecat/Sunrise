@@ -25,7 +25,6 @@ struct Fix {
 constexpr std::array kFixes{
     Fix{&stage_character_select_hold, &publish_character_select_hold},
     Fix{&stage_orbit_slice_set, &publish_orbit_slice_set},
-    Fix{&stage_profile_setup_skip, &publish_profile_setup_skip},
     Fix{&stage_composition_check, &publish_composition_check},
     Fix{&stage_orbit_handoff, &publish_orbit_handoff},
     Fix{&stage_owner_activity_slot, &publish_owner_activity_slot},
@@ -46,14 +45,8 @@ struct Placement {
 
 /**
  * Attaches the boot-step fixes that carry sign-in through to orbit.
- * Each fix stands alone at one site, so a miss on one is reported and the others still attach.
- *
- * Every resolved fix attaches in one transaction rather than one each. A transaction enlists the
- * threads it must suspend by walking every thread on the system, which is far more work than the
- * attach itself, so nine transactions cost nine of those walks and one costs one. A fix whose
- * target is missing simply is not in the batch, which is what keeps one miss off the others. If
- * the batch itself fails the fixes are retried one at a time, so a single target Detours refuses
- * cannot take the rest of the group down with it.
+ * Every resolved fix goes in one transaction; a missing target is simply left out of the batch.
+ * A failed batch is retried one fix at a time, so one refused target cannot cost the rest.
  * @return True when every fix attached.
  */
 bool install() noexcept {
@@ -117,7 +110,6 @@ void uninstall() noexcept {
     uninstall_owner_activity_slot();
     uninstall_orbit_handoff();
     uninstall_composition_check();
-    uninstall_profile_setup_skip();
     uninstall_orbit_slice_set();
     uninstall_character_select_hold();
     g_installed.store(false, std::memory_order_release);

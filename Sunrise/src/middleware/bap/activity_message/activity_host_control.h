@@ -31,8 +31,10 @@ inline constexpr std::size_t kReservationCountBitCount = 6;
 inline constexpr std::size_t kReservationsFailedMinimumBitCount = kReservationCountBitCount;
 inline constexpr std::size_t kReservationsFailedMaximumBitCount =
     kReservationCountBitCount + kReservationCapacity * kReservationKeySize * 8;
+/** Message-45 grows with its key count; this bounds the body at full capacity. */
 inline constexpr std::size_t kReservationsFailedMaximumByteCount =
     (kReservationsFailedMaximumBitCount + 7) / 8;
+/** Message-56 carries a 32-bit mask; message-57 carries one bit padded to a byte. */
 inline constexpr std::size_t kPerfRequestKillBitCount = 32;
 inline constexpr std::size_t kPerfRequestKillByteCount = kPerfRequestKillBitCount / 8;
 inline constexpr std::size_t kPerfRequestReflectBitCount = 1;
