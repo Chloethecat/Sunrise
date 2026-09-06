@@ -448,6 +448,9 @@ bool investment_snapshot(InvestmentState& output) noexcept {
     InvestmentState snapshot = runtime::storage::g_state.investment;
     ReleaseSRWLockShared(&runtime::storage::g_stateLock);
     if (!build_data::complete_exotic_catalyst_investment(snapshot.family5)) {
+        core::log::write(core::log::Channel::state,
+                         core::log::Level::warn,
+                         "ev=investment stage=snapshot result=fail reason=catalyst");
         return false;
     }
     output = snapshot;

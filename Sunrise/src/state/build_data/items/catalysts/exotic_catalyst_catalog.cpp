@@ -167,6 +167,15 @@ bool valid(std::span<const Definition> definitions) noexcept {
             definition.objective.definitionIndex != kUnavailableObjectiveIndex;
         const bool directEffect =
             definition.completedPlugDefinitionIndex == definition.effectDefinitionIndex;
+        for (std::size_t flag = 0; flag < definition.completionAccountFlagIndices.size(); ++flag) {
+            const auto mapped = definition.completionAccountFlagIndices[flag];
+            if (mapped != kUnavailableCompletionFlagIndex
+                && (mapped >= state::unlocks::kAccountFlagCapacity
+                    || flag >= definition.completion.flagCount
+                    || definition.availability == Availability::unsupported)) {
+                return false;
+            }
+        }
         if (definition.itemDefinitionHash == 0
             || definition.socketLane >= details::kInitialPlugCapacity
             || !valid_availability(definition.availability)
@@ -301,7 +310,15 @@ bool append_investment_overrides(state::Family5State& family) noexcept {
             return false;
         }
         for (std::size_t flag = 0; flag < definition.completion.flagCount; ++flag) {
-            if (!upsert_flag(candidate, definition.completion.flags[flag])) {
+            const auto slot = definition.completion.flags[flag];
+            // A mapped completion rides in the account bank, so it takes a Family-5 row only when
+            // the state already carries one for that slot, which is then raised to the set value.
+            const bool present = std::any_of(candidate.flags.begin(),
+                                             candidate.flags.begin() + candidate.flagCount,
+                                             [slot](const auto& row) { return row.slot == slot; });
+            if ((definition.completionAccountFlagIndices[flag] == kUnavailableCompletionFlagIndex
+                 || present)
+                && !upsert_flag(candidate, slot)) {
                 return false;
             }
         }
@@ -313,6 +330,40 @@ bool append_investment_overrides(state::Family5State& family) noexcept {
         }
     }
     family = candidate;
+    return true;
+}
+
+/**
+ * Sets the account acquired flags that released catalyst completions map to.
+ * @param flags Candidate account flag bank; unchanged unless every mapped flag is inside it.
+ * @return False when a mapped flag falls outside the bank.
+ */
+bool append_account_completions(std::span<std::uint8_t> flags) noexcept {
+    if (!completion_enabled()) {
+        return true;
+    }
+    const std::shared_lock guard(g_lock);
+    // Range-check every mapping first, so one outside the bank leaves the input untouched.
+    for (const Definition& definition : g_definitions.rows()) {
+        if (definition.availability != Availability::released) {
+            continue;
+        }
+        for (const auto mapped : definition.completionAccountFlagIndices) {
+            if (mapped != kUnavailableCompletionFlagIndex && mapped >= flags.size()) {
+                return false;
+            }
+        }
+    }
+    for (const Definition& definition : g_definitions.rows()) {
+        if (definition.availability != Availability::released) {
+            continue;
+        }
+        for (const auto mapped : definition.completionAccountFlagIndices) {
+            if (mapped != kUnavailableCompletionFlagIndex) {
+                flags[mapped] = state::unlocks::kFlagSet;
+            }
+        }
+    }
     return true;
 }
 

@@ -91,25 +91,6 @@ using SaleRows = std::array<build_data::ArtifactSaleRow, build_data::kArtifactSa
 }
 
 /**
- * Sets one global unlock flag override, replacing any existing entry for the slot.
- * @return False when the slot is new and the override list is full.
- */
-[[nodiscard]] bool
-upsert_flag(Family5State& family, std::uint16_t slot, std::uint8_t value) noexcept {
-    for (std::size_t index = 0; index < family.flagCount; ++index) {
-        if (family.flags[index].slot == slot) {
-            family.flags[index].value = value;
-            return true;
-        }
-    }
-    if (family.flagCount >= family.flags.size()) {
-        return false;
-    }
-    family.flags[family.flagCount++] = UnlockFlagOverride{slot, value};
-    return true;
-}
-
-/**
  * Sets one global unlock value override, replacing any existing entry for the slot.
  * @return False when the slot is new and the override list is full.
  */
@@ -142,9 +123,10 @@ upsert_value(Family5State& family, std::uint16_t slot, std::int32_t value) noexc
     return build_data::artifact_sale_rows(rows, count) && count != 0;
 }
 
-/** @return One bit per owned artifact sale row, read from the global unlock overrides. */
-[[nodiscard]] std::uint32_t
-artifact_mask_locked(const Family5State& family, const SaleRows& rows, std::size_t count) noexcept {
+/** @return One bit per sale row an authored family-5 override marks owned. Read at seed only. */
+[[nodiscard]] std::uint32_t authored_artifact_mask_locked(const Family5State& family,
+                                                          const SaleRows& rows,
+                                                          std::size_t count) noexcept {
     std::uint32_t mask = 0;
     for (std::size_t row = 0; row < count && row < 32; ++row) {
         if (rows[row].unlockFlagSlot != build_data::collectibles::kUnavailableFlagSlot
@@ -155,6 +137,44 @@ artifact_mask_locked(const Family5State& family, const SaleRows& rows, std::size
     return mask;
 }
 
+/** @return One bit per owned artifact sale row, read from the character acquired-flag bank. */
+[[nodiscard]] std::uint32_t artifact_mask(const SaleRows& rows, std::size_t count) noexcept {
+    std::uint32_t mask = 0;
+    for (std::size_t row = 0; row < count && row < 32; ++row) {
+        const std::uint16_t mapped = rows[row].characterFlagIndex;
+        if (mapped != build_data::collectibles::kUnavailableFlagIndex
+            && unlocks::character_object_flag_set(mapped)) {
+            mask |= 1U << row;
+        }
+    }
+    return mask;
+}
+
+/**
+ * Removes the family-5 flag rows that name artifact sale slots.
+ * The character bank carries ownership, and a family-5 copy would mask it and cost 25 rows.
+ */
+void strip_artifact_flags_locked(Family5State& family,
+                                 const SaleRows& rows,
+                                 std::size_t count) noexcept {
+    std::size_t write = 0;
+    for (std::size_t index = 0; index < family.flagCount; ++index) {
+        const UnlockFlagOverride flag = family.flags[index];
+        bool artifact = false;
+        for (std::size_t row = 0; row < count && row < 32 && !artifact; ++row) {
+            artifact = rows[row].unlockFlagSlot != build_data::collectibles::kUnavailableFlagSlot
+                       && rows[row].unlockFlagSlot == flag.slot;
+        }
+        if (!artifact) {
+            family.flags[write++] = flag;
+        }
+    }
+    for (std::size_t index = write; index < family.flagCount; ++index) {
+        family.flags[index] = {};
+    }
+    family.flagCount = write;
+}
+
 [[nodiscard]] std::uint16_t points_used(std::uint32_t mask) noexcept {
     std::uint16_t used = 0;
     for (std::uint16_t bit = 0; bit < 32; ++bit) {
@@ -163,7 +183,7 @@ artifact_mask_locked(const Family5State& family, const SaleRows& rows, std::size
     return used;
 }
 
-/** Character-bank half of an artifact publish; the account half lives in the family-5 overrides. */
+/** Character-bank write of an artifact publish; the family-5 overrides carry only the counters. */
 struct CharacterArtifactWrite {
     const SaleRows* rows{};
     std::size_t count{};
@@ -194,11 +214,11 @@ void publish_artifact_character_banks(CharacterArtifactWrite& write) noexcept {
 }
 
 /**
- * Writes one artifact ownership mask into every bank that publishes it.
+ * Writes one artifact ownership mask into the character bank and its counters into family 5.
  * @param family Global override object, mutated in place.
  * @param mask One bit per owned sale row.
  * @param experience Seasonal XP the derived counters are computed from.
- * @return False only when the bounded override lists are full.
+ * @return False only when the bounded value override list is full.
  */
 [[nodiscard]] bool publish_artifact_locked(Family5State& family,
                                            std::uint32_t mask,
@@ -208,17 +228,7 @@ void publish_artifact_character_banks(CharacterArtifactWrite& write) noexcept {
     if (!sale_rows(rows, count)) {
         return false;
     }
-    for (std::size_t row = 0; row < count && row < 32; ++row) {
-        const std::uint16_t slot = rows[row].unlockFlagSlot;
-        if (slot == build_data::collectibles::kUnavailableFlagSlot) {
-            continue;
-        }
-        if (!upsert_flag(family,
-                         slot,
-                         (mask & (1U << row)) != 0 ? unlocks::kFlagSet : unlocks::kFlagClear)) {
-            return false;
-        }
-    }
+    strip_artifact_flags_locked(family, rows, count);
     const std::uint16_t used = points_used(mask);
     if (!upsert_value(family, kArtifactPowerBonusSlot, artifact_power_bonus_for(experience))
         || !upsert_value(family, kArtifactPointsUsedSlot, used)
@@ -261,8 +271,10 @@ bool seed_seasonal_progression() noexcept {
     }
     AcquireSRWLockExclusive(&runtime::storage::g_stateLock);
     Family5State& family = runtime::storage::g_state.investment.family5;
-    const bool published =
-        publish_artifact_locked(family, artifact_mask_locked(family, rows, count), experience);
+    // An authored family-5 row still seeds ownership. The publish moves it to the character bank.
+    const std::uint32_t mask =
+        authored_artifact_mask_locked(family, rows, count) | artifact_mask(rows, count);
+    const bool published = publish_artifact_locked(family, mask, experience);
     ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
     return published;
 }
@@ -304,8 +316,7 @@ bool grant_seasonal_experience(std::int32_t amount) noexcept {
     Family5State& family = runtime::storage::g_state.investment.family5;
     SaleRows rows{};
     std::size_t count = 0;
-    const std::uint32_t mask =
-        sale_rows(rows, count) ? artifact_mask_locked(family, rows, count) : 0U;
+    const std::uint32_t mask = sale_rows(rows, count) ? artifact_mask(rows, count) : 0U;
     (void)publish_artifact_locked(family, mask, total);
     ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
     return true;
@@ -346,11 +357,7 @@ std::uint32_t artifact_mod_mask() noexcept {
     if (!sale_rows(rows, count)) {
         return 0;
     }
-    AcquireSRWLockShared(&runtime::storage::g_stateLock);
-    const std::uint32_t mask =
-        artifact_mask_locked(runtime::storage::g_state.investment.family5, rows, count);
-    ReleaseSRWLockShared(&runtime::storage::g_stateLock);
-    return mask;
+    return artifact_mask(rows, count);
 }
 
 /** Replaces the exact published mask, refusing when another action changed it first. */
@@ -363,7 +370,7 @@ bool replace_artifact_mod_mask(std::uint32_t expected, std::uint32_t replacement
     const std::int32_t experience = seasonal_experience();
     AcquireSRWLockExclusive(&runtime::storage::g_stateLock);
     Family5State& family = runtime::storage::g_state.investment.family5;
-    bool replaced = artifact_mask_locked(family, rows, count) == expected;
+    bool replaced = artifact_mask(rows, count) == expected;
     if (replaced) {
         replaced = publish_artifact_locked(family, replacement, experience);
     }
@@ -398,7 +405,7 @@ bool prepare_artifact_mod_unlock(std::uint16_t saleIndex,
     const std::uint16_t earned = artifact_points_earned_for(experience);
     AcquireSRWLockExclusive(&runtime::storage::g_stateLock);
     Family5State& family = runtime::storage::g_state.investment.family5;
-    const std::uint32_t before = artifact_mask_locked(family, rows, count);
+    const std::uint32_t before = artifact_mask(rows, count);
     const std::uint16_t used = points_used(before);
     bool prepared = (before & bit) == 0 && used < earned && used >= column_tier(saleIndex);
     if (prepared) {

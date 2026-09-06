@@ -29,6 +29,9 @@ void mutate(void* context, void (*apply)(void*, Table&) noexcept) noexcept;
 /** @param index Account flag bank row. @return True when the flag is set. */
 [[nodiscard]] bool account_flag_set(std::uint16_t index) noexcept;
 
+/** @param index Character object flag bank row. @return True when the flag is set. */
+[[nodiscard]] bool character_object_flag_set(std::uint16_t index) noexcept;
+
 /**
  * Writes one account acquired flag.
  * @param index Account flag bank row.
