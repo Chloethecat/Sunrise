@@ -39,14 +39,16 @@ constexpr std::array<ReplacedMember, 11> kReplacedMembers{{
     // Version 8 turned the flat payout list into rows filtered by rarity, gear class and
     // masterwork state.
     {"\"dismantle_rewards\"", 8},
-    // Version 13 turned these three on. A file that never carried them takes the new default; one
+    // Version 13 turned these two on. A file that never carried them takes the new default; one
     // that carried the old value is corrected here.
-    {"\"lua_declarations\"", 13},
     {"\"suppress_peer_relay\"", 13},
     {"\"activity_public_membership\"", 13},
     // Version 15 seeded the lore book unlock slots, so both banks take the new default.
     {"\"character_flags\"", 15},
     {"\"objective_values\"", 15},
+    // Version 16 turned generation on. The whole block is replaced, because "enabled" is not
+    // unique in the document. The block also carries the lua_declarations default of version 13.
+    {"\"activity_sdk_generation\"", 16},
 }};
 
 /** One renamed member, and the layout version that renamed it. */
