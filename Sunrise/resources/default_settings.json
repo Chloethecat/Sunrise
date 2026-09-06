@@ -1,5 +1,5 @@
 {
-  "version": 15,
+  "version": 16,
   "core": {
     "logging": {
       "debugger_sink": true,
