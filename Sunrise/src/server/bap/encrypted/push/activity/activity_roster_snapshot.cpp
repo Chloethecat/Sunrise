@@ -11,6 +11,7 @@
 #include "../../../../../state/activity/destination/activity_destination_spawn_binding.h"
 #include "../../../../../state/activity/membership/activity_membership_query.h"
 #include "../../../../../state/activity/runtime.h"
+#include "../../../../../state/activity_sdk/runtime.h"
 #include "../../../../../state/build_data/runtime.h"
 #include "../../../../../state/runtime/runtime.h"
 #include "../../../../gameplay/gameplay_advertisement.h"
@@ -96,6 +97,16 @@ bool client_region_ready(const Session& session, const RefreshReport* refresh) n
                              && lease.bindingGeneration == session.activity.bindingGeneration
                              && lease.regionArrivalPending
                              && static_cast<std::int64_t>(lease.plan.effectiveRegion) != held;
+    if (movePending && (lease.plan.effectiveRegion == 1 || lease.plan.effectiveRegion == 2)) {
+        const auto catalog = state::activity_sdk::snapshot();
+        if (catalog && lease.plan.activityRow < catalog->activities().size()
+            && catalog->activities()[lease.plan.activityRow].definitionHash == 0x38F926B2U
+            && !state::activity::membership::host_teleport_armed(session.activity.session.sessionId)) {
+            // Selecting the movie first prepares roster removal. Keep the old world's spawn
+            // gate open until the qualified cleanup receipt actually arms native travel.
+            return held >= 0;
+        }
+    }
     return !movePending && held >= 0;
 }
 
@@ -670,36 +681,8 @@ build_roster_snapshot(Session& session,
     if (pendingStateLocal && pendingGroupPosition >= snapshot.roster.groupCount) {
         return refuse_override("pending_group_position");
     }
-    std::size_t senseCount = 0;
-    for (const message::AuthOverride& auth : snapshot.authOverrides) {
-        if (auth.slotType != 1) {
-            continue;
-        }
-        server::activity::host::SenseObservationKey key{};
-        key.registryKey = auth.key;
-        key.objectTag = auth.objectTag;
-        key.senseSchema = 0x80807ECCU;
-        key.slotIndex = auth.slotIndex;
-        key.slotType = auth.slotType;
-        middleware::bap::activity_message::squad_sense::State recovered{};
-        if (!server::activity::host::snapshot_squad_sense(
-                session.activity.session, session.activity.bindingGeneration, key, recovered)) {
-            continue;
-        }
-        message::SenseOverride& sense = scratch.rosterSenseOverrides[senseCount];
-        sense = {};
-        if (!middleware::bap::activity_message::squad_sense::encode(
-                recovered, sense.body, sense.byteCount, sense.bitCount)) {
-            return refuse_override("squad_sense");
-        }
-        sense.key = auth.key;
-        sense.objectTag = auth.objectTag;
-        sense.slotIndex = auth.slotIndex;
-        sense.slotType = auth.slotType;
-        sense.counter = recovered.counter;
-        ++senseCount;
-    }
-    snapshot.senseOverrides = std::span(scratch.rosterSenseOverrides).first(senseCount);
+    if (finalize_mission_retirement(session, scratch, snapshot, refresh)
+        == MissionSeedRosterResult::refused) return refuse_override("mission_retirement");
     return RosterOutcome::published;
 }
 
