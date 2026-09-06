@@ -19,7 +19,8 @@ namespace sunrise::server::gameplay::peer {
 
 /**
  * Installs the process-lifetime channel-0 codec before gameplay starts.
- * TODO: no caller yet. The session-less channel-0 owner waits on the `gameplay_external_body` gate.
+ * TODO: no caller yet. The session-less channel-0 owner waits on the packet-outcome binding to
+ * the established writer.
  */
 void install_lane0_codec(
     const middleware::gameplay::external::Lane0Codec& codec,

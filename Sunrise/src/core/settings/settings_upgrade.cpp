@@ -76,14 +76,22 @@ struct RemovedMember {
     std::uint32_t version;
 };
 
-/** Members this build no longer reads, each with the version that removed it. */
-constexpr std::array<RemovedMember, 4> kRemovedMembers{{
+/**
+ * Members this build no longer reads, each with the version that removed it.
+ * Only the first occurrence of a name is removed, so a member repeated per character, such as the
+ * version-16 `accepted`, is left for the parser to skip as an unknown key.
+ */
+constexpr std::array<RemovedMember, 7> kRemovedMembers{{
     {"\"force_join_request_ready\"", 12},
     // Version 14 dropped two client stand-ins and moved the catalyst gate under
     // `state.investment`, so the root copy is no longer read.
     {"\"skip_profile_setup\"", 14},
     {"\"ignore_client_slot_release\"", 14},
     {"\"complete_exotic_catalysts\"", 14},
+    // Version 16 dropped two gates nothing read and one that only skipped a receipt row.
+    {"\"activity_compatibility_mirror\"", 16},
+    {"\"gameplay_external_body\"", 16},
+    {"\"server_default_entity\"", 16},
 }};
 
 /** One splice per replaced, renamed and removed member, plus the version member itself. */

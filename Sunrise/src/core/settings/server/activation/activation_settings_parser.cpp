@@ -23,21 +23,6 @@ bool Parser::activation_settings(server::activation::Settings& output) noexcept 
                 return false;
             }
             candidate.defaultClientActivation = value;
-        } else if (key == "activity_compatibility_mirror") {
-            if (!boolean(value)) {
-                return false;
-            }
-            candidate.activityCompatibilityMirror = value;
-        } else if (key == "gameplay_external_body") {
-            if (!boolean(value)) {
-                return false;
-            }
-            candidate.gameplayExternalBody = value;
-        } else if (key == "server_default_entity") {
-            if (!boolean(value)) {
-                return false;
-            }
-            candidate.serverDefaultEntity = value;
         } else if (key == "activity_public_membership") {
             if (!boolean(value)) {
                 return false;

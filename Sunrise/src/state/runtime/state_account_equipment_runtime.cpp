@@ -335,8 +335,7 @@ void report_item_state(std::string_view stage,
                                        const CharacterState& right) noexcept {
     if (left.soid != right.soid || left.selected != right.selected || left.race != right.race
         || left.gender != right.gender || left.characterClass != right.characterClass
-        || left.level != right.level || left.accepted != right.accepted
-        || left.previewAvailable != right.previewAvailable
+        || left.level != right.level || left.previewAvailable != right.previewAvailable
         || left.appearanceValue != right.appearanceValue
         || left.lastOrbitedDestination != right.lastOrbitedDestination
         || left.currentActivityIndex != right.currentActivityIndex

@@ -280,10 +280,6 @@ bool Parser::character(state::CharacterState& output) noexcept {
                 return false;
             }
             output.level = static_cast<std::uint8_t>(value);
-        } else if (key == "accepted") {
-            if (!boolean(output.accepted)) {
-                return false;
-            }
         } else if (key == "preview_available") {
             if (!boolean(output.previewAvailable)) {
                 return false;

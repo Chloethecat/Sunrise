@@ -349,10 +349,6 @@ std::uint64_t record(const service::Request& request,
             report_message(request.messageType, request.sessionId, "mission_ingress_refused");
         }
     }
-    if (!core::settings::get().server.activation.activityCompatibilityMirror) {
-        // Off, only the aggregate receipt row is skipped. The diagnostic history stays live.
-        return sequence;
-    }
     store::Arrival arrival{};
     arrival.sessionId = request.sessionId;
     arrival.messageType = request.messageType;

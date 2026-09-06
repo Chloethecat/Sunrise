@@ -27,10 +27,11 @@ struct Settings {
      */
     bool fadeRelease{true};
     /**
-     * Moves the loaded armour socket rows so the mod menu lists every category.
-     * On by default; a client stand-in until the corrected pool is published over the wire.
+     * Moves the four Arrivals leg mods into the leg plug set, so the leg mod menu lists them.
+     * Off by default. Retail shipped the same package data and showed the same gap, so this is a
+     * content correction, not a retail behaviour. It may be removed.
      */
-    bool socketMenuRouting{true};
+    bool socketMenuRouting{false};
     /**
      * Clears the visibility gates on the loaded lore presentation nodes.
      * On by default; a client stand-in until the unlock banks carry every gate the nodes read.

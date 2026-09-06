@@ -177,7 +177,8 @@ struct ExternalEntityFrame {
 
 /**
  * Reads one channel-2 batch and commits the reader and output only on success.
- * TODO: no caller yet. The four entry points below wait on the `gameplay_external_body` gate.
+ * TODO: no caller yet. The four entry points below wait on the packet-outcome binding to the
+ * established writer.
  */
 [[nodiscard]] bool read_entity_batch(encoding::bits::Reader& reader,
                                      const TypePayloadCodec& codec,

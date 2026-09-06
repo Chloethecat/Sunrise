@@ -1,5 +1,5 @@
 {
-  "version": 15,
+  "version": 16,
   "core": {
     "logging": {
       "debugger_sink": true,
@@ -37,7 +37,7 @@
     "suppress_peer_relay": true,
     "custom_bootflow_textures": true,
     "fade_release": true,
-    "socket_menu_routing": true,
+    "socket_menu_routing": false,
     "reveal_lore_books": true,
     "region_private": false,
     "pin_replicated_record": true,
@@ -57,9 +57,6 @@
     },
     "activation": {
       "default_client_activation": true,
-      "activity_compatibility_mirror": true,
-      "gameplay_external_body": false,
-      "server_default_entity": false,
       "activity_public_membership": true,
       "prevent_ownerless_channel_close": false,
       "mission_scripting": true
@@ -360,7 +357,6 @@
         "melee_ability": 11,
         "class_ability": 2,
         "level": 50,
-        "accepted": true,
         "preview_available": true,
         "appearance_value": 1.0,
         "last_orbited_destination": "0x125CF0E7",
@@ -886,7 +882,6 @@
         "melee_ability": 11,
         "class_ability": 2,
         "level": 50,
-        "accepted": true,
         "preview_available": true,
         "appearance_value": 1.0,
         "last_orbited_destination": "0x125CF0E7",
@@ -1412,7 +1407,6 @@
         "melee_ability": 11,
         "class_ability": 2,
         "level": 50,
-        "accepted": true,
         "preview_available": true,
         "appearance_value": 1.0,
         "last_orbited_destination": "0x125CF0E7",

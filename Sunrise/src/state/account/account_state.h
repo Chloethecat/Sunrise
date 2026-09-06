@@ -135,7 +135,6 @@ struct CharacterState {
     CharacterGender gender{CharacterGender::male};
     CharacterClass characterClass{CharacterClass::titan};
     std::uint8_t level{};
-    bool accepted{};
     bool previewAvailable{};
     /** Authored scalar kept for the family-specific character presentation encoders. */
     float appearanceValue{};
