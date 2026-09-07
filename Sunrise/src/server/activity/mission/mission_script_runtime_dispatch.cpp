@@ -1,12 +1,16 @@
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
 #include <span>
 #include <string_view>
 
+#include "../../../middleware/content/packages/tables/scenario_reader.h"
 #include "../../../state/activity/membership/activity_membership_query.h"
 #include "../../../state/build_data/runtime.h"
+#include "../../../state/build_data/spawn_sets/spawn_set_catalog.h"
 #include "../activity_sdk_device_runtime.h"
 #include "../activity_sdk_lifetime_runtime.h"
 #include "../activity_sdk_mission_runtime.h"
@@ -211,6 +215,7 @@ void arm_state_region_teleport(RuntimeInstance& instance,
             instance.view.binding.sessionId, membership::kAbsentSliceSetIndex, 0));
         return;
     }
+    // Each alternate scenario entry is its own packed region, so a sibling state still travels.
     const std::string_view name(reinterpret_cast<const char*>(destination.packageName.data()),
                                 destination.packageNameLength);
     ::sunrise::state::build_data::scenarios::Definition layout{};
@@ -310,6 +315,51 @@ void dispatch_intent(RuntimeInstance& instance, std::uint64_t now) noexcept {
         // unfindable. Arming the host teleport is the only mid-activity move.
         arm_state_region_teleport(instance, selected.plan);
         static_cast<void>(complete_local_effect(instance, "state_selected"));
+        return;
+    }
+    case lua_vm::IntentKind::restartCheckpoint: {
+        if (intent.checkpointReleaseRequest != 0) {
+            if (::sunrise::state::activity::membership::release_hard_wipe(
+                    instance.view.binding, intent.checkpointReleaseRequest)) {
+                static_cast<void>(complete_local_effect(instance, "checkpoint_reset_ready"));
+            } else {
+                refuse_delivery(instance,
+                                "checkpoint_refused",
+                                "wipe_not_active",
+                                host::EffectOutcome::refused);
+            }
+            return;
+        }
+        namespace data = ::sunrise::state::build_data;
+        const auto& destination = instance.view.binding.destination;
+        const std::string_view package(
+            reinterpret_cast<const char*>(destination.packageName.data()),
+            destination.packageNameLength);
+        data::scenarios::Definition layout{};
+        data::spawn_sets::NameHash spawn{};
+        // A wipe restarts the whole party at an authored spawn set of the region they are in.
+        if (instance.publicTarget || !instance.lastFireteamLife.all_dead()
+            || instance.activeRegion != intent.effectiveRegion
+            || !data::find_scenario_layout(package, layout)
+            || !data::spawn_sets::find_hash({layout.spawnStem.data(), layout.spawnStemLength},
+                                            intent.checkpointSpawnHash,
+                                            spawn)
+            || spawn.pointCount == 0) {
+            refuse_delivery(instance,
+                            "checkpoint_refused",
+                            "party_or_spawn_unavailable",
+                            host::EffectOutcome::refused);
+            return;
+        }
+        if (::sunrise::state::activity::membership::arm_hard_wipe(instance.view.binding,
+                                                                  intent.requestKey,
+                                                                  intent.effectiveRegion,
+                                                                  intent.checkpointSpawnHash)) {
+            static_cast<void>(complete_local_effect(instance, "checkpoint_wipe_armed"));
+        } else {
+            refuse_delivery(
+                instance, "checkpoint_refused", "membership_busy", host::EffectOutcome::refused);
+        }
         return;
     }
     case lua_vm::IntentKind::placeSquad: {
@@ -491,8 +541,31 @@ void dispatch_intent(RuntimeInstance& instance, std::uint64_t now) noexcept {
         } else if (!abandon_reserved_delivery(instance, reservation)) {
             return;
         } else if (scene_lease_still_publishing(status)) {
+            // The lease numbers say which side moved. The status dedup reports them once.
+            std::array<char, 176> detail{};
+            scenes::Snapshot lease{};
+            const scenes::Status leaseStatus = scenes::query(instance.view, lease);
+            const int written =
+                std::snprintf(detail.data(),
+                              detail.size(),
+                              "%s lease=%s configured=%d revision=%llu published=%llu "
+                              "pending=%d arrival=%d region=%d plan_region=%u state_row=%u",
+                              scenes::status_name(status),
+                              scenes::status_name(leaseStatus),
+                              lease.configured ? 1 : 0,
+                              static_cast<unsigned long long>(lease.revision),
+                              static_cast<unsigned long long>(lease.publishedRevision),
+                              lease.publicationPending ? 1 : 0,
+                              lease.regionArrivalPending ? 1 : 0,
+                              lease.effectiveRegion,
+                              static_cast<unsigned>(lease.plan.effectiveRegion),
+                              static_cast<unsigned>(lease.plan.stateRow));
             report_intent_status(
-                instance, kIntentStatusSceneLeasePending, scenes::status_name(status));
+                instance,
+                kIntentStatusSceneLeasePending,
+                written > 0
+                    ? std::string_view{detail.data(), static_cast<std::size_t>(written)}
+                    : scenes::status_name(status));
         } else {
             refuse_delivery(instance,
                             sequence ? "sequence_refused" : "cinematic_refused",

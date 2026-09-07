@@ -15,6 +15,7 @@
 #include "../../../core/logging/log.h"
 #include "../../../state/activity_sdk/generated_world/codec.h"
 #include "../../../state/activity_sdk/generation/definition.h"
+#include "../../../state/build_data/runtime.h"
 #include "activity_sdk_generation_worker_internal.h"
 
 namespace sunrise::client::content::activity::sdk_generation::worker_internal {
@@ -252,6 +253,18 @@ void publish_parallel_progress(ScenarioBuildBatch& batch, const Scenario& scenar
     ReleaseSRWLockExclusive(&batch.progressLock);
 }
 
+/** A cache made before the layout catalogue was ready omitted whole placement domains. */
+[[nodiscard]] bool placement_context_ready(const Scenario& scenario,
+                                           const catalog::Snapshot& snapshot) noexcept {
+    state::build_data::scenarios::Definition layout{};
+    const std::string_view name(scenario.name.data(), scenario.nameLength);
+    if (!state::build_data::find_scenario_layout(name, layout) || layout.spawnStemLength == 0) {
+        return true;
+    }
+    return snapshot.containerPlacementDiagnostics.contextResolved
+           && snapshot.staticSpatialContextResolved;
+}
+
 /** Builds one worker's contiguous chunks with private package and analysis caches. */
 void run_scenario_worker(ScenarioBuildBatch& batch) noexcept {
     std::unique_ptr<package_reader::Scratch> scratch(new (std::nothrow) package_reader::Scratch());
@@ -284,6 +297,9 @@ void run_scenario_worker(ScenarioBuildBatch& batch) noexcept {
                                                 scenario,
                                                 *existing,
                                                 result.snapshot);
+                if (kept && !placement_context_ready(scenario, *result.snapshot)) {
+                    kept = false;
+                }
                 if (kept
                     && !materialize_cached_record(
                         *batch.work, scenario, *existing, result.snapshot, result.snapshot)) {

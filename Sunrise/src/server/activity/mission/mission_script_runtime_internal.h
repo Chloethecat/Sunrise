@@ -15,7 +15,12 @@
 #include "../../../state/activity_sdk/generated_world/runtime.h"
 #include "../../../state/activity_sdk/runtime.h"
 #include "../host_runtime.h"
+#include "mission_script_actor_path_sense.h"
+#include "mission_script_ghost_sense.h"
+#include "mission_script_object_sense.h"
+#include "mission_script_player_sense.h"
 #include "mission_script_runtime.h"
+#include "mission_script_squad_sense.h"
 #include "mission_script_vm.h"
 
 // What the seven mission-runtime translation units share: the instance table and service slice,
@@ -75,7 +80,13 @@ constexpr std::size_t kSquadObservationCapacity = 160;
 /** Watched authored scenes retained per instance. */
 constexpr std::size_t kSceneObservationCapacity = 32;
 /** Watched objective sensors retained per instance. */
-constexpr std::size_t kObjectiveObservationCapacity = 8;
+constexpr std::size_t kObjectiveObservationCapacity = 32;
+static_assert(kSquadObjectiveGroupCount == host::kSquadObjectiveGroupCount);
+/** Watched Ghost links, damage monitors, interactable objects and named actors per instance. */
+constexpr std::size_t kGhostObservationCapacity = 8;
+constexpr std::size_t kDamageObservationCapacity = 8;
+constexpr std::size_t kObjectInteractionObservationCapacity = 64;
+constexpr std::size_t kActorPathObservationCapacity = 64;
 /** One objective sensor carries this many objective blocks. */
 constexpr std::size_t kObjectiveCapacity = 24;
 /** One objective block carries this many task counters. */
@@ -94,8 +105,47 @@ struct TriggerOccupancy final {
     bool used{};
 };
 
+/** Last movement and delivery level seen for one named actor, so only a change raises an event. */
+struct ActorPathObservation final {
+    ActorPathLevel level{};
+    std::uint32_t registryKey{};
+    std::uint32_t objectTag{};
+    std::uint16_t slotIndex{};
+    bool used{};
+};
+
+/** Last health, shield and revision seen for one damage monitor. */
+struct DamageObservation final {
+    std::uint32_t registryKey{};
+    std::uint32_t objectTag{};
+    std::uint16_t slotIndex{};
+    std::int32_t revision{};
+    float health{-1.0F};
+    float shield{-1.0F};
+    bool used{};
+};
+
+/** Last object and interaction level seen for one interactable object. */
+struct ObjectInteractionObservation final {
+    ObjectInteractionLevel level{};
+    std::uint32_t registryKey{};
+    std::uint32_t objectTag{};
+    std::uint16_t slotIndex{};
+    bool used{};
+};
+
+/** Last Ghost-link level seen for one sensor. */
+struct GhostObservation final {
+    GhostLevel level{};
+    std::uint32_t registryKey{};
+    std::uint32_t objectTag{};
+    std::uint16_t slotIndex{};
+    bool used{};
+};
+
 /** Last squad counters seen for one watched object, so only a change raises an event. */
 struct SquadObservation final {
+    SquadObjectiveCosts objectiveCosts{};
     std::array<std::int32_t, host::kSquadSlotCapacity> slotCounts{};
     std::uint32_t registryKey{};
     std::uint32_t objectTag{};
@@ -163,10 +213,21 @@ struct RuntimeInstance final {
     std::uint64_t nextTimerAttempt{};
     std::array<TriggerOccupancy, kTriggerOccupancyCapacity> triggerOccupancy{};
     std::array<SquadObservation, kSquadObservationCapacity> squadObservations{};
+    std::array<GhostObservation, kGhostObservationCapacity> ghostObservations{};
+    std::array<DamageObservation, kDamageObservationCapacity> damageObservations{};
+    std::array<ObjectInteractionObservation, kObjectInteractionObservationCapacity>
+        objectInteractionObservations{};
+    std::array<ActorPathObservation, kActorPathObservationCapacity> actorPathObservations{};
     std::array<SceneObservation, kSceneObservationCapacity> sceneObservations{};
     std::array<ObjectiveObservation, kObjectiveObservationCapacity> objectiveObservations{};
     // The table is exactly as large as the session table, so it can never overflow.
     std::array<SessionRosterWatch, state::activity::kSessionCapacity> sessionRoster{};
+    /** Participation levels of the sixteen player slots, for the client generation below. */
+    std::array<PlayerLifeObservation, kParticipationSlotCount> playerLife{};
+    std::uint64_t playerLifeGeneration{};
+    /** Last published party life counts. Published once, then only on a change. */
+    FireteamLife lastFireteamLife{};
+    bool fireteamLifePublished{};
     /** Dynamically sized host-state reports waiting for this script, in arrival order. */
     std::vector<host::Event> scriptEvents{};
     std::uint64_t firstScriptEventAttempt{};
@@ -209,6 +270,11 @@ void log_line(core::log::Level level,
               std::string_view error = {}) noexcept;
 /** Appends one host-state event for the script. */
 void push_script_event(RuntimeInstance& instance, const host::Event& event) noexcept;
+/** Raises a fireteam event on each private instance whose party life counts changed. */
+void publish_fireteam_life(std::uint64_t now) noexcept;
+/** Merges the type-13 participation records of one Sense snapshot into the instance. */
+void observe_player_life(RuntimeInstance& instance,
+                         const host::SenseObservationSnapshot& sense) noexcept;
 
 /** Raises one event per watched trigger volume whose occupancy changed. */
 void push_trigger_edges(RuntimeInstance& instance,
@@ -217,6 +283,18 @@ void push_trigger_edges(RuntimeInstance& instance,
 void push_player_trigger(RuntimeInstance& instance, const host::Event& incident) noexcept;
 /** Raises one exact Type-6 start/finish edge from a decoded schema-0x808087BF msg-19 payload. */
 void push_cinematic(RuntimeInstance& instance, const host::Event& incident) noexcept;
+/** Raises one event per named actor whose movement or delivery level changed. */
+void push_actor_path_edges(RuntimeInstance& instance,
+                           const host::SenseObservationSnapshot& sense) noexcept;
+/** Raises one event per damage monitor whose health, shield or revision changed. */
+void push_damage_edges(RuntimeInstance& instance,
+                       const host::SenseObservationSnapshot& sense) noexcept;
+/** Raises object state and accepted interaction events per interactable object. */
+void push_object_interaction_edges(RuntimeInstance& instance,
+                                   const host::SenseObservationSnapshot& sense) noexcept;
+/** Raises one event per Ghost link whose level changed. */
+void push_ghost_edges(RuntimeInstance& instance,
+                      const host::SenseObservationSnapshot& sense) noexcept;
 /** Raises the squad state, spawn and death events derived from one msg 6 body. */
 void push_squad_edges(RuntimeInstance& instance,
                       const host::SenseObservationSnapshot& sense) noexcept;

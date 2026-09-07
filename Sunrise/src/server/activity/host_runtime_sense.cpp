@@ -13,6 +13,7 @@
 #include <span>
 
 #include "../../core/logging/log.h"
+#include "../../middleware/bap/activity_message/sense_observation_packet.h"
 #include "../../state/activity/runtime.h"
 #include "../../state/activity_sdk/format.h"
 #include "host_runtime_internal.h"
@@ -37,40 +38,24 @@ packet_has_sense_key(const middleware::bap::activity_message::sense_update::Deco
                      const SenseObservationKey& key,
                      std::size_t first) noexcept {
     for (std::size_t index = first; index < packet.objectCount; ++index) {
-        if (same_sense_key(key, packet.objects[index])) {
+        if (packet.objects[index].status == middleware::bap::activity_message::sense_update::ObjectStatus::decoded
+            && packet.objects[index].hasGeneration && same_sense_key(key, packet.objects[index])) {
             return true;
         }
     }
     return false;
 }
 
-/** @return True when every retained object and value came from one complete decode. */
-[[nodiscard]] bool complete_sense_observation_input(const SenseInput& input) noexcept {
+/** @return True when the envelope closed and each decoded object's storage is bounded. */
+[[nodiscard]] bool valid_sense_observation_input(const SenseInput& input) noexcept {
     namespace sense = middleware::bap::activity_message::sense_update;
-    const sense::DecodedPacket& packet = input.decoded;
-    if (input.sourceGeneration == 0 || input.clientMessageSequence == 0
-        || input.verdict != state::activity::receipts::Verdict::framed
-        || input.decodeStatus != sense::DecodeStatus::complete
-        || packet.status != sense::DecodeStatus::complete || packet.objectsTruncated
-        || packet.valuesTruncated || packet.groupsSkipped != 0 || input.groupsSkipped != 0
-        || packet.objectCount > packet.objects.size() || packet.valueCount > packet.values.size()
-        || packet.objectsDecoded != packet.objectCount || packet.objectsSeen != packet.objectCount
-        || input.groupsSeen != packet.groupsSeen || input.groupsDecoded != packet.groupsDecoded
-        || input.objectsSeen != packet.objectsSeen
-        || input.objectsDecoded != packet.objectsDecoded) {
-        return false;
-    }
-    std::size_t expectedValue = 0;
-    for (std::size_t index = 0; index < packet.objectCount; ++index) {
-        const sense::DecodedObject& object = packet.objects[index];
-        if (object.status != sense::ObjectStatus::decoded || !object.hasGeneration
-            || object.firstValue != expectedValue
-            || object.valueCount > packet.valueCount - expectedValue) {
-            return false;
-        }
-        expectedValue += object.valueCount;
-    }
-    return expectedValue == packet.valueCount;
+    const auto& packet = input.decoded;
+    return input.sourceGeneration != 0 && input.clientMessageSequence != 0
+        && input.verdict == state::activity::receipts::Verdict::framed
+        && input.decodeStatus == packet.status && sense::observation_packet(packet)
+        && input.groupsSeen == packet.groupsSeen && input.groupsDecoded == packet.groupsDecoded
+        && input.groupsSkipped == packet.groupsSkipped && input.objectsSeen == packet.objectsSeen
+        && input.objectsDecoded == packet.objectsDecoded;
 }
 
 /** Mixes one fixed-width value into the local scene change guard. */
@@ -251,7 +236,7 @@ void trace_scene_sense(Instance& instance, const SenseInput& input) noexcept {
             break;
         }
     }
-    if (!complete_sense_observation_input(input)) {
+    if (!valid_sense_observation_input(input)) {
         if (!trace.incompleteReported && (hasScene || packet.objectsTruncated)) {
             trace.incompleteReported = true;
             report_scene_sense(
@@ -275,8 +260,8 @@ void trace_scene_sense(Instance& instance, const SenseInput& input) noexcept {
     }
     for (std::size_t index = 0; index < packet.objectCount; ++index) {
         const sense::DecodedObject& object = packet.objects[index];
-        if (object.slotType
-                != static_cast<std::uint8_t>(state::activity_sdk::format::kAuthoredSceneSlotType)
+        if (object.status != sense::ObjectStatus::decoded || !object.hasGeneration || object.slotType
+            != static_cast<std::uint8_t>(state::activity_sdk::format::kAuthoredSceneSlotType)
             || packet_has_sense_key(packet,
                                     {object.registryKey,
                                      object.objectTag,
@@ -353,11 +338,11 @@ void trace_scene_sense(Instance& instance, const SenseInput& input) noexcept {
     }
 }
 
-/** Replaces only keys present in one complete packet and keeps every omitted key. */
+/** Replaces only fully decoded keys in an accepted packet; omitted or unsupported keys stay retained. */
 [[nodiscard]] bool
 retain_sense_observations(Instance& instance, const SenseInput& input, std::uint64_t now) noexcept {
     namespace sense = middleware::bap::activity_message::sense_update;
-    if (!complete_sense_observation_input(input)) {
+    if (!valid_sense_observation_input(input)) {
         return false;
     }
     const sense::DecodedPacket& packet = input.decoded;
@@ -366,6 +351,7 @@ retain_sense_observations(Instance& instance, const SenseInput& input, std::uint
     next.sourceGeneration = input.sourceGeneration;
     for (std::size_t index = 0; index < packet.objectCount; ++index) {
         const sense::DecodedObject& object = packet.objects[index];
+        if (object.status != sense::ObjectStatus::decoded || !object.hasGeneration) continue;
         const SenseObservationKey key{object.registryKey,
                                       object.objectTag,
                                       object.senseSchema,
@@ -520,6 +506,7 @@ void apply_sense(const SenseInput& input, std::uint64_t now) noexcept {
         event.slotSenseSchema = input.decoded.objects.front().senseSchema;
     }
     event.senseDecodeStatus = input.decodeStatus;
+    event.senseSnapshotRetained = valid_sense_observation_input(input);
     event.hasFirstObject = input.hasFirstObject;
     event.stateRevision = instance->view.stateRevision;
     event.sourceGeneration = input.sourceGeneration;
@@ -527,7 +514,7 @@ void apply_sense(const SenseInput& input, std::uint64_t now) noexcept {
     event.lifetimeState = instance->view.lifetimeState;
     event.verdict = input.verdict;
     append_event(event);
-    append_mission_input(event, complete_sense_observation_input(input) ? &input.decoded : nullptr);
+    append_mission_input(event, event.senseSnapshotRetained ? &input.decoded : nullptr);
     instance->view.lastEventSequence = g_sequence;
 }
 

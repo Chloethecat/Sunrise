@@ -5,7 +5,15 @@
 #include <span>
 #include <string_view>
 
+#include "../../middleware/bap/activity_message/damage_monitor_auth.h"
+#include "../../middleware/bap/activity_message/darkness_zone_auth.h"
+#include "../../middleware/bap/activity_message/ghost_link_auth.h"
+#include "../../middleware/bap/activity_message/interactable_object_auth.h"
+#include "../../middleware/bap/activity_message/mission_effect_auth.h"
+#include "../../middleware/bap/activity_message/music_section_auth.h"
+#include "../../middleware/bap/activity_message/scene_events_auth.h"
 #include "../../middleware/bap/activity_message/sensor_auth_update.h"
+#include "../../middleware/bap/activity_message/squad_objective_auth.h"
 #include "../../middleware/content/packages/tables/region_reader.h"
 #include "../../state/activity/runtime.h"
 #include "../../state/build_data/runtime.h"

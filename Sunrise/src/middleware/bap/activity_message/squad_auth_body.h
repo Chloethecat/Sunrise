@@ -47,14 +47,21 @@ inline constexpr std::size_t kAuthoredProfileBitCount = 13;
 /** Buffer one squad body needs at the full requested-count length. */
 inline constexpr std::size_t kMaximumBitCount = exact_body_bit_count(kMaximumRequestedCountLength);
 inline constexpr std::size_t kMaximumByteCount = (kMaximumBitCount + 7) / 8;
+/** A retained body may carry the objective fields too, up to 1,313 bits. */
+inline constexpr std::size_t kMaximumRetainedBitCount = 1'313;
+inline constexpr std::size_t kMaximumRetainedByteCount = (kMaximumRetainedBitCount + 7U) / 8U;
 /** Spawn generation is an unsigned logical value stored in a 31-bit field. */
 inline constexpr std::uint32_t kMaximumGeneration = 0x7FFFFFFF;
 
-/** The schema accepts only its two observed numeric mode values. */
+/** Mode 3 skips ordinary placement and keeps the requests for a passenger delivery. */
 enum class Mode : std::uint8_t {
     mode0 = 0,
     mode2 = 2,
+    reserve = 3,
 };
+[[nodiscard]] constexpr bool valid_mode(Mode mode) noexcept {
+    return mode == Mode::mode0 || mode == Mode::mode2 || mode == Mode::reserve;
+}
 
 /** Last accepted positive spawn generation for one ClientRef. */
 struct GenerationGuard final {
@@ -62,7 +69,7 @@ struct GenerationGuard final {
     bool hasLast{};
 };
 
-/** One canonical activity-local squad request. Active is fixed to one on the wire. */
+/** One canonical activity-local squad request. Zero counts select native actor destruction. */
 struct Preset final {
     std::span<const std::int32_t> requestedCounts{};
     std::uint32_t generation{};

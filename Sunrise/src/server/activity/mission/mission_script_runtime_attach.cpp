@@ -743,6 +743,7 @@ void synchronize_instances(std::uint64_t now) noexcept {
         }
     }
     const sdk::Snapshot catalog = sdk::snapshot();
+    publish_fireteam_life(now);
     for (std::size_t index = 0; index < diagnostics.instanceCount; ++index) {
         if (diagnostics.instances[index].active) {
             attach_instance(diagnostics.instances[index], catalog, now);

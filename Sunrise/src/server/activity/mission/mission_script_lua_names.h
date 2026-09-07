@@ -74,6 +74,11 @@ inline constexpr char kEntitySlotsRequestedEventMetatable[] =
 // Session membership, player trigger, and cinematic transitions.
 inline constexpr char kSessionJoinedEventMetatable[] = "sunrise.mission.event.session_joined";
 inline constexpr char kSessionLeftEventMetatable[] = "sunrise.mission.event.session_left";
+inline constexpr char kActorPathEventMetatable[] = "sunrise.mission.event.actor_path";
+inline constexpr char kObjectInteractionEventMetatable[] =
+    "sunrise.mission.event.object_interaction";
+inline constexpr char kGhostLinkEventMetatable[] = "sunrise.mission.event.ghost_link";
+inline constexpr char kFireteamStateEventMetatable[] = "sunrise.mission.event.fireteam_state";
 inline constexpr char kPlayerTriggerEventMetatable[] = "sunrise.mission.event.player_trigger";
 inline constexpr char kCinematicStartedEventMetatable[] = "sunrise.mission.event.cinematic_started";
 inline constexpr char kCinematicTerminatedEventMetatable[] =

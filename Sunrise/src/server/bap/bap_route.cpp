@@ -11,6 +11,7 @@
 
 #include "../../core/logging/log.h"
 #include "../../state/activity/runtime.h"
+#include "../../state/activity/membership/activity_membership_query.h"
 #include "../../state/build_data/runtime.h"
 #include "../../state/matchmaking/matchmaking_state.h"
 #include "../../state/runtime/runtime.h"
@@ -18,6 +19,7 @@
 #include "activity_authority_query_owner.h"
 #include "activity_authority_reset_owner.h"
 #include "activity_mission_seed_lease.h"
+#include "encrypted/push/activity/mission_seed_world_change.h"
 #include "core/threading/srw_lock.h"
 #include "encrypted/bap_connection_publication.h"
 #include "internal.h"
@@ -502,7 +504,16 @@ select_activity_mission_seed(const state::activity::SessionBinding& binding,
     }
     if (status == ActivityMissionSeedLeaseStatus::ready) {
         MissionSeedLease& lease = session->activityMissionSeed;
+        // Ordinary traversal can reach a plan's region before the script selects it, so an open
+        // arrival window closes here when the client already holds that region.
+        const auto placement = state::activity::membership::reported_placement(binding.sessionId);
+        const auto heldRegion = state::activity::membership::instantiated_region(placement);
+        const bool targetHeld = encrypted::push::activity::mission_seed_arrival_window_closed(
+            heldRegion, plan.effectiveRegion);
         if (lease.configured && same_mission_seed_plan(lease.plan, plan)) {
+            if (targetHeld) {
+                lease.regionArrivalPending = false;
+            }
             // The script may select the plan the roster adopted by default. That is a selection.
             lease.scriptSelected = true;
             return ActivityMissionSeedLeaseStatus::ready;
@@ -528,12 +539,16 @@ select_activity_mission_seed(const state::activity::SessionBinding& binding,
                 }
                 lease.registeredRegions[lease.registeredRegionCount++] = plan.effectiveRegion;
             }
-            // A region change replaces the instantiated world. Publications keep answering the
-            // previous plan until the client's post-arrival solicited answer advances the region
-            // epoch, because registering the new region's groups mid-teardown races the teardown.
-            if (lease.configured && lease.plan.effectiveRegion != plan.effectiveRegion) {
+            // A selection that replaces the world waits for the client's arrival there. One that
+            // does not must close any window an earlier selection left open, because an open
+            // window blocks publication and nothing else clears it.
+            if (lease.configured
+                && encrypted::push::activity::mission_seed_selection_needs_arrival(
+                    lease.plan.effectiveRegion, plan.effectiveRegion, heldRegion)) {
                 lease.previousPlan = lease.plan;
                 lease.regionArrivalPending = true;
+            } else {
+                lease.regionArrivalPending = false;
             }
             lease.plan = plan;
             lease.bindingGeneration = session->activity.bindingGeneration;

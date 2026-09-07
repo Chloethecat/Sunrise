@@ -91,7 +91,14 @@ void clear_pending_event(PendingMissionEvent& pending) noexcept {
     case host::EventKind::sessionLeft:
     case host::EventKind::playerTrigger:
     case host::EventKind::cinematicStarted:
+    case host::EventKind::cinematicSkipRequested:
     case host::EventKind::cinematicTerminated:
+    case host::EventKind::actorPathState:
+    case host::EventKind::damageState:
+    case host::EventKind::objectState:
+    case host::EventKind::fireteamState:
+    case host::EventKind::objectInteracted:
+    case host::EventKind::ghostLinkState:
         return false;
     default:
         return true;
@@ -124,11 +131,16 @@ void clear_pending_event(PendingMissionEvent& pending) noexcept {
            || event.kind == host::EventKind::sessionLeft
            || event.kind == host::EventKind::playerTrigger
            || event.kind == host::EventKind::cinematicStarted
+           || event.kind == host::EventKind::actorPathState
+           || event.kind == host::EventKind::damageState
+           || event.kind == host::EventKind::objectState
+           || event.kind == host::EventKind::fireteamState
+           || event.kind == host::EventKind::objectInteracted
+           || event.kind == host::EventKind::ghostLinkState
+           || event.kind == host::EventKind::cinematicSkipRequested
            || event.kind == host::EventKind::cinematicTerminated
            || delivery_lifecycle_event(event.kind)
-           || (event.kind == host::EventKind::senseUpdate
-               && event.senseDecodeStatus
-                      == middleware::bap::activity_message::sense_update::DecodeStatus::complete);
+           || event.has_sense_observations();
 }
 
 /** Faults the instance unless the ordered mission input arrives with no gap, starting at one. */
@@ -192,9 +204,7 @@ void clear_pending_event(PendingMissionEvent& pending) noexcept {
         return false;
     }
     clear_pending_event(*pending);
-    if (input.event.kind == host::EventKind::senseUpdate
-        && input.event.senseDecodeStatus
-               == middleware::bap::activity_message::sense_update::DecodeStatus::complete) {
+    if (input.event.has_sense_observations()) {
         pending->senseAvailable =
             host::mission_input_sense_snapshot(input.sequence, pending->sense);
     }
@@ -603,15 +613,29 @@ lua_vm::CallStatus dispatch_event(RuntimeInstance& instance,
         }
     }
     const lua_vm::CallStatus status = lua_vm::dispatch(instance.vm, event, clientMessage, now);
-    if (event.kind == host::EventKind::clientStateChanged && event.clientStateHasRegion) {
-        instance.activeRegion = event.regionIndex;
+    if (event.kind == host::EventKind::clientStateChanged) {
+        // A pending-region report can name the next slice while the player still holds the old
+        // one, so the held region wins.
+        if (event.heldRegionIndex >= 0) {
+            instance.activeRegion = event.heldRegionIndex;
+        } else if (event.currentRegionIndex >= 0) {
+            instance.activeRegion = event.currentRegionIndex;
+        }
     }
     if (firstAttempt && event.kind == host::EventKind::incidentReceived) {
         push_player_trigger(instance, event);
         push_cinematic(instance, event);
     }
     if (event.kind == host::EventKind::senseUpdate && sense != nullptr) {
+        if (firstAttempt) {
+            observe_player_life(instance, *sense);
+            publish_fireteam_life(now);
+        }
         push_trigger_edges(instance, *sense);
+        push_ghost_edges(instance, *sense);
+        push_object_interaction_edges(instance, *sense);
+        push_damage_edges(instance, *sense);
+        push_actor_path_edges(instance, *sense);
         push_squad_edges(instance, *sense);
         push_scene_edges(instance, *sense);
         push_objective_edges(instance, *sense);

@@ -1,7 +1,15 @@
 #include <algorithm>
 #include <limits>
 
+#include "../../middleware/bap/activity_message/damage_monitor_auth.h"
+#include "../../middleware/bap/activity_message/darkness_zone_auth.h"
+#include "../../middleware/bap/activity_message/ghost_link_auth.h"
+#include "../../middleware/bap/activity_message/interactable_object_auth.h"
+#include "../../middleware/bap/activity_message/mission_effect_auth.h"
+#include "../../middleware/bap/activity_message/music_section_auth.h"
+#include "../../middleware/bap/activity_message/scene_events_auth.h"
 #include "../../middleware/bap/activity_message/sensor_auth_update.h"
+#include "../../middleware/bap/activity_message/squad_objective_auth.h"
 #include "../../middleware/content/packages/tables/region_reader.h"
 #include "../../state/activity/runtime.h"
 #include "activity_sdk_device_internal.h"
@@ -437,6 +445,38 @@ prepare_slot(const sdk::BoundView& view, std::uint32_t slotRow, PreparedDevice& 
     // An occupancy Auth body is exactly 87 bits, which the wire pads to 11 bytes.
     constexpr std::size_t kOccupancyAuthBits = 87;
     constexpr std::size_t kOccupancyAuthBytes = 11;
+    // Bodies this tree encodes are admitted by slot identity. Their shape belongs to the encoder.
+    namespace message = middleware::bap::activity_message;
+    const auto typed = [&](std::uint32_t type, std::uint32_t componentClass, std::uint32_t schema) {
+        return slotType == type && slot.componentClass == componentClass && authSchema == schema;
+    };
+    const bool typedSdkBody =
+        typed(auth::kType34SlotType, auth::kType34ComponentClass, auth::kType34Schema)
+        || typed(message::mission_effect::kSlotType,
+                 message::mission_effect::kComponentClass,
+                 message::mission_effect::kSchema)
+        || typed(message::music_section::kSlotType,
+                 message::music_section::kComponentClass,
+                 message::music_section::kSchema)
+        || typed(message::scene_events::kSlotType,
+                 message::scene_events::kComponentClass,
+                 message::scene_events::kSchema)
+        || typed(message::damage_monitor::kSlotType,
+                 message::damage_monitor::kComponentClass,
+                 message::damage_monitor::kAuthSchema)
+        || typed(message::darkness_zone::kSlotType,
+                 message::darkness_zone::kComponentClass,
+                 message::darkness_zone::kSchema)
+        || typed(format::kObjectSlotType,
+                 format::kObjectComponentClass,
+                 message::interactable_object::kSchema)
+        || typed(message::ghost_link::kSlotType,
+                 message::ghost_link::kComponentClass,
+                 message::ghost_link::kAuthSchema)
+        || typed(format::kSquadSlotType,
+                 format::kSquadComponentClass,
+                 message::squad_objective::kSchema)
+        || typed(auth::kType2SlotType, auth::kType2ComponentClass, auth::kType2Schema);
     const bool occupancy = slotType == format::kOccupancySlotType
                            && authSchema == format::kOccupancyAuthSchema
                            && bitCount == kOccupancyAuthBits && body.size() == kOccupancyAuthBytes;
@@ -460,7 +500,8 @@ prepare_slot(const sdk::BoundView& view, std::uint32_t slotRow, PreparedDevice& 
         slotType == middleware::bap::activity_message::scriptable_auth::kType2SlotType
         && authSchema == middleware::bap::activity_message::scriptable_auth::kType2Schema
         && middleware::bap::activity_message::scriptable_auth::validate_type2_body(body, bitCount);
-    if (!occupancy && !directive && !engagement && !publicEvent && !performance && !combatant) {
+    if (!typedSdkBody && !occupancy && !directive && !engagement && !publicEvent && !performance
+        && !combatant) {
         return Status::invalidBody;
     }
     return Status::ready;

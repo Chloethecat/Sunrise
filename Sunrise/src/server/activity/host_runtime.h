@@ -42,6 +42,8 @@ inline constexpr std::size_t kSenseObservationCapacity = 128;
 inline constexpr std::size_t kSenseObservationValueCapacity = 1024;
 /** Per-slot counts the squad Sense body can carry. Its nested array is eight elements. */
 inline constexpr std::size_t kSquadSlotCapacity = 8;
+/** Objective task groups a squad publishes one cost for. */
+inline constexpr std::size_t kSquadObjectiveGroupCount = 24;
 /** Distinct exact ClientRef counters retained for one activity generation. */
 inline constexpr std::size_t kScriptableGuardCapacity =
     state::build_data::scenarios::kRosterSlotCapacity;
@@ -120,11 +122,25 @@ enum class EventKind : std::uint8_t {
     cinematicStarted = 29,
     /** One schema-0x808087BF msg-19 reports Type-6 start failure or runtime termination. */
     cinematicTerminated = 30,
+    /** Accepted native Ghost interaction progress for one exact type-65 slot. */
+    ghostLinkState = 31,
+    /** A named actor's movement or delivery level changed. */
+    actorPathState = 32,
+    /** The client accepted a player's use of one interactable object. */
+    objectInteracted = 33,
+    /** Native cinematic_skip incident for an exact Type-6 source. */
+    cinematicSkipRequested = 34,
+    /** Life counts of the private activity's joined party changed. */
+    fireteamState = 35,
+    /** An interactable object's presence, alive or ownership level changed. */
+    objectState = 36,
+    /** A damage monitor published new health, shield or revision values. */
+    damageState = 37,
 };
 
 /** Kinds are numbered without gaps, so the last one plus one is the count. */
 inline constexpr std::size_t kEventKindCount =
-    static_cast<std::size_t>(EventKind::cinematicTerminated) + 1U;
+    static_cast<std::size_t>(EventKind::damageState) + 1U;
 
 /**
  * Terminal delivery outcome of one script-requested effect.
@@ -443,6 +459,10 @@ struct Event final {
     std::uint64_t peerSessionGeneration{};
     /** Peer client key bound by its join, or zero before one. */
     std::uint64_t peerMemberKey{};
+    /** Party life counts, for fireteamState events. */
+    std::uint16_t fireteamAlive{};
+    std::uint16_t fireteamDead{};
+    std::uint16_t fireteamUnknown{};
     /** Committed mission phase, for phaseEntered events. */
     std::uint32_t missionPhase{};
     /** Mission phase this commit replaced. */
@@ -457,6 +477,33 @@ struct Event final {
     std::int32_t triggerValue{};
     /** True when the whole watched set is inside the volume. */
     bool triggerAll{};
+    /** Health and shield fractions, for damageState events. Negative until published. */
+    float damageHealth{-1.0F};
+    float damageShield{-1.0F};
+    std::int32_t damageRevision{};
+    /** Object level, for objectState and objectInteracted events. */
+    std::int32_t objectGeneration{};
+    bool objectPresent{};
+    bool objectAlive{};
+    bool objectOwnerKnown{};
+    bool objectHasOwner{};
+    std::uint64_t objectOwnerKey{};
+    /** Ghost-link level, for ghostLinkState events. */
+    std::int32_t ghostGeneration{};
+    float ghostProgress{};
+    bool ghostActive{};
+    /** Named actor level, for actorPathState events. */
+    std::int32_t actorGeneration{};
+    std::int32_t actorPathRevision{};
+    std::int32_t actorPathState{};
+    std::int32_t actorDeliveryRevision{};
+    std::int32_t actorDeliveryState{};
+    bool actorDeliveryKnown{};
+    bool actorDead{};
+    /** Objective costs the squad published, one per task group, with a bit per known cost. */
+    std::array<float, kSquadObjectiveGroupCount> squadObjectiveCosts{};
+    std::uint32_t squadObjectiveCostMask{};
+    std::uint32_t squadObjectiveRevision{};
     /** Per-slot member counts the client published, for squadState events. */
     std::array<std::int32_t, kSquadSlotCapacity> squadSlotCounts{};
     /** Alive members the client published. Six bits on the wire, so 0 through 63. */
@@ -561,6 +608,8 @@ struct Event final {
     middleware::bap::activity_message::sense_update::DecodeStatus senseDecodeStatus{
         middleware::bap::activity_message::sense_update::DecodeStatus::malformed};
     state::activity::receipts::Verdict verdict{state::activity::receipts::Verdict::absent};
+    /** The packet's observations were retained, so a Lua snapshot may be built from them. */
+    bool senseSnapshotRetained{};
     bool hasFirstObject{};
     bool clientStateHasRegion{};
     bool clientStateHasCurrentRegion{};
@@ -568,6 +617,13 @@ struct Event final {
     bool clientStateHasTeleport{};
     bool hasPlayerTrigger{};
     bool hasCinematic{};
+
+    /** @return True when this Sense event carries observations a script may read. */
+    [[nodiscard]] bool has_sense_observations() const noexcept {
+        using Status = middleware::bap::activity_message::sense_update::DecodeStatus;
+        return kind == EventKind::senseUpdate && senseSnapshotRetained
+               && (senseDecodeStatus == Status::complete || senseDecodeStatus == Status::partial);
+    }
 };
 
 /** Position after one event in one reset generation. */

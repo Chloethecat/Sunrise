@@ -69,6 +69,50 @@ struct SpawnState final {
     std::uint64_t opaqueValue{};
 };
 
+/** Host spawn state that starts the client's hard-wipe machine. */
+inline constexpr std::int8_t kHardWipeStartState = 1;
+/** Spawn state both sides reach when the wipe may release: the client waits, the host answers. */
+inline constexpr std::int8_t kHardWipeReleaseState = 4;
+/** Client spawn state that reports the wipe finished. */
+inline constexpr std::int8_t kHardWipeDoneState = 0;
+
+/**
+ * One armed hard wipe. The host publishes its spawn block in place of the client's while the
+ * wipe is active; the client's own block reports where its machine is.
+ */
+struct HardWipeState final {
+    SpawnState host{};
+    std::uint64_t requestKey{};
+    std::uint32_t spawnSetHash{};
+    std::int32_t region{-1};
+    bool active{};
+    /** The script released the wipe; the host answers the client's wait as soon as it sees it. */
+    bool resetReady{};
+    bool clientWaiting{};
+
+    void release() noexcept {
+        resetReady = true;
+        if (active && clientWaiting) {
+            host.state = kHardWipeReleaseState;
+        }
+    }
+
+    /** Advances on the client's spawn block. Only a block with the wipe's own token counts. */
+    void observe(const SpawnState& client) noexcept {
+        if (!active || client.opaqueByte != host.opaqueByte) {
+            return;
+        }
+        if (client.state == kHardWipeReleaseState) {
+            clientWaiting = true;
+            if (resetReady) {
+                host.state = kHardWipeReleaseState;
+            }
+        } else if (host.state == kHardWipeReleaseState && client.state == kHardWipeDoneState) {
+            active = false;
+        }
+    }
+};
+
 /** Teleport state kept for the current activity host, in no wire form. */
 struct TeleportState final {
     std::int8_t state{};
@@ -139,6 +183,7 @@ struct MembershipState final {
      */
     TeleportState hostTeleport{};
     bool hasHostTeleport{};
+    HardWipeState hardWipe{};
     /** Region of the slice set the client holds; -1 while it holds none. */
     RegionState currentRegion{};
     /** Pending region leg as last reported; -1 once a transition has completed. */
