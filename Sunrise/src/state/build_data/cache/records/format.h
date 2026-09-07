@@ -34,7 +34,6 @@ inline constexpr std::array<char, 8> kCacheMagic{'S', 'U', 'N', 'R', 'I', 'S', '
  * Current build-data cache format. Any other version on disk is rebuilt rather than read.
  * Bump it when a stored shape changes or when the extraction filling it changes what it writes,
  * because a cached row survives a code change and a corrected walk keeps publishing old rows.
- * 63 added the catalyst completion flags' account bank indices to the catalyst record.
  */
 inline constexpr std::uint32_t kCacheFormatVersion = 63;
 /** Signed -1 on disk means there is no equipment slot. */

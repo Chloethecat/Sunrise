@@ -573,7 +573,7 @@ void initialize(void* module, const Policy& policy) noexcept {
     AcquireSRWLockExclusive(&g_lock);
     g_configured = resolved && !sdkDirectory.empty() && !scenarioDirectory.empty()
                    && !catalogPath.empty() && !packPath.empty();
-    g_enabled = policy.enabled && g_configured;
+    g_enabled = g_configured;
     g_luaDeclarations = policy.luaDeclarations;
     g_started = false;
     g_packageReadyAfter = 0;

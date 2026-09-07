@@ -153,6 +153,9 @@ upsert_value(Family5State& family, std::uint16_t slot, std::int32_t value) noexc
 /**
  * Removes the family-5 flag rows that name artifact sale slots.
  * The character bank carries ownership, and a family-5 copy would mask it and cost 25 rows.
+ * @param family Global override object, mutated in place.
+ * @param rows Artifact sale rows.
+ * @param count Rows in use.
  */
 void strip_artifact_flags_locked(Family5State& family,
                                  const SaleRows& rows,

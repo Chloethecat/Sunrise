@@ -23,7 +23,6 @@
 #include "../hooks/retail_log/retail_log_lifecycle.h"
 #include "../hooks/teleport/runtime.h"
 #include "../hooks/world_objects/world_object_registry.h"
-#include "../inactivity/inactivity_settings_store.h"
 #include "../movement/movement_settings_store.h"
 #include "../player/player_settings_store.h"
 #include "../targets/game.h"
@@ -37,14 +36,11 @@ namespace sunrise::client {
 
 /** Initializes Client-owned process state without installing hooks. */
 bool initialize(void* module) noexcept {
-    const core::settings::ActivitySdkGenerationSettings& generation =
-        core::settings::get().activitySdkGeneration;
-    content::activity::sdk_generation::initialize(module,
-                                                  {generation.enabled, generation.luaDeclarations});
+    content::activity::sdk_generation::initialize(
+        module, {core::settings::get().activitySdkGeneration.luaDeclarations});
     // Loaded before the pages register, so each page draws saved values on its first frame.
     movement::initialize(module);
     player::initialize(module);
-    inactivity::initialize(module);
     ui::activity::authored_placement_marker::initialize(module);
     return ui::runtime::initialize();
 }
@@ -146,7 +142,6 @@ bool shutdown() noexcept {
     ui::runtime::shutdown();
     // The reverse of the order the stores initialize in.
     ui::activity::authored_placement_marker::shutdown();
-    inactivity::shutdown();
     player::shutdown();
     movement::shutdown();
     core::log::write(core::log::Channel::client, core::log::Level::info, "ev=shutdown result=ok");

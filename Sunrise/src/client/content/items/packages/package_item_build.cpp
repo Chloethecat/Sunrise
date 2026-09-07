@@ -113,6 +113,17 @@ bool build() noexcept {
             }
             // The same root names the bucket and socket-list tables.
             storage.root = storage.child;
+            // Records, nodes, season pass rewards and catalysts all resolve slots through the
+            // two unlock mapping tables, so they are read once here.
+            if (!state::build_data::record_definitions_ready()
+                || !state::build_data::node_definitions_ready()
+                || !state::build_data::season_pass_ready() || !exotic_catalysts_settled()) {
+                reason = "unlock_maps";
+                if (!read_unlock_slot_maps(
+                        source, storage, std::span<const std::byte>{storage.root})) {
+                    continue;
+                }
+            }
             if (!state::build_data::socket_plug_rules_ready()) {
                 std::uint32_t plugSetTag = 0;
                 tables::Array plugSets{};

@@ -25,61 +25,12 @@ void report(const char* stage, unsigned long long detail) noexcept {
     }
 }
 
-/** A record with no completion flag carries a non-positive slot, which addresses nothing. */
-[[nodiscard]] constexpr bool addressable_slot(std::int16_t slot) noexcept {
-    return slot > 0;
-}
-
-/** A slot is a signed 16-bit value, so the widest addressable slot space is this. */
-constexpr std::size_t kSlotSpace = 32768;
-
 /** A record score is held as 16 bits. */
 constexpr std::uint32_t kScoreCeiling = 0xFFFFU;
 
-/** Unlock slot to bank mapping row, indexed by slot. The first mapping row of a slot wins. */
-using SlotMap = std::vector<std::uint16_t>;
-
-/**
- * Builds one slot-to-bank-index map from an unlock mapping table.
- * @param blob Blob holding the mapping table.
- * @param descriptor Array descriptor of the mapping table inside that blob.
- * @param output Receives one bank index per addressable slot, or the unavailable index.
- * @return True when the table resolves and every row fits the blob.
- */
-[[nodiscard]] bool
-build_slot_map(std::span<const std::byte> blob, std::size_t descriptor, SlotMap& output) noexcept {
-    output.clear();
-    tables::Array rows{};
-    if (!tables::find_array_at(blob, descriptor, rows) || rows.count == 0
-        || rows.dataOffset + static_cast<std::size_t>(rows.count) * tables::kUnlockMapRowStride
-               > blob.size()) {
-        return false;
-    }
-    output.assign(kSlotSpace, domain::kUnavailableValueIndex);
-    for (std::uint64_t row = 0; row < rows.count && row <= domain::kUnavailableValueIndex; ++row) {
-        std::int16_t slot = 0;
-        std::memcpy(&slot,
-                    blob.data() + rows.dataOffset
-                        + static_cast<std::size_t>(row) * tables::kUnlockMapRowStride
-                        + tables::kUnlockMapDestinationSlotOffset,
-                    sizeof slot);
-        if (!addressable_slot(slot)) {
-            continue;
-        }
-        std::uint16_t& existing = output[static_cast<std::size_t>(slot)];
-        if (existing == domain::kUnavailableValueIndex) {
-            existing = static_cast<std::uint16_t>(row);
-        }
-    }
-    return true;
-}
-
-/** @param map Slot map. @param slot Raw unlock slot. @return Bank index, or the unavailable one. */
-[[nodiscard]] std::uint16_t bank_index(const SlotMap& map, std::int32_t slot) noexcept {
-    if (map.empty() || slot <= 0 || static_cast<std::size_t>(slot) >= kSlotSpace) {
-        return domain::kUnavailableValueIndex;
-    }
-    return map[static_cast<std::size_t>(slot)];
+/** @return Bank index of a positive slot. A record with no flag carries a non-positive slot. */
+[[nodiscard]] std::uint16_t record_bank_index(const SlotMap& map, std::int32_t slot) noexcept {
+    return slot > 0 ? bank_index(map, slot) : domain::kUnavailableValueIndex;
 }
 
 /** One located inline array of a definition row. */
@@ -169,32 +120,10 @@ bool build_records(const reader::Source& source,
     storage.recordIntervalCount = 0;
     storage.recordRewardCount = 0;
 
-    // The account flag mapping table, read first because the record rows are matched against it.
-    std::uint32_t mapTag = 0;
-    SlotMap flagIndexBySlot{};
-    if (!tables::slot_tag(root, tables::kUnlockFlagMapTableSlot, mapTag) || mapTag == 0
-        || tables::package_of(mapTag) == tables::kAbsentPackageId
-        || !reader::read_tag(source, storage.scratch, mapTag, storage.child)
-        || !build_slot_map(std::span<const std::byte>{storage.child},
-                           tables::kAccountFlagMapDescriptor,
-                           flagIndexBySlot)) {
-        report("flag_map_fail", mapTag);
-        return false;
-    }
-
-    // The account value mapping table. A record names value slots for its category, its
-    // redeemed-interval count and each objective's progress source; all become bank indices here.
-    std::uint32_t valueMapTag = 0;
-    SlotMap valueIndexBySlot{};
-    if (!tables::slot_tag(root, tables::kUnlockValueMapTableSlot, valueMapTag) || valueMapTag == 0
-        || tables::package_of(valueMapTag) == tables::kAbsentPackageId
-        || !reader::read_tag(source, storage.scratch, valueMapTag, storage.child)
-        || !build_slot_map(std::span<const std::byte>{storage.child},
-                           tables::kAccountValueMapDescriptor,
-                           valueIndexBySlot)) {
-        report("value_map_fail", valueMapTag);
-        return false;
-    }
+    // A record names its completion flag, its category and redeemed-count values and each
+    // objective's progress source by slot; the pass slot maps turn them into bank indices.
+    const SlotMap& flagIndexBySlot = storage.slotMaps.accountFlag;
+    const SlotMap& valueIndexBySlot = storage.slotMaps.accountValue;
 
     // The objective table carries every threshold and progress source a record names.
     std::uint32_t objectiveTag = 0;
@@ -283,17 +212,17 @@ bool build_records(const reader::Source& source,
         std::int16_t flagSlot = 0;
         std::memcpy(
             &flagSlot, table.data() + at + tables::kRecordCompletionFlagOffset, sizeof flagSlot);
-        definition.completionFlagIndex = bank_index(flagIndexBySlot, flagSlot);
+        definition.completionFlagIndex = record_bank_index(flagIndexBySlot, flagSlot);
         std::int16_t categorySlot = 0;
         if (tables::expression_value_slot(
                 table, at, tables::kRecordCategoryExpressionField, categorySlot)) {
-            definition.categoryValueIndex = bank_index(valueIndexBySlot, categorySlot);
+            definition.categoryValueIndex = record_bank_index(valueIndexBySlot, categorySlot);
         }
         std::uint16_t redeemedSlot = 0;
         std::memcpy(&redeemedSlot,
                     table.data() + at + tables::kRecordRedeemedCountSlotOffset,
                     sizeof redeemedSlot);
-        definition.redeemedCountValueIndex = bank_index(valueIndexBySlot, redeemedSlot);
+        definition.redeemedCountValueIndex = record_bank_index(valueIndexBySlot, redeemedSlot);
 
         RowArray objectives{};
         RowArray intervals{};
@@ -342,7 +271,8 @@ bool build_records(const reader::Source& source,
             objective.valueIndex = static_cast<std::uint16_t>(valueIndex + entry);
             objective.sourceValueSlot =
                 objective_source_slot(objectiveTable, objectiveRows, objectiveRow);
-            objective.sourceValueIndex = bank_index(valueIndexBySlot, objective.sourceValueSlot);
+            objective.sourceValueIndex =
+                record_bank_index(valueIndexBySlot, objective.sourceValueSlot);
             ++storage.recordObjectiveCount;
         }
 

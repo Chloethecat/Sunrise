@@ -111,7 +111,7 @@ bool Parser::core(Settings& output) noexcept {
     }
 }
 
-/** Parses the Core-owned activity SDK generation gate. Omitted members keep their defaults. */
+/** Parses the activity SDK generation block. Omitted or unknown members keep the defaults. */
 bool Parser::activity_sdk_generation_settings(ActivitySdkGenerationSettings& output) noexcept {
     if (!consume('{')) {
         return false;
@@ -121,19 +121,13 @@ bool Parser::activity_sdk_generation_settings(ActivitySdkGenerationSettings& out
         output = candidate;
         return true;
     }
-    bool hasEnabled = false;
     bool hasLuaDeclarations = false;
     for (;;) {
         std::string_view key;
         if (!string(key) || !consume(':')) {
             return false;
         }
-        if (key == "enabled") {
-            if (hasEnabled || !boolean(candidate.enabled)) {
-                return false;
-            }
-            hasEnabled = true;
-        } else if (key == "lua_declarations") {
+        if (key == "lua_declarations") {
             if (hasLuaDeclarations || !boolean(candidate.luaDeclarations)) {
                 return false;
             }

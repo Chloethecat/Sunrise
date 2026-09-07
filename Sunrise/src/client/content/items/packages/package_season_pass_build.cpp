@@ -24,45 +24,6 @@ read(std::span<const std::byte> blob, std::size_t offset, Value& value) noexcept
 }
 
 /**
- * Resolves each reward's claim flag slot to its account flag bank row.
- * The map is walked once: a per-slot table would cost more storage than the pass has rewards.
- * @param blob Blob holding the account flag mapping table.
- * @param rewards Reward rows whose claim slots are already read.
- * @param count Rows in use.
- * @param claimSlots Raw claim slot of each reward row, in the same order.
- * @return True when the mapping table resolves.
- */
-[[nodiscard]] bool resolve_claim_flags(std::span<const std::byte> blob,
-                                       std::span<domain::Reward> rewards,
-                                       std::size_t count,
-                                       std::span<std::uint16_t> claimSlots) noexcept {
-    tables::Array rows{};
-    if (!tables::find_array_at(blob, tables::kAccountFlagMapDescriptor, rows) || rows.count == 0
-        || rows.count > (std::numeric_limits<std::uint16_t>::max)()
-        || rows.dataOffset + static_cast<std::size_t>(rows.count) * tables::kUnlockMapRowStride
-               > blob.size()) {
-        return false;
-    }
-    for (std::uint64_t row = 0; row < rows.count; ++row) {
-        std::int16_t slot = 0;
-        if (!read(blob,
-                  rows.dataOffset + static_cast<std::size_t>(row) * tables::kUnlockMapRowStride
-                      + tables::kUnlockMapDestinationSlotOffset,
-                  slot)
-            || slot <= 0) {
-            continue;
-        }
-        for (std::size_t reward = 0; reward < count; ++reward) {
-            if (claimSlots[reward] == static_cast<std::uint16_t>(slot)
-                && rewards[reward].claimFlagIndex == domain::kUnavailableFlagIndex) {
-                rewards[reward].claimFlagIndex = static_cast<std::uint16_t>(row);
-            }
-        }
-    }
-    return true;
-}
-
-/**
  * Reads the item set one reward's wrapper item opens into.
  * @param definition Whole item definition blob.
  * @param itemTable Item index table blob.
@@ -177,8 +138,11 @@ bool build_season_pass(const reader::Source& source,
         reward.itemHash = entry.definitionHash;
         reward.itemIndex = static_cast<std::uint16_t>(itemIndex);
         reward.requiredRank = static_cast<std::uint8_t>(rank);
-        storage.seasonPassClaimSlots[storage.seasonPassRewardCount] =
-            static_cast<std::uint16_t>(claimSlot);
+        // A reward with no claim flag carries slot 0.
+        if (claimSlot != 0) {
+            reward.claimFlagIndex =
+                bank_index(storage.slotMaps.accountFlag, static_cast<std::int32_t>(claimSlot));
+        }
 
         // A wrapper reward opens into a set; a plain reward declares none and keeps zero items.
         // One wrapper can be granted at several ranks, so it is recorded once.
@@ -200,18 +164,6 @@ bool build_season_pass(const reader::Source& source,
             storage.seasonPassPackages[storage.seasonPassPackageCount++] = package;
         }
         ++storage.seasonPassRewardCount;
-    }
-
-    std::uint32_t mapTag = 0;
-    if (!tables::slot_tag(root, tables::kUnlockFlagMapTableSlot, mapTag) || mapTag == 0
-        || !reader::read_tag(source, storage.scratch, mapTag, storage.child)
-        || !resolve_claim_flags(std::span<const std::byte>{storage.child},
-                                storage.seasonPassRewards,
-                                storage.seasonPassRewardCount,
-                                storage.seasonPassClaimSlots)) {
-        storage.seasonPassRewardCount = 0;
-        storage.seasonPassPackageCount = 0;
-        return false;
     }
     return storage.seasonPassRewardCount != 0;
 }

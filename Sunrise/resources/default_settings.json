@@ -13,7 +13,6 @@
       }
     },
     "activity_sdk_generation": {
-      "enabled": true,
       "lua_declarations": true
     }
   },

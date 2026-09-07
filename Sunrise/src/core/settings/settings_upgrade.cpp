@@ -45,8 +45,9 @@ constexpr std::array<ReplacedMember, 10> kReplacedMembers{{
     // Version 15 seeded the lore book unlock slots, so both banks take the new default.
     {"\"character_flags\"", 15},
     {"\"objective_values\"", 15},
-    // Version 16 turned generation on. The whole block is replaced, because "enabled" is not
-    // unique in the document. The block also carries the lua_declarations default of version 13.
+    // Version 16 dropped the generation switch. The whole block is replaced, because "enabled" is
+    // not unique in the document. The block also carries the lua_declarations default of
+    // version 13.
     {"\"activity_sdk_generation\"", 16},
 }};
 

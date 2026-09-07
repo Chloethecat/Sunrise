@@ -70,10 +70,9 @@ void set_completion_enabled(bool enabled) noexcept;
                                           std::span<std::optional<std::uint16_t>> plugs) noexcept;
 
 /**
- * Adds acquired-state gates, completion flags without an account mapping, and completion values
- * for released catalysts. Existing authored rows with the same slot are raised to the required
- * value, mapped or not. The input stays unchanged when either fixed override bank cannot hold
- * the complete deduplicated result.
+ * Adds the acquisition gates, unmapped completion flags and completion values of released
+ * catalysts. An authored row for any of these slots, mapped or not, is raised to the required
+ * value. The input stays unchanged when either fixed override bank cannot hold the result.
  * @param family Candidate Family-5 state.
  * @return True when completion is disabled or every released override fits atomically.
  */

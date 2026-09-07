@@ -173,7 +173,7 @@ struct RefreshReport final {
 client_placement(const Session& session, const RefreshReport* refresh) noexcept;
 
 /**
- * Tests whether the client has reported arrival in its instantiated region: its WS-702 world
+ * Tests whether the client has reported arrival in its instantiated region: its ws-702 world
  * state reached 8 while it holds the region it reported and no host move is waiting. This is
  * the report that releases the native spawn gate.
  * @param session Connection whose activity session the client reports on.

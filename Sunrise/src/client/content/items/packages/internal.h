@@ -56,9 +56,33 @@ struct DetailSource {
 /** The container name is not always unique, so every match is a candidate. */
 inline constexpr std::size_t kContainerCandidates = 16;
 
+/** A slot is a signed 16-bit value, so the widest addressable slot space is this. */
+inline constexpr std::size_t kSlotSpace = 32768;
+
+/** Value of an unmapped slot. Every bank domain uses 0xFFFF as its unavailable index. */
+inline constexpr std::uint16_t kUnmappedSlot = 0xFFFFU;
+static_assert(kUnmappedSlot == state::build_data::nodes::kUnavailableValueIndex);
+static_assert(kUnmappedSlot == state::build_data::records::kUnavailableValueIndex);
+static_assert(kUnmappedSlot == state::build_data::season_pass::kUnavailableFlagIndex);
+static_assert(kUnmappedSlot
+              == state::build_data::items::catalysts::kUnavailableCompletionFlagIndex);
+
+/** Bank index per unlock slot, indexed by slot. The first mapping row of a slot wins. */
+using SlotMap = std::array<std::uint16_t, kSlotSpace>;
+
+/** The four maps one root's two unlock mapping tables carry. 256 KiB together. */
+struct SlotMaps {
+    SlotMap accountFlag{};
+    SlotMap characterFlag{};
+    SlotMap accountValue{};
+    SlotMap characterValue{};
+};
+
 /** Lock-owned storage kept off the caller stack, shared by every stage of the pass. */
 struct Storage {
     reader::Scratch scratch{};
+    /** Read once per root. Every domain resolves its unlock slots through these. */
+    SlotMaps slotMaps{};
     /** Node rows held until the value slot and owned records are resolved. */
     std::array<state::build_data::nodes::Definition, state::build_data::nodes::kDefinitionCapacity>
         nodeRows{};
@@ -128,12 +152,10 @@ struct Storage {
                state::build_data::progressions::kStepCapacity>
         progressionSteps{};
     std::size_t progressionStepCount{};
-    /** Season pass reward rows, their raw claim slots, and the wrapper items they grant. */
+    /** Season pass reward rows and the wrapper items they grant. */
     std::array<state::build_data::season_pass::Reward,
                state::build_data::season_pass::kRewardCapacity>
         seasonPassRewards{};
-    std::array<std::uint16_t, state::build_data::season_pass::kRewardCapacity>
-        seasonPassClaimSlots{};
     std::array<state::build_data::season_pass::Package,
                state::build_data::season_pass::kPackageCapacity>
         seasonPassPackages{};
@@ -296,6 +318,20 @@ read_investment_constants(const reader::Source& source,
     std::vector<std::byte>& blob,
     std::array<std::uint8_t, state::build_data::socket_entry_lists::kEntryCapacity>&
         output) noexcept;
+
+/**
+ * Reads one root's two unlock mapping tables into the pass slot maps.
+ * @param source Package source.
+ * @param storage Pass storage receiving the four maps.
+ * @param root Investment root bytes.
+ * @return True when both account maps read. A character map may stay unmapped.
+ */
+[[nodiscard]] bool read_unlock_slot_maps(const reader::Source& source,
+                                         Storage& storage,
+                                         std::span<const std::byte> root) noexcept;
+
+/** @param map Slot map. @param slot Raw unlock slot. @return Bank index, or the unmapped one. */
+[[nodiscard]] std::uint16_t bank_index(const SlotMap& map, std::int32_t slot) noexcept;
 
 /**
  * Reads nodes and resolves their value slots, owned records and lore parent bars.

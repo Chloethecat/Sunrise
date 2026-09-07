@@ -31,15 +31,13 @@ constexpr std::uint16_t kFirstPacketSequence = 1;
 
 /**
  * Fills the address blob that names this host on the direct path.
- * @param receivingPort Host pool port the request arrived on. Zero names the primary port, as it
- * does on the transport's send path.
+ * @param receivingPort Host pool port the request arrived on.
  * @param output Receives the direct-path address blob.
  */
 void local_address(std::uint16_t receivingPort,
                    std::array<std::byte, wire::kAddressBlobSize>& output) noexcept {
-    const gp::Endpoint advertised = endpoint::advertised();
     middleware::gameplay::descriptor::write_direct_net_addr(
-        advertised.address, receivingPort != 0 ? receivingPort : advertised.port, output);
+        endpoint::advertised().address, receivingPort, output);
 }
 
 /** @return A random 32-bit sequence, or zero when Windows refused. */

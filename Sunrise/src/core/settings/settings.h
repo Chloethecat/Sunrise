@@ -13,11 +13,9 @@
 
 namespace sunrise::core::settings {
 
-/** Boot policy for generating the activity SDK required by host roster construction. */
+/** Activity SDK generator policy. Generation has no switch, because the host needs the SDK. */
 struct ActivitySdkGenerationSettings final {
-    /** On by default like the bundled file, so a file without this block still generates. */
-    bool enabled{true};
-    /** Writes the sdk/lua declaration tree. On by default, and only runs when generation does. */
+    /** Writes the sdk/lua declaration tree. */
     bool luaDeclarations{true};
 };
 

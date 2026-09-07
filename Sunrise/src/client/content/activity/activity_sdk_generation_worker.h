@@ -64,7 +64,6 @@ struct OfflineBuildResult final {
 
 /** Immutable boot policy for the live generator. Its pack backs host roster mission seeds. */
 struct Policy final {
-    bool enabled{};
     /** Writes the sdk/lua declaration tree, which no runtime loads. */
     bool luaDeclarations{};
 };

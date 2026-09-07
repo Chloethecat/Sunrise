@@ -25,26 +25,9 @@ void report(const char* stage, unsigned long long detail) noexcept {
     }
 }
 
-/** A slot is a signed 16-bit value, so the widest addressable slot space is this. */
-constexpr std::size_t kSlotSpace = 32768;
-
-/** Unlock slot to bank mapping row, indexed by slot. The first mapping row of a slot wins. */
-using SlotMap = std::array<std::uint16_t, kSlotSpace>;
-
-/** The four maps one node pass reads. 256 KiB together, so they never sit on the caller stack. */
-struct SlotMaps {
-    SlotMap accountFlag{};
-    SlotMap characterFlag{};
-    SlotMap accountValue{};
-    SlotMap characterValue{};
-};
-
-/** Held here because the pass owns the build-data lock and runs once per process. */
-SlotMaps g_slotMaps{};
-
-/** Clears one map so every slot reads as unavailable. */
+/** Clears one map so every slot reads as unmapped. */
 void clear_slot_map(SlotMap& output) noexcept {
-    output.fill(domain::kUnavailableValueIndex);
+    output.fill(kUnmappedSlot);
 }
 
 /** Clears all four so an unread table cannot leave a prior pass's indexes addressable. */
@@ -71,7 +54,7 @@ read_slot_map(std::span<const std::byte> blob, std::size_t descriptor, SlotMap& 
                > blob.size()) {
         return false;
     }
-    for (std::uint64_t row = 0; row < rows.count && row <= domain::kUnavailableValueIndex; ++row) {
+    for (std::uint64_t row = 0; row < rows.count && row < kUnmappedSlot; ++row) {
         std::int16_t slot = 0;
         std::memcpy(&slot,
                     blob.data() + rows.dataOffset
@@ -83,19 +66,11 @@ read_slot_map(std::span<const std::byte> blob, std::size_t descriptor, SlotMap& 
             continue;
         }
         std::uint16_t& existing = output[static_cast<std::size_t>(slot)];
-        if (existing == domain::kUnavailableValueIndex) {
+        if (existing == kUnmappedSlot) {
             existing = static_cast<std::uint16_t>(row);
         }
     }
     return true;
-}
-
-/** @param map Slot map. @param slot Raw unlock slot. @return Bank index, or the unavailable one. */
-[[nodiscard]] std::uint16_t bank_index(const SlotMap& map, std::int16_t slot) noexcept {
-    if (slot < 0) {
-        return domain::kUnavailableValueIndex;
-    }
-    return map[static_cast<std::size_t>(slot)];
 }
 
 /**
@@ -135,39 +110,48 @@ read_slot_map(std::span<const std::byte> blob, std::size_t descriptor, SlotMap& 
 
 } // namespace
 
+/** Reads both unlock mapping tables. A gate names a slot; the bank index is the row naming it. */
+bool read_unlock_slot_maps(const reader::Source& source,
+                           Storage& storage,
+                           std::span<const std::byte> root) noexcept {
+    SlotMaps& maps = storage.slotMaps;
+    clear_slot_maps(maps);
+    std::uint32_t flagMapTag = 0;
+    if (!tables::slot_tag(root, tables::kUnlockFlagMapTableSlot, flagMapTag) || flagMapTag == 0
+        || tables::package_of(flagMapTag) == tables::kAbsentPackageId
+        || !reader::read_tag(source, storage.scratch, flagMapTag, storage.child)) {
+        return false;
+    }
+    const std::span<const std::byte> flagMap{storage.child};
+    const bool flagMapRead =
+        read_slot_map(flagMap, tables::kAccountFlagMapDescriptor, maps.accountFlag);
+    (void)read_slot_map(flagMap, tables::kCharacterFlagMapDescriptor, maps.characterFlag);
+
+    std::uint32_t valueMapTag = 0;
+    if (!flagMapRead || !tables::slot_tag(root, tables::kUnlockValueMapTableSlot, valueMapTag)
+        || valueMapTag == 0 || tables::package_of(valueMapTag) == tables::kAbsentPackageId
+        || !reader::read_tag(source, storage.scratch, valueMapTag, storage.child)) {
+        return false;
+    }
+    const std::span<const std::byte> valueMap{storage.child};
+    const bool valueMapRead =
+        read_slot_map(valueMap, tables::kAccountValueMapDescriptor, maps.accountValue);
+    (void)read_slot_map(valueMap, tables::kCharacterValueMapDescriptor, maps.characterValue);
+    return valueMapRead;
+}
+
+std::uint16_t bank_index(const SlotMap& map, std::int32_t slot) noexcept {
+    if (slot < 0 || static_cast<std::size_t>(slot) >= map.size()) {
+        return kUnmappedSlot;
+    }
+    return map[static_cast<std::size_t>(slot)];
+}
+
 /** Reads nodes and resolves their value slots, owned records and lore parent bars. */
 bool build_nodes(const reader::Source& source,
                  Storage& storage,
                  std::span<const std::byte> root) noexcept {
     storage.nodeCount = 0;
-    clear_slot_maps(g_slotMaps);
-
-    // A gate names a flag slot, not an index. The index is the mapping row whose destination is
-    // that slot.
-    std::uint32_t flagMapTag = 0;
-    if (tables::slot_tag(root, tables::kUnlockFlagMapTableSlot, flagMapTag) && flagMapTag != 0
-        && tables::package_of(flagMapTag) != tables::kAbsentPackageId
-        && reader::read_tag(source, storage.scratch, flagMapTag, storage.child)) {
-        const std::span<const std::byte> blob{storage.child};
-        (void)read_slot_map(blob, tables::kAccountFlagMapDescriptor, g_slotMaps.accountFlag);
-        (void)read_slot_map(blob, tables::kCharacterFlagMapDescriptor, g_slotMaps.characterFlag);
-    }
-
-    std::uint32_t mapTag = 0;
-    if (!tables::slot_tag(root, tables::kUnlockValueMapTableSlot, mapTag) || mapTag == 0
-        || tables::package_of(mapTag) == tables::kAbsentPackageId
-        || !reader::read_tag(source, storage.scratch, mapTag, storage.child)) {
-        report("value_map_fail", mapTag);
-        return false;
-    }
-    const std::span<const std::byte> valueMap{storage.child};
-    const bool valueMapRead =
-        read_slot_map(valueMap, tables::kAccountValueMapDescriptor, g_slotMaps.accountValue);
-    (void)read_slot_map(valueMap, tables::kCharacterValueMapDescriptor, g_slotMaps.characterValue);
-    if (!valueMapRead) {
-        report("value_map_fail", mapTag);
-        return false;
-    }
 
     std::uint32_t tableTag = 0;
     tables::Array rows{};
@@ -201,10 +185,10 @@ bool build_nodes(const reader::Source& source,
                 table, at, tables::kNodeExpressionFieldAlternate, slot);
         if (named) {
             definition.valueSlot = slot;
-            definition.valueIndex = bank_index(g_slotMaps.accountValue, slot);
+            definition.valueIndex = bank_index(storage.slotMaps.accountValue, slot);
             // One book's bar reads a slot only the character table carries, so both scopes resolve.
             definition.characterValueSlot = slot;
-            definition.characterValueIndex = bank_index(g_slotMaps.characterValue, slot);
+            definition.characterValueIndex = bank_index(storage.slotMaps.characterValue, slot);
         }
 
         // A category gated on a flag never opens from progress alone, so resolve that flag.
@@ -212,9 +196,9 @@ bool build_nodes(const reader::Source& source,
         if (tables::expression_flag_slot(table, at, tables::kNodeExpressionFieldPrimary, gateSlot)
             || tables::expression_flag_slot(
                 table, at, tables::kNodeExpressionFieldAlternate, gateSlot)) {
-            definition.visibilityFlagIndex = bank_index(g_slotMaps.accountFlag, gateSlot);
+            definition.visibilityFlagIndex = bank_index(storage.slotMaps.accountFlag, gateSlot);
             definition.visibilityCharacterFlagIndex =
-                bank_index(g_slotMaps.characterFlag, gateSlot);
+                bank_index(storage.slotMaps.characterFlag, gateSlot);
         }
 
         // Records the node owns, four bytes each as a row and a gate.
@@ -251,9 +235,9 @@ bool build_nodes(const reader::Source& source,
         std::int16_t parentSlot = -1;
         definition.loreBook = resolve_book(storage, definition, parentSlot);
         if (definition.loreBook && parentSlot >= 0) {
-            definition.parentValueIndex = bank_index(g_slotMaps.accountValue, parentSlot);
+            definition.parentValueIndex = bank_index(storage.slotMaps.accountValue, parentSlot);
             definition.parentCharacterValueIndex =
-                bank_index(g_slotMaps.characterValue, parentSlot);
+                bank_index(storage.slotMaps.characterValue, parentSlot);
         }
         books += definition.loreBook ? 1U : 0U;
         ++storage.nodeCount;

@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <optional>
+#include <vector>
 
 #include "../../../unlocks/definition.h"
 
@@ -512,23 +513,22 @@ bool derive(const Source& source,
         definition.acquisitionDefinitionIndex = completed->acquisitionDefinitionIndex;
         definition.completion = completed->completion;
         for (std::size_t flag = 0; flag < definition.completion.flagCount; ++flag) {
-            const auto mapping =
-                std::find_if(source.accountFlagMappings.begin(),
-                             source.accountFlagMappings.end(),
-                             [&](const AccountFlagMapping& row) {
-                                 return row.slot == definition.completion.flags[flag];
-                             });
-            if (mapping != source.accountFlagMappings.end()) {
-                if (mapping->accountIndex >= state::unlocks::kAccountFlagCapacity) {
-                    return fail(output,
-                                count,
-                                report,
-                                Error::invalidCompletion,
-                                item->definitionHash,
-                                completed->socketLane);
-                }
-                definition.completionAccountFlagIndices[flag] = mapping->accountIndex;
+            const std::uint16_t slot = definition.completion.flags[flag];
+            const std::uint16_t mapped = slot < source.accountFlagSlotMap.size()
+                                             ? source.accountFlagSlotMap[slot]
+                                             : kUnavailableCompletionFlagIndex;
+            if (mapped == kUnavailableCompletionFlagIndex) {
+                continue;
             }
+            if (mapped >= state::unlocks::kAccountFlagCapacity) {
+                return fail(output,
+                            count,
+                            report,
+                            Error::invalidCompletion,
+                            item->definitionHash,
+                            completed->socketLane);
+            }
+            definition.completionAccountFlagIndices[flag] = mapped;
         }
         definition.objective = completed->objective;
         definition.socketLane = completed->socketLane;
@@ -588,8 +588,6 @@ bool matches_cached(const Source& source,
     std::array<CompletionCondition, 2 * kDefinitionCapacity> completionConditions{};
     std::array<AcquisitionGate, kDefinitionCapacity> acquisitionGates{};
     std::array<std::int32_t, state::unlocks::kObjectiveValueCapacity> objectiveValues{};
-    std::array<AccountFlagMapping, kDefinitionCapacity * kCompletionFlagCapacity> accountMappings{};
-    std::size_t mappingCount = 0;
     std::size_t completionCount = 0;
     std::size_t acquisitionCount = 0;
     std::size_t objectiveCount = 0;
@@ -615,30 +613,34 @@ bool matches_cached(const Source& source,
         return true;
     };
 
+    // The slot map covers the highest mapped slot, so it is sized before it is filled.
+    std::size_t slotMapSize = 0;
+    for (const Definition& definition : definitions) {
+        for (std::size_t flag = 0; flag < definition.completion.flagCount; ++flag) {
+            if (definition.completionAccountFlagIndices[flag] != kUnavailableCompletionFlagIndex) {
+                slotMapSize =
+                    (std::max)(slotMapSize,
+                               static_cast<std::size_t>(definition.completion.flags[flag]) + 1);
+            }
+        }
+    }
+    std::vector<std::uint16_t> accountFlagSlotMap(slotMapSize, kUnavailableCompletionFlagIndex);
+
     for (const Definition& definition : definitions) {
         if (definition.availability == Availability::unsupported) {
             continue;
         }
-        for (std::size_t flag = 0; flag < definition.completionAccountFlagIndices.size(); ++flag) {
-            const auto mapped = definition.completionAccountFlagIndices[flag];
+        for (std::size_t flag = 0; flag < definition.completion.flagCount; ++flag) {
+            const std::uint16_t mapped = definition.completionAccountFlagIndices[flag];
             if (mapped == kUnavailableCompletionFlagIndex) {
                 continue;
             }
-            if (flag >= definition.completion.flagCount
-                || mapped >= state::unlocks::kAccountFlagCapacity
-                || mappingCount >= accountMappings.size()) {
+            // One slot maps to one account row. A stored row that disagrees fails closed.
+            std::uint16_t& entry = accountFlagSlotMap[definition.completion.flags[flag]];
+            if (entry != kUnavailableCompletionFlagIndex && entry != mapped) {
                 return false;
             }
-            const auto slot = definition.completion.flags[flag];
-            for (std::size_t prior = 0; prior < mappingCount; ++prior) {
-                if ((accountMappings[prior].slot == slot
-                     && accountMappings[prior].accountIndex != mapped)
-                    || (accountMappings[prior].accountIndex == mapped
-                        && accountMappings[prior].slot != slot)) {
-                    return false;
-                }
-            }
-            accountMappings[mappingCount++] = {slot, mapped};
+            entry = mapped;
         }
         const details::Definition* detail =
             find_detail(source.details, definition.itemDefinitionIndex);
@@ -730,7 +732,7 @@ bool matches_cached(const Source& source,
                   return first.socketType < second.socketType;
               });
     Source rebuilt = source;
-    rebuilt.accountFlagMappings = std::span(accountMappings).first(mappingCount);
+    rebuilt.accountFlagSlotMap = accountFlagSlotMap;
     rebuilt.completionConditions = std::span(completionConditions).first(completionCount);
     rebuilt.acquisitionGates = std::span(acquisitionGates).first(acquisitionCount);
     rebuilt.objectiveCompletionValues = std::span(objectiveValues).first(objectiveCount);

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <mutex>
 #include <shared_mutex>
 
@@ -36,8 +37,15 @@ std::atomic<bool> g_completionEnabled{true};
                : nullptr;
 }
 
-/** Sets one flag slot and removes duplicate authored rows for that slot. */
-[[nodiscard]] bool upsert_flag(state::Family5State& family, std::uint16_t slot) noexcept {
+/**
+ * Sets one flag slot and removes duplicate authored rows for that slot.
+ * @param family Candidate Family-5 state.
+ * @param slot Flag slot to set.
+ * @param appendMissing False leaves a slot with no authored row absent.
+ * @return False when the slot is new, wanted, and the list is full.
+ */
+[[nodiscard]] bool
+upsert_flag(state::Family5State& family, std::uint16_t slot, bool appendMissing) noexcept {
     const std::size_t oldCount = family.flagCount;
     std::size_t write = 0;
     bool found = false;
@@ -52,7 +60,7 @@ std::atomic<bool> g_completionEnabled{true};
         }
         family.flags[write++] = row;
     }
-    if (!found) {
+    if (!found && appendMissing) {
         if (write >= family.flags.size()) {
             return false;
         }
@@ -306,19 +314,14 @@ bool append_investment_overrides(state::Family5State& family) noexcept {
         if (definition.availability != Availability::released) {
             continue;
         }
-        if (!upsert_flag(candidate, definition.acquisitionDefinitionIndex)) {
+        if (!upsert_flag(candidate, definition.acquisitionDefinitionIndex, true)) {
             return false;
         }
         for (std::size_t flag = 0; flag < definition.completion.flagCount; ++flag) {
-            const auto slot = definition.completion.flags[flag];
-            // A mapped completion rides in the account bank, so it takes a Family-5 row only when
-            // the state already carries one for that slot, which is then raised to the set value.
-            const bool present = std::any_of(candidate.flags.begin(),
-                                             candidate.flags.begin() + candidate.flagCount,
-                                             [slot](const auto& row) { return row.slot == slot; });
-            if ((definition.completionAccountFlagIndices[flag] == kUnavailableCompletionFlagIndex
-                 || present)
-                && !upsert_flag(candidate, slot)) {
+            // A mapped completion lives in the account bank; only an authored row for it is raised.
+            const bool unmapped =
+                definition.completionAccountFlagIndices[flag] == kUnavailableCompletionFlagIndex;
+            if (!upsert_flag(candidate, definition.completion.flags[flag], unmapped)) {
                 return false;
             }
         }
