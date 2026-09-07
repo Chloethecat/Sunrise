@@ -3,6 +3,7 @@
 #include <string_view>
 
 #include "../../bap/runtime.h"
+#include "../../gameplay/squad_entity_retirement.h"
 #include "mission_script_runtime_internal.h"
 
 // The delivery state machine: the four stages and the timeout reconcilers. A
@@ -332,6 +333,10 @@ void refuse_delivery(RuntimeInstance& instance,
     }
     lua_vm::consume_intent(instance.vm);
     queue_effect_result(instance, intent, outcome);
+    if (intent.retirePlacedProps) {
+        server::gameplay::squad_entity_retirement::cancel_placed_transition(
+            instance.view.binding, instance.view.activityClientGeneration, intent.requestKey);
+    }
     clear_delivery(instance);
     log_line(core::log::Level::warn, &instance, "intent_refused", result, {}, reason);
 }

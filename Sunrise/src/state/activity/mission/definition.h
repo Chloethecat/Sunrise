@@ -126,6 +126,8 @@ struct TypedIntent final {
     std::uint8_t lifetimeState{};
     bool deviceSnap{};
     bool active{};
+    /** A state transition may end its captured map-prop lifetimes before teleporting. */
+    bool retirePlacedProps{};
 };
 
 /** One durable action and the exact Host output revision assigned to it. */

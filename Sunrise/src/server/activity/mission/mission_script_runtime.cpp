@@ -20,6 +20,7 @@
 #include "../../../core/settings/settings.h"
 #include "../../../state/activity/mission/runtime.h"
 #include "../../../state/activity/runtime.h"
+#include "../../gameplay/squad_entity_retirement.h"
 #include "../host_runtime.h"
 #include "mission_script_event_batch.h"
 #include "mission_script_runtime_internal.h"
@@ -230,6 +231,8 @@ void note_vm_status(RuntimeInstance& instance,
 /** Frees one slot; its queued events are retired unless the caller keeps them for a reattach. */
 void clear_instance(RuntimeInstance& instance, bool clearPending) noexcept {
     if (instance.occupied && clearPending) {
+        server::gameplay::squad_entity_retirement::cancel_placed_transition(
+            instance.view.binding, instance.view.activityClientGeneration);
         clear_pending_events(instance.view.binding);
     } else if (instance.occupied) {
         reset_pending_events_for_reattach(instance.view.binding);
@@ -356,6 +359,8 @@ void persist_mission_fault(RuntimeInstance& instance) noexcept {
 
 /** Faults both the VM and the exact server-owned mission record. */
 void fault_instance(RuntimeInstance& instance, std::string_view reason) noexcept {
+    server::gameplay::squad_entity_retirement::cancel_placed_transition(
+        instance.view.binding, instance.view.activityClientGeneration);
     lua_vm::fault(instance.vm, reason);
     instance.programStatus = ProgramStatus::programError;
     persist_mission_fault(instance);
