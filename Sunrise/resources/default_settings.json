@@ -34,15 +34,11 @@
       "config_url": "https://127.0.0.1/config/",
       "config_guid": "d2legacy-0000-0000-0000-000000000001"
     },
-    "suppress_peer_relay": true,
     "custom_bootflow_textures": true,
-    "fade_release": true,
     "socket_menu_routing": false,
     "reveal_lore_books": true,
     "region_private": false,
-    "pin_replicated_record": true,
-    "hold_spawn": true,
-    "spawn_hold_ms": 30000
+    "pin_replicated_record": true
   },
   "server": {
     "bap_port": 30974,

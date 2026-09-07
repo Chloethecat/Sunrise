@@ -11,15 +11,11 @@ bool Parser::client_settings(client::Settings& output) noexcept {
     bool hasUserInterface = false;
     bool hasExternalServer = false;
     bool hasCustomBootflowTextures = false;
-    bool hasFadeRelease = false;
     bool hasSocketMenuRouting = false;
     bool hasRevealLoreBooks = false;
     bool hasRegionPrivate = false;
     bool hasSkipOrbitCinematicWait = false;
-    bool hasSuppressPeerRelay = false;
     bool hasPinReplicatedRecord = false;
-    bool hasHoldSpawn = false;
-    bool hasSpawnHoldMs = false;
     if (consume('}')) {
         return true;
     }
@@ -43,11 +39,6 @@ bool Parser::client_settings(client::Settings& output) noexcept {
                 return false;
             }
             hasCustomBootflowTextures = true;
-        } else if (key == "fade_release") {
-            if (hasFadeRelease || !boolean(candidate.fadeRelease)) {
-                return false;
-            }
-            hasFadeRelease = true;
         } else if (key == "socket_menu_routing") {
             if (hasSocketMenuRouting || !boolean(candidate.socketMenuRouting)) {
                 return false;
@@ -68,29 +59,11 @@ bool Parser::client_settings(client::Settings& output) noexcept {
                 return false;
             }
             hasSkipOrbitCinematicWait = true;
-        } else if (key == "suppress_peer_relay") {
-            if (hasSuppressPeerRelay || !boolean(candidate.suppressPeerRelay)) {
-                return false;
-            }
-            hasSuppressPeerRelay = true;
         } else if (key == "pin_replicated_record") {
             if (hasPinReplicatedRecord || !boolean(candidate.pinReplicatedRecord)) {
                 return false;
             }
             hasPinReplicatedRecord = true;
-        } else if (key == "hold_spawn") {
-            if (hasHoldSpawn || !boolean(candidate.holdSpawn)) {
-                return false;
-            }
-            hasHoldSpawn = true;
-        } else if (key == "spawn_hold_ms") {
-            std::uint64_t value = 0;
-            if (hasSpawnHoldMs || !unsigned_integer(value) || value == 0
-                || value > client::kMaximumSpawnHoldMs) {
-                return false;
-            }
-            candidate.spawnHoldMs = value;
-            hasSpawnHoldMs = true;
         } else if (!skip_value(0)) {
             return false;
         }

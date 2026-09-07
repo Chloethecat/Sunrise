@@ -30,7 +30,7 @@ struct ReplacedMember {
  * Members replaced with the bundled default, each with the version that changed it.
  * A member is listed because its value form changed, or because its default changed.
  */
-constexpr std::array<ReplacedMember, 11> kReplacedMembers{{
+constexpr std::array<ReplacedMember, 10> kReplacedMembers{{
     {"\"key_bindings\"", 3},
     {"\"region_private\"", 5},
     {"\"topology\"", 5},
@@ -39,9 +39,8 @@ constexpr std::array<ReplacedMember, 11> kReplacedMembers{{
     // Version 8 turned the flat payout list into rows filtered by rarity, gear class and
     // masterwork state.
     {"\"dismantle_rewards\"", 8},
-    // Version 13 turned these two on. A file that never carried them takes the new default; one
-    // that carried the old value is corrected here.
-    {"\"suppress_peer_relay\"", 13},
+    // Version 13 turned this on. A file that never carried it takes the new default; one that
+    // carried the old value is corrected here.
     {"\"activity_public_membership\"", 13},
     // Version 15 seeded the lore book unlock slots, so both banks take the new default.
     {"\"character_flags\"", 15},
@@ -83,7 +82,7 @@ struct RemovedMember {
  * Only the first occurrence of a name is removed, so a member repeated per character, such as the
  * version-16 `accepted`, is left for the parser to skip as an unknown key.
  */
-constexpr std::array<RemovedMember, 7> kRemovedMembers{{
+constexpr std::array<RemovedMember, 11> kRemovedMembers{{
     {"\"force_join_request_ready\"", 12},
     // Version 14 dropped two client stand-ins and moved the catalyst gate under
     // `state.investment`, so the root copy is no longer read.
@@ -94,6 +93,11 @@ constexpr std::array<RemovedMember, 7> kRemovedMembers{{
     {"\"activity_compatibility_mirror\"", 16},
     {"\"gameplay_external_body\"", 16},
     {"\"server_default_entity\"", 16},
+    // Version 16 dropped the four switches of the deleted spawn hold, fade release and relay hooks.
+    {"\"suppress_peer_relay\"", 16},
+    {"\"fade_release\"", 16},
+    {"\"hold_spawn\"", 16},
+    {"\"spawn_hold_ms\"", 16},
 }};
 
 /** One splice per replaced, renamed and removed member, plus the version member itself. */

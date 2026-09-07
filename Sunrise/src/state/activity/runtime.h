@@ -142,33 +142,4 @@ struct SessionRosterRow final {
 /** Releases one retain only when the exact record generation still matches. */
 void release_binding(const SessionBinding& binding) noexcept;
 
-/** How far the client has got through the current destination load. */
-enum class WorldPhase : std::uint8_t {
-    /** No destination load is running. Orbit sits here, and the spawn is never held. */
-    idle,
-    /** The step that arms the black fade has started and the in-world step has not been reached. */
-    transitioning,
-    /** The in-world step is entered, so the fade is armed and a spawn now releases it. */
-    arrived,
-};
-
-/**
- * Records how far the current destination load has got.
- * Entering transitioning from any other phase resets the load's start tick.
- * @param phase Phase the client's own boot-flow step maps to.
- */
-void note_world_phase(WorldPhase phase) noexcept;
-
-/** @return How far the client has got through the current destination load. */
-[[nodiscard]] WorldPhase world_phase() noexcept;
-
-/**
- * @return Monotonic generation incremented on every edge into arrived.
- * An arrival that begins and ends between two server ticks still moves this.
- */
-[[nodiscard]] std::uint64_t world_arrival_revision() noexcept;
-
-/** @return Milliseconds since the running load started, or zero when none is running. */
-[[nodiscard]] std::uint64_t world_transition_age() noexcept;
-
 } // namespace sunrise::state::activity

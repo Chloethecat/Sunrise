@@ -199,7 +199,6 @@
     <ClCompile Include="src\client\hooks\graphics\discovery\graphics_target_discovery.cpp" />
     <ClCompile Include="src\client\hooks\graphics\graphics_hook_lifecycle.cpp" />
     <ClCompile Include="src\client\hooks\hitch_probe\hitch_probe.cpp" />
-    <ClCompile Include="src\client\hooks\peer_relay\peer_relay_direct.cpp" />
     <ClCompile Include="src\client\hooks\sense_chain_guard\sense_chain_guard.cpp" />
     <ClCompile Include="src\client\hooks\stall_probe\stall_probe.cpp" />
     <ClCompile Include="src\client\hooks\graphics\graphics_hook_replacements.cpp" />
@@ -282,11 +281,7 @@
     <ClCompile Include="src\client\hooks\bootflow\orbit_slice_set.cpp" />
     <ClCompile Include="src\client\hooks\bootflow\region_private.cpp" />
     <ClCompile Include="src\client\hooks\bootflow\world_step.cpp" />
-    <ClCompile Include="src\client\hooks\bootflow\spawn_hold.cpp" />
-    <ClCompile Include="src\client\hooks\bootflow\fade_release.cpp" />
-    <ClCompile Include="src\client\hooks\bootflow\spawn\spawn_gate_probe.cpp" />
-    <ClCompile Include="src\client\hooks\bootflow\spawn\spawn_gate_targets.cpp" />
-    <ClCompile Include="src\client\hooks\bootflow\spawn\spawn_gate_record_dump.cpp" />
+    <ClCompile Include="src\client\hooks\bootflow\spawn\slice_set_sample.cpp" />
     <ClCompile Include="src\server\bap\encrypted\push\activity\activity_arrival.cpp" />
     <ClCompile Include="src\middleware\bap\activity_host_manager\request\selection\activity_manager_selection_bits.cpp" />
     <ClCompile Include="src\middleware\bap\activity_host_manager\request\selection\activity_manager_selection_snapshot.cpp" />
@@ -589,7 +584,6 @@
     <ClCompile Include="src\state\gameplay\external\replication_view_receptor.cpp" />
     <ClCompile Include="src\state\gameplay\external\replication_world_state.cpp" />
     <ClCompile Include="src\state\activity\activity_session_lookup.cpp" />
-    <ClCompile Include="src\state\activity\activity_world_arrival.cpp" />
     <ClCompile Include="src\state\activity\mission\activity_mission_state.cpp" />
     <ClCompile Include="src\state\activity\mission\activity_mission_publication.cpp" />
     <ClCompile Include="src\state\activity\mission\activity_mission_intents.cpp" />
@@ -1345,7 +1339,6 @@
     <ClInclude Include="src\client\runtime\host\game_host_classification.h" />
     <ClInclude Include="src\client\hooks\graphics\graphics_hook_lifecycle.h" />
     <ClInclude Include="src\client\hooks\hitch_probe\hitch_probe.h" />
-    <ClInclude Include="src\client\hooks\peer_relay\peer_relay_direct.h" />
     <ClInclude Include="src\client\hooks\sense_chain_guard\sense_chain_guard.h" />
     <ClInclude Include="src\client\hooks\stall_probe\stall_probe.h" />
     <ClInclude Include="src\client\hooks\graphics\graphics_hook_replacements.h" />
@@ -1835,8 +1828,7 @@
     <ClInclude Include="src\client\hooks\bootflow\internal.h" />
     <ClInclude Include="src\client\hooks\bootflow\bootflow_hook_lifecycle.h" />
     <ClInclude Include="src\client\hooks\bootflow\bootflow_texture_override.h" />
-    <ClInclude Include="src\client\hooks\bootflow\spawn\spawn_gate_record_dump.h" />
-    <ClInclude Include="src\client\hooks\bootflow\spawn\probe.h" />
+    <ClInclude Include="src\client\hooks\bootflow\spawn\slice_set_sample.h" />
     <ClInclude Include="src\client\hooks\config_getter\config_getter_answers.h" />
     <ClInclude Include="src\client\hooks\config_getter\config_getter_lifecycle.h" />
     <ClInclude Include="src\client\hooks\egress\lifecycle\internal.h" />

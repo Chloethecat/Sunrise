@@ -105,51 +105,13 @@ void publish_region_private(const hooking::detour::Handle& handle) noexcept;
 void uninstall_region_private() noexcept;
 
 /**
- * Finds the boot-flow step accessor, the only input to the world phase.
- * Nothing is detoured: the accessor is called, so a miss leaves the phase idle.
+ * Finds the boot-flow step accessor behind `in_world`.
+ * Nothing is detoured: the accessor is called, so a miss reads as out of world.
  * @return True when the target was found.
  */
 [[nodiscard]] bool install_world_step() noexcept;
 
 /** Clears the boot-flow step accessor it found. */
 void uninstall_world_step() noexcept;
-
-/**
- * Maps the client's own boot-flow step onto the world phase.
- * Runs on the spawn gate poll, which is the only tick the phase is read on.
- */
-void observe_world_step() noexcept;
-
-/**
- * Stages the spawn hold, which puts the player spawn after the world-transition fade is armed.
- * @param spec Receives the target and replacement.
- * @return staged when the target was found, unavailable on a miss.
- */
-[[nodiscard]] StageResult stage_spawn_hold(hooking::detour::Spec& spec) noexcept;
-
-/** Takes the spawn hold's attached handle, or a detached one. */
-void publish_spawn_hold(const hooking::detour::Handle& handle) noexcept;
-
-/** Detaches the spawn hold. */
-void uninstall_spawn_hold() noexcept;
-
-/**
- * Finds the world-transition fade release and its manager object.
- * Nothing is detoured: both are called, so a miss leaves the feature off, not the client changed.
- * @return True when both targets were found.
- */
-[[nodiscard]] bool install_fade_release() noexcept;
-
-/** Clears the fade release it found. */
-void uninstall_fade_release() noexcept;
-
-/**
- * Releases the world-transition fade channel.
- * The spawn gate owns the timing. Does nothing unless `client.fade_release` is set.
- */
-void release_world_fade() noexcept;
-
-/** Re-arms the one line the release logs, so the next load reports its own. */
-void rearm_fade_release() noexcept;
 
 } // namespace sunrise::client::hooks::bootflow

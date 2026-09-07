@@ -610,7 +610,7 @@ build_roster_snapshot(Session& session,
     snapshot.lifetime = lifetimeState;
     // Hold the native spawn gate until the client's arrival report, WS-702 world-state 8. A
     // region can be loaded before the bootflow arms its fade; a spawn before the arm releases an
-    // inactive fade and leaves the screen black. Arrival does not depend on the spawn (RE/30).
+    // inactive fade and leaves the screen black. Arrival does not depend on the spawn.
     snapshot.awaitClientSync = !client_in_world(session, refresh);
     // Player_BindComponents walks every type-13 reference and the player datum can name any one of
     // them. So every participation record carries the same player key. Selecting the first slot

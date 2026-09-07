@@ -31,7 +31,6 @@
 #include "../hooks/network/runtime.h"
 #include "../hooks/noclip/runtime.h"
 #include "../hooks/package_trust/package_trust_bypass.h"
-#include "../hooks/peer_relay/peer_relay_direct.h"
 #include "../hooks/polled_input/runtime.h"
 #include "../hooks/queuez/queuez_hook_lifecycle.h"
 #include "../hooks/retail_log/retail_log_lifecycle.h"
@@ -185,9 +184,6 @@ void clear_game_targets() noexcept {
     // A sense-record chain that stops terminating after a slice-set teardown holds the whole
     // frame graph. The guard logs the runaway chain and skips its walk for that tick.
     (void)hooks::sense_chain_guard::install();
-    // The stock client always relays the gameplay peer channel, which cannot complete against a
-    // loopback host. When enabled, this forces a direct connect. Off by default.
-    (void)hooks::peer_relay::install();
     // The stock async-I/O wrapper reloads its singleton after pumping it and can observe the
     // legitimate teardown/recreate null window. This optional guard keeps the owner it pumped.
     (void)hooks::async_io::install();

@@ -5,10 +5,9 @@
 #include <string_view>
 
 #include "../../../core/logging/log.h"
-#include "../../../state/activity/runtime.h"
 #include "bootflow_hook_lifecycle.h"
 #include "internal.h"
-#include "spawn/probe.h"
+#include "spawn/slice_set_sample.h"
 
 namespace sunrise::client::hooks::bootflow {
 namespace {
@@ -24,9 +23,7 @@ constexpr std::string_view kStepSignatureText =
 /** Compiled pattern bytes of the signature text above. */
 constexpr auto kStepSignature = signature<signature_length(kStepSignatureText)>(kStepSignatureText);
 
-/** First step that loads the map with no player in it yet. */
-constexpr std::int32_t kActivityLoadFirst = 33;
-/** `activity:in_world`. The fade is armed by then, so a spawn now releases it. */
+/** `activity:in_world`. */
 constexpr std::int32_t kInWorld = 38;
 /** No step has been published. */
 constexpr std::int32_t kNoStep = -1;
@@ -63,13 +60,6 @@ void poll_world_step() noexcept {
 /** Publishes the client's current local slice-set index. */
 void poll_current_slice_set() noexcept {
     const std::int32_t index = spawn::sample_current_slice_set();
-    const std::int32_t previous = g_publishedSliceSet.load(std::memory_order_relaxed);
-    // A slice-set change is a world replacement whose transition arms a fresh fade, and a
-    // teleport never passes the off-destination step that re-arms the release. Re-arm here or
-    // the new world stays black behind the spent one-shot.
-    if (index >= 0 && previous >= 0 && index != previous) {
-        rearm_fade_release();
-    }
     g_publishedSliceSet.store(index, std::memory_order_relaxed);
     g_publishedSliceSetTick.store(GetTickCount64(), std::memory_order_release);
 }
@@ -95,25 +85,6 @@ bool in_world() noexcept {
     }
     const std::uint64_t published = g_publishedTick.load(std::memory_order_acquire);
     return published != 0 && GetTickCount64() - published < kStepStaleMs;
-}
-
-/** Maps the client's own boot-flow step onto the world phase. */
-void observe_world_step() noexcept {
-    // A missing accessor leaves the phase alone. A step of -1 is a real answer: off a destination.
-    if (g_step.load(std::memory_order_acquire) == nullptr) {
-        return;
-    }
-    const std::int32_t step = read_step();
-    state::activity::WorldPhase phase = state::activity::WorldPhase::idle;
-    if (step == kInWorld) {
-        phase = state::activity::WorldPhase::arrived;
-    } else if (step >= kActivityLoadFirst && step < kInWorld) {
-        phase = state::activity::WorldPhase::transitioning;
-    } else {
-        // Off a destination, so the next load is a fresh arming and logs its own release line.
-        rearm_fade_release();
-    }
-    state::activity::note_world_phase(phase);
 }
 
 /** Finds the boot-flow step accessor. */

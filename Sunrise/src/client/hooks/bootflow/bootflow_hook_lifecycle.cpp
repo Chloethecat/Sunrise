@@ -6,6 +6,7 @@
 #include <span>
 
 #include "internal.h"
+#include "spawn/slice_set_sample.h"
 
 namespace sunrise::client::hooks::bootflow {
 namespace {
@@ -19,8 +20,8 @@ struct Fix {
 };
 
 /**
- * Every fix that attaches a detour. `world_step` and `fade_release` are absent: they only find
- * addresses to call, so they open no transaction and cost the group nothing.
+ * Every fix that attaches a detour. `world_step` and the slice-set sample are absent: they only
+ * find addresses to call, so they open no transaction and cost the group nothing.
  */
 constexpr std::array kFixes{
     Fix{&stage_character_select_hold, &publish_character_select_hold},
@@ -29,7 +30,6 @@ constexpr std::array kFixes{
     Fix{&stage_orbit_handoff, &publish_orbit_handoff},
     Fix{&stage_owner_activity_slot, &publish_owner_activity_slot},
     Fix{&stage_region_private, &publish_region_private},
-    Fix{&stage_spawn_hold, &publish_spawn_hold},
 };
 
 /** Marks a fix that staged nothing, so no handle is ever published to it. */
@@ -95,16 +95,15 @@ bool install() noexcept {
 
     // Neither of these attaches anything, so they stay outside the transaction.
     const bool worldStep = install_world_step();
-    const bool fade = install_fade_release();
-    anyFix = anyFix || worldStep || fade;
+    const bool sliceSet = spawn::install_targets();
+    anyFix = anyFix || worldStep || sliceSet;
     g_installed.store(anyFix, std::memory_order_release);
-    return everyFix && worldStep && fade;
+    return everyFix && worldStep && sliceSet;
 }
 
 /** Detaches every boot-step fix, in the reverse order of install. */
 void uninstall() noexcept {
-    uninstall_fade_release();
-    uninstall_spawn_hold();
+    spawn::uninstall_targets();
     uninstall_world_step();
     uninstall_region_private();
     uninstall_owner_activity_slot();

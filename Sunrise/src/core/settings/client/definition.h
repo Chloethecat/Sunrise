@@ -1,16 +1,9 @@
 #pragma once
 
-#include <cstdint>
-
 #include "../../ui/runtime/settings.h"
 #include "external/definition.h"
 
 namespace sunrise::core::settings::client {
-
-/** A load this long has stopped making progress, so the spawn stops waiting for it. */
-inline constexpr std::uint64_t kDefaultSpawnHoldMs = 30'000;
-/** A load past this is a hang, not a slow machine, and holding the spawn would never end. */
-inline constexpr std::uint64_t kMaximumSpawnHoldMs = 600'000;
 
 /** Read-only Client settings parsed by Core. */
 struct Settings {
@@ -20,17 +13,7 @@ struct Settings {
     external::Settings externalServer;
     /** Replaces stock bootflow textures that have matching DDS assets embedded in Sunrise. */
     bool customBootflowTextures{true};
-    /**
-     * Releases the world-transition fade channel at the in-world step.
-     * The client only releases it on the player spawn, so this covers a spawn that never runs
-     * and leaves the world black. On by default.
-     */
-    bool fadeRelease{true};
-    /**
-     * Moves the four Arrivals leg mods into the leg plug set, so the leg mod menu lists them.
-     * Off by default. Retail shipped the same package data and showed the same gap, so this is a
-     * content correction, not a retail behaviour. It may be removed.
-     */
+    /** Moves the four Arrivals leg mods into the leg plug set, so the leg mod menu lists them. */
     bool socketMenuRouting{false};
     /**
      * Clears the visibility gates on the loaded lore presentation nodes.
@@ -50,25 +33,10 @@ struct Settings {
      */
     bool skipOrbitCinematicWait{false};
     /**
-     * Forces the peer channel to connect directly instead of through a NAT relay.
-     * The stock client always relays the gameplay peer channel, which cannot complete against a
-     * loopback host with no relay server. On by default; a client stand-in for the peer relay.
-     */
-    bool suppressPeerRelay{true};
-    /**
      * Pins the participation record to the replicated snapshot at `comp + 496`.
-     * Off, the record is the local one at `comp + 1256`, whose spawn-gate byte no wire field
-     * reaches.
+     * The msg-5 spawn hold reaches no other record.
      */
     bool pinReplicatedRecord{true};
-    /**
-     * Runs the player spawn after the world-transition fade is armed.
-     * A spawn before the arm releases nothing, so the screen stays black. Settable because it is
-     * the only thing that can turn an allowed spawn into a refusal.
-     */
-    bool holdSpawn{true};
-    /** How long the spawn waits for a load. `hold_spawn` decides whether it waits at all. */
-    std::uint64_t spawnHoldMs{kDefaultSpawnHoldMs};
 };
 
 } // namespace sunrise::core::settings::client
