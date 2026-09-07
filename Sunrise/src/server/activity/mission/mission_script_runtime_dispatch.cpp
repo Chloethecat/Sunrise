@@ -206,9 +206,7 @@ void arm_state_region_teleport(RuntimeInstance& instance,
         return;
     }
     const std::int32_t reported = membership::player_region(instance.view.binding.sessionId);
-    // The client answers a slice-set transition by de-instantiating its slice set and building the
-    // target, so a move inside one bubble leaves both copies alive and doubles its content. The arm
-    // must stay anyway: it is what orders the spawn, and without it the client never spawns in.
+    // A sibling-state transition still needs the host teleport to order the spawn.
     if (reported == static_cast<std::int32_t>(plan.effectiveRegion)) {
         // Already there. Clear any earlier arm so the mirror owns the block again.
         static_cast<void>(membership::arm_host_teleport(
