@@ -40,7 +40,7 @@ constexpr std::size_t kRegistryMask = kRegistryCapacity - 1;
 static_assert((kRegistryCapacity & kRegistryMask) == 0);
 
 /** Placement, entity and trace signatures resolved together in one image pass. */
-constexpr std::size_t kTargetCount = 21;
+constexpr std::size_t kTargetCount = 20;
 
 /** Native entry that instantiates a placed world object. */
 constexpr std::string_view kInstantiateSignatureText =
@@ -335,13 +335,33 @@ struct Targets final {
             return false;
         }
     }
-    output = {matches[0].address,  matches[1].address,  matches[2].address,  matches[3].address,
-              matches[4].address,  matches[5].address,  matches[6].address,  matches[7].address,
-              matches[8].address,  matches[9].address,  matches[10].address, matches[11].address,
-              matches[12].address, matches[13].address, matches[14].address, matches[15].address,
-              matches[16].address, matches[17].address, matches[18].address, matches[19].address,
-              matches[20].address};
-    return true;
+    output.instantiate = matches[0].address;
+    output.destroy = matches[1].address;
+    output.allocate = matches[2].address;
+    output.logicalDestroy = matches[3].address;
+    output.resolvePair = matches[4].address;
+    output.validatePair = matches[5].address;
+    output.datumLayout = matches[6].address;
+    output.createEntity = matches[7].address;
+    output.purgeEntities = matches[8].address;
+    output.glueMapping = matches[9].address;
+    output.entityPool = matches[10].address;
+    output.entityPolicy = matches[11].address;
+    output.observer = matches[12].address;
+    output.rebind = matches[13].address;
+    output.source = matches[14].address;
+    output.resolveSource = matches[15].address;
+    output.predicate = matches[16].address;
+    output.bind = matches[17].address;
+    output.teardown = matches[18].address;
+    output.actorOwner = matches[19].address;
+    // The iterator comes from the rebind body, which also proves the trace's return offsets.
+    return bind_rebind_calls(output.rebind,
+                             output.source,
+                             output.resolveSource,
+                             output.predicate,
+                             output.bind,
+                             output.iterator);
 }
 
 /** Binds the two datum globals encoded at fixed operands in the checked layout signature. */
@@ -468,18 +488,13 @@ bool read_datum_identity(std::uint32_t handle, DatumIdentity& output) noexcept {
 /** Installs the generation-checked placed-object lifetime capture. */
 bool install() noexcept {
     AcquireSRWLockExclusive(&g_lock);
-    if (g_handles[0].attached && g_handles[1].attached && g_handles[2].attached
-        && g_handles[3].attached && g_handles[4].attached && g_handles[5].attached
-        && std::all_of(
-            g_handles.begin() + 6, g_handles.end(), [](const auto& h) { return h.attached; })) {
+    const auto attached = [](const auto& handle) { return handle.attached; };
+    if (std::all_of(g_handles.begin(), g_handles.end(), attached)) {
         const bool accepting = g_accepting.load(std::memory_order_acquire);
         ReleaseSRWLockExclusive(&g_lock);
         return accepting;
     }
-    if (g_handles[0].attached || g_handles[1].attached || g_handles[2].attached
-        || g_handles[3].attached || g_handles[4].attached || g_handles[5].attached
-        || std::any_of(
-            g_handles.begin() + 6, g_handles.end(), [](const auto& h) { return h.attached; })) {
+    if (std::any_of(g_handles.begin(), g_handles.end(), attached)) {
         ReleaseSRWLockExclusive(&g_lock);
         return false;
     }
@@ -516,7 +531,6 @@ bool install() noexcept {
         hooking::detour::Spec{targets.predicate, reinterpret_cast<void*>(&trace_predicate)},
         hooking::detour::Spec{targets.bind, reinterpret_cast<void*>(&trace_bind)},
         hooking::detour::Spec{targets.teardown, reinterpret_cast<void*>(&trace_teardown)},
-
     };
     if (!hooking::detour::install(specs, g_handles)) {
         g_resolvePair = nullptr;
@@ -585,10 +599,9 @@ bool install() noexcept {
 /** Removes both lifetime hooks only after native calls have left their trampolines. */
 bool uninstall() noexcept {
     AcquireSRWLockExclusive(&g_lock);
-    if (!g_handles[0].attached && !g_handles[1].attached && !g_handles[2].attached
-        && !g_handles[3].attached && !g_handles[4].attached && !g_handles[5].attached
-        && std::none_of(
-            g_handles.begin() + 6, g_handles.end(), [](const auto& h) { return h.attached; })) {
+    if (std::none_of(g_handles.begin(), g_handles.end(), [](const auto& handle) {
+            return handle.attached;
+        })) {
         clear_registry();
         ReleaseSRWLockExclusive(&g_lock);
         return true;

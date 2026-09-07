@@ -12,6 +12,7 @@
 #include <string_view>
 
 #include "../../../core/logging/log.h"
+#include "../../patterns/image_scan.h"
 #include "../../patterns/registry.h"
 #include "../../patterns/signature_text.h"
 #include "internal.h"
@@ -47,6 +48,15 @@ constexpr std::size_t kSquadMembers = 80, kSquadCountOffset = 0x314, kSquadRefsO
 /** The actor record holds its binding as two qwords; a shorter stride cannot carry them. */
 constexpr std::uintptr_t kActorBindingOffset = 0x38;
 constexpr std::uint32_t kActorBindingStride = 0x48;
+/** Return addresses of the rebind body's five direct calls, as offsets from its start. */
+constexpr std::uintptr_t kIteratorReturn = 0x5F;
+constexpr std::uintptr_t kSourceReturn = 0x83;
+constexpr std::uintptr_t kResolveReturn = 0xA5;
+constexpr std::uintptr_t kPredicateReturn = 0x103;
+constexpr std::uintptr_t kBindReturn = 0x135;
+/** A near call is five bytes: the E8 sits five before its return address. */
+constexpr std::uintptr_t kNearCallBytes = 5;
+constexpr std::byte kCallOpcode{0xE8};
 
 struct ActorSource final {
     std::uint32_t key{kNone};
@@ -84,19 +94,18 @@ constexpr std::string_view kObserverTraceText =
 /** Compiled form of that pattern; its length fixes the two operands read at +17 and +30. */
 constexpr auto kObserverTracePattern =
     signature<signature_length(kObserverTraceText)>(kObserverTraceText);
-/** Native entry the rebind pass runs, detoured for the trace. */
+/**
+ * Native entry the rebind pass runs, detoured for the trace. A sibling body shares its first 61
+ * bytes, so the pattern runs past the first branch. The iterator it calls has no unique shape
+ * of its own and is decoded from the call at `kIteratorReturn`.
+ */
 constexpr std::string_view kRebindTraceText =
     "48 89 5C 24 10 48 89 7C 24 18 55 48 8D AC 24 30 FF FF FF 48 81 EC D0 01 00 00 48 8B 05 ? ? ? "
-    "? 48 33 C4 48 89 85 C0 00 00 00 33 FF 48 8D 4C 24 40 33 D2 89 7C 24 70 E8 E3 47 59 00";
+    "? 48 33 C4 48 89 85 C0 00 00 00 33 FF 48 8D 4C 24 40 33 D2 89 7C 24 70 E8 ? ? ? ? 48 8D 4C "
+    "24 40 E8 ? ? ? ? 84 C0 0F 84 1E 01 00 00 90 48 8D 54 24 24 48 8D 4C 24 40 E8 ? ? ? ?";
 /** Compiled form of that pattern; the scan requires one match. */
 constexpr auto kRebindTracePattern =
     signature<signature_length(kRebindTraceText)>(kRebindTraceText);
-/** Native iterator the rebind pass calls directly, detoured for the trace. */
-constexpr std::string_view kIteratorTraceText =
-    "40 53 48 83 EC 20 48 8B DA E8 82 7D FB FF 48 8B C3 48 83 C4 20 5B C3";
-/** Compiled form of that pattern; the scan requires one match. */
-constexpr auto kIteratorTracePattern =
-    signature<signature_length(kIteratorTraceText)>(kIteratorTraceText);
 /** Native source lookup the rebind pass calls, detoured for the trace. */
 constexpr std::string_view kSourceTraceText =
     "48 89 5C 24 10 56 48 83 EC 20 48 8B F2 8B D9 83 F9 FF 0F 84 8C 00 00 00 48 89 7C 24 30";
@@ -134,11 +143,10 @@ constexpr std::string_view kActorOwnerTraceText =
 constexpr auto kActorOwnerTracePattern =
     signature<signature_length(kActorOwnerTraceText)>(kActorOwnerTraceText);
 
-/** The nine trace signatures, in the order the registry's target list expects them. */
+/** The eight trace signatures, in the order the registry's target list expects them. */
 constexpr std::array kTraceSignatures{
     patterns::Pattern{"squad_trace_observer", kObserverTracePattern},
     patterns::Pattern{"squad_trace_rebind", kRebindTracePattern},
-    patterns::Pattern{"squad_trace_iterator", kIteratorTracePattern},
     patterns::Pattern{"squad_trace_source", kSourceTracePattern},
     patterns::Pattern{"squad_trace_resolveSource", kResolveSourceTracePattern},
     patterns::Pattern{"squad_trace_predicate", kPredicateTracePattern},
@@ -227,11 +235,40 @@ bool trace_actor_binding(std::uint32_t actor, std::array<std::uint64_t, 2>& outp
                    output);
 }
 
+/** @return The target of the near call whose return address is `returnOffset`, or null. */
+[[nodiscard]] std::byte* rebind_call_target(std::byte* rebind,
+                                            std::uintptr_t returnOffset) noexcept {
+    std::byte* const site = rebind + returnOffset - kNearCallBytes;
+    std::byte opcode{};
+    if (!read_at(reinterpret_cast<std::uintptr_t>(site), opcode) || opcode != kCallOpcode) {
+        return nullptr;
+    }
+    return patterns::resolve_relative(site + 1, site + kNearCallBytes);
+}
+
 } // namespace
 
 /** @return Signatures the squad rebind and observer trace needs, in resolve order. */
 std::span<const patterns::Pattern> trace_patterns() noexcept {
     return kTraceSignatures;
+}
+
+/** Decodes the iterator from the rebind body, and refuses a body whose other calls moved. */
+bool bind_rebind_calls(std::byte* rebind,
+                       std::byte* source,
+                       std::byte* resolveSource,
+                       std::byte* predicate,
+                       std::byte* bind,
+                       std::byte*& iterator) noexcept {
+    iterator = nullptr;
+    if (rebind == nullptr || rebind_call_target(rebind, kSourceReturn) != source
+        || rebind_call_target(rebind, kResolveReturn) != resolveSource
+        || rebind_call_target(rebind, kPredicateReturn) != predicate
+        || rebind_call_target(rebind, kBindReturn) != bind) {
+        return false;
+    }
+    iterator = rebind_call_target(rebind, kIteratorReturn);
+    return iterator != nullptr;
 }
 
 /** Preserves the observer's original call and records the bubble used by its native gate. */
@@ -293,12 +330,13 @@ __declspec(noinline) std::uintptr_t __fastcall trace_iterator(void* iterator,
     const auto result = original ? original(iterator, output) : 0;
     auto* value = t_rebindTrace;
     const auto caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
-    if (value && value->association.active && caller == g_rebindAddress + 0x5F
+    if (value && value->association.active && caller == g_rebindAddress + kIteratorReturn
         && (value->association.iterator == 0
             || value->association.iterator == reinterpret_cast<std::uintptr_t>(iterator))) {
         flush_rebind_actor(*value);
-        if (value->association.visit(
-                caller, g_rebindAddress + 0x5F, reinterpret_cast<std::uintptr_t>(iterator))) {
+        if (value->association.visit(caller,
+                                     g_rebindAddress + kIteratorReturn,
+                                     reinterpret_cast<std::uintptr_t>(iterator))) {
             value->source = {};
             value->sourceResult = value->resolveResult = value->predicate = -1;
             value->countBefore = value->countAfter = -1;
@@ -325,7 +363,7 @@ __declspec(noinline) std::uint8_t __fastcall trace_source(std::uint32_t owner, v
     const std::uint8_t result = original ? original(owner, output) : std::uint8_t{};
     auto* value = t_rebindTrace;
     if (value && value->association.active && value->association.actor != kNone
-        && reinterpret_cast<std::uintptr_t>(_ReturnAddress()) == g_rebindAddress + 0x83) {
+        && reinterpret_cast<std::uintptr_t>(_ReturnAddress()) == g_rebindAddress + kSourceReturn) {
         value->association.owner = owner;
         value->sourceResult = result;
         value->flagsKnown = trace_flags(owner, value->flags);
@@ -344,7 +382,7 @@ __declspec(noinline) std::uint8_t __fastcall trace_resolve(const void* source, v
     auto* value = t_rebindTrace;
     ActorSource actual{};
     if (value && value->association.active && value->sourceKnown
-        && reinterpret_cast<std::uintptr_t>(_ReturnAddress()) == g_rebindAddress + 0xA5
+        && reinterpret_cast<std::uintptr_t>(_ReturnAddress()) == g_rebindAddress + kResolveReturn
         && read_value(static_cast<const ActorSource*>(source), actual)
         && actual.key == value->source.key && actual.type == value->source.type
         && actual.index == value->source.index) {
@@ -360,8 +398,9 @@ __declspec(noinline) std::uintptr_t __fastcall trace_predicate(std::uint32_t own
     const auto result = original ? original(owner) : 0;
     auto* value = t_rebindTrace;
     if (value
-        && value->association.matches(
-            reinterpret_cast<std::uintptr_t>(_ReturnAddress()), g_rebindAddress + 0x103, owner)) {
+        && value->association.matches(reinterpret_cast<std::uintptr_t>(_ReturnAddress()),
+                                      g_rebindAddress + kPredicateReturn,
+                                      owner)) {
         value->predicate = static_cast<std::uint8_t>(result);
     }
     return result;
@@ -374,7 +413,7 @@ __declspec(noinline) void __fastcall trace_bind(void* squad, std::uint32_t actor
     auto* value = t_rebindTrace;
     const bool selected =
         value && value->association.active && value->association.actor == actor
-        && reinterpret_cast<std::uintptr_t>(_ReturnAddress()) == g_rebindAddress + 0x135;
+        && reinterpret_cast<std::uintptr_t>(_ReturnAddress()) == g_rebindAddress + kBindReturn;
     const auto count = reinterpret_cast<std::uintptr_t>(squad) + kSquadCountOffset;
     if (selected) {
         value->bindCalled = true;

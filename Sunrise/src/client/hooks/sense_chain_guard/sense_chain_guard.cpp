@@ -126,6 +126,8 @@ StructSize g_structSize{};
 RecordPayload g_payload{};
 std::atomic<std::uint64_t> g_nextReportTick{0};
 std::atomic<unsigned> g_reports{0};
+/** Set while a walk runs. Two walks at once would share the chain buffer below. */
+std::atomic_flag g_walking{};
 
 /** Rebuilds a pointer from an address without an implementation-defined integer conversion. */
 [[nodiscard]] std::byte* address_pointer(std::uint64_t address) noexcept {
@@ -188,7 +190,7 @@ void extract_record(std::uint64_t tables, std::byte* record) noexcept {
     record[kRecordExtractedOffset] = std::byte{1};
 }
 
-/** Chain handles the dry pass collected. The walk runs only on the sim fiber job. */
+/** Chain handles the dry pass collected. Written only while `g_walking` is held. */
 std::uint32_t g_chain[kChainCap];
 
 /**
@@ -288,7 +290,13 @@ __declspec(noinline) std::int64_t __fastcall sense_extract(std::byte* owner,
         return 0;
     }
     WalkTrail trail{};
+    // A second walk while one runs extracts nothing this tick; the chain buffer is not shared.
+    if (g_walking.test_and_set(std::memory_order_acquire)) {
+        report_walk(trail, "busy");
+        return 0;
+    }
     const int outcome = walk_and_extract(list, trail);
+    g_walking.clear(std::memory_order_release);
     if (outcome == 0) {
         report_walk(trail, "runaway");
     } else if (outcome == 2) {
@@ -361,7 +369,9 @@ bool uninstall() noexcept {
     if (!g_installed.load(std::memory_order_acquire)) {
         return true;
     }
-    if (!hooking::detour::uninstall(g_handle)) {
+    // The replacement reads the pointers below, so a thread still inside it refuses the detach.
+    bool replacementActive = false;
+    if (!hooking::detour::uninstall(g_handle, replacementActive)) {
         return false;
     }
     g_tables = nullptr;

@@ -204,7 +204,16 @@ void uninstall() noexcept {
     hooks::fly::reset();
     client::player::position::reset();
     polled_input::release_key();
-    (void)hooking::detour::uninstall(g_handles);
+    // A thread still inside a replacement keeps the detours; the cleared targets make them inert.
+    bool replacementActive = false;
+    if (!hooking::detour::uninstall(g_handles, replacementActive)) {
+        core::log::write(core::log::Channel::client,
+                         core::log::Level::warn,
+                         replacementActive
+                             ? "ev=teleport stage=uninstall result=fail reason=active"
+                             : "ev=teleport stage=uninstall result=fail reason=detach");
+        return;
+    }
     g_handles = {};
 }
 

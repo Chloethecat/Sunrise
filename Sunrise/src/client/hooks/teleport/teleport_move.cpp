@@ -63,7 +63,7 @@ std::atomic_uint32_t g_pressFrames{0};
 ControlledHandle g_controlledHandle{};
 CameraSingleton g_cameraSingleton{};
 
-/** Written by the camera hook and read by the physics hook. Both run on the same thread. */
+/** Camera forward vector for the next physics tick. Every access holds g_cameraPoseLock. */
 std::array<float, kVectorLanes> g_forward{};
 
 /** Withdraws the pose when the camera block is not readable for this frame. */
@@ -72,6 +72,13 @@ void invalidate_camera_pose() noexcept {
     g_cameraPose = {};
     g_cameraPoseValid = false;
     ReleaseSRWLockExclusive(&g_cameraPoseLock);
+}
+
+/** @param forward Receives the published camera forward vector, copied under the pose lock. */
+void copy_forward(Vector& forward) noexcept {
+    AcquireSRWLockShared(&g_cameraPoseLock);
+    forward = g_forward;
+    ReleaseSRWLockShared(&g_cameraPoseLock);
 }
 
 /**
@@ -178,41 +185,6 @@ void end_press() noexcept {
 }
 
 /**
- * Reports the gate values the sync tests before it publishes a transform.
- *
- * The move lands while moving and does nothing at rest for all three write targets, so what
- * changes at rest is upstream of the write. These four gates are what the sync reads first.
- *
- * @param component Physics component owning the player.
- * @param body Rigid body behind it.
- */
-void report_gates(const std::byte* component, const std::byte* body) noexcept {
-    std::uint8_t suppressed = 0;
-    std::int32_t bodyIndex = 0;
-    std::uint32_t bodyFlags = 0;
-    std::uint8_t motionType = 0;
-    (void)read_at(component + kPhysicsComponentSuppress, suppressed);
-    (void)read_at(component + kPhysicsComponentBodyIndex, bodyIndex);
-    (void)read_at(body + kBodyFlags, bodyFlags);
-    (void)read_at(body + kBodyMotionType, motionType);
-    std::array<char, 160> line{};
-    const int written = std::snprintf(line.data(),
-                                      line.size(),
-                                      "ev=teleport stage=gates suppress=%u index=%d "
-                                      "flags=0x%08X active=%u motion=%u",
-                                      static_cast<unsigned>(suppressed),
-                                      static_cast<int>(bodyIndex),
-                                      static_cast<unsigned>(bodyFlags),
-                                      (bodyFlags & kBodyActiveBit) != 0 ? 1U : 0U,
-                                      static_cast<unsigned>(motionType));
-    if (written > 0) {
-        core::log::write(core::log::Channel::client,
-                         core::log::Level::info,
-                         {line.data(), static_cast<std::size_t>(written)});
-    }
-}
-
-/**
  * @param component Candidate physics component.
  * @return True when it drives the object the local player controls.
  */
@@ -286,9 +258,11 @@ void set_vertical_velocity(std::byte* body, float value) noexcept {
  * @return True when the new position was stored.
  */
 [[nodiscard]] bool move_body(std::byte* body, float distance) noexcept {
+    Vector forward{};
+    copy_forward(forward);
     std::array<float, kVectorLanes> delta{};
     for (std::size_t lane = 0; lane < kVectorLanes; ++lane) {
-        delta[lane] = g_forward[lane] * distance;
+        delta[lane] = forward[lane] * distance;
     }
     std::array<float, kVectorLanes> position{};
     std::array<float, kVectorLanes> moved{};
@@ -327,7 +301,6 @@ void set_vertical_velocity(std::byte* body, float value) noexcept {
         report_skip("no_body");
         return false;
     }
-    report_gates(component, body);
     set_vertical_velocity(body, 0.0F);
     if (!move_body(body, client::movement::get().distance)) {
         return false;
@@ -381,8 +354,8 @@ void capture_camera_pose(std::uint32_t playerIndex) noexcept {
     AcquireSRWLockExclusive(&g_cameraPoseLock);
     g_cameraPose = pose;
     g_cameraPoseValid = true;
-    ReleaseSRWLockExclusive(&g_cameraPoseLock);
     g_forward = pose.forward;
+    ReleaseSRWLockExclusive(&g_cameraPoseLock);
     g_forwardValid.store(true, std::memory_order_release);
 }
 
@@ -477,24 +450,6 @@ bool read_position(void* component, Vector& position) noexcept {
     return body != nullptr && read_at(body + kBodyPositionX, position);
 }
 
-/** Writes the world position of the body a physics component drives. */
-bool write_position(void* component, const Vector& position) noexcept {
-    if (component == nullptr) {
-        return false;
-    }
-    std::byte* const body = body_of(static_cast<std::byte*>(component));
-    return body != nullptr && write_vector(body + kBodyPositionX, position);
-}
-
-/** Reads the linear velocity of the body a physics component drives. */
-bool read_velocity(void* component, Vector& velocity) noexcept {
-    if (component == nullptr) {
-        return false;
-    }
-    std::byte* const body = body_of(static_cast<std::byte*>(component));
-    return body != nullptr && read_at(body + kBodyVelocityX, velocity);
-}
-
 /** Writes the linear velocity of the body a physics component drives. */
 bool write_velocity(void* component, const Vector& velocity) noexcept {
     if (component == nullptr) {
@@ -509,7 +464,7 @@ bool camera_forward(Vector& forward) noexcept {
     if (!g_forwardValid.load(std::memory_order_acquire)) {
         return false;
     }
-    forward = g_forward;
+    copy_forward(forward);
     return true;
 }
 

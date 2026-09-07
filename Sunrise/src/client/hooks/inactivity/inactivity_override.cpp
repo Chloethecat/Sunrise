@@ -29,14 +29,22 @@ using patterns::signature;
 using patterns::signature_length;
 
 /**
- * The activity config getter. Every obfuscated pointer getter shares this prologue, so the load of
- * its own global stays unwildcarded; it is image-relative, so ASLR does not move it.
+ * The boot-flow step-timeout body, the anchor for the activity config getter it calls. Every
+ * obfuscated pointer getter shares the getter's own prologue and tail, so the getter has no
+ * unique shape without its global's displacement.
  */
-constexpr std::string_view kConfigGetterText =
-    "40 53 48 83 EC 20 48 8B 1D 2B 10 1A 02 48 85 DB 0F 84 ? ? ? ? 48 89 5C 24 30 "
-    "E8 ? ? ? ? 33 C3";
-/** Compiled pattern bytes of the config getter signature. */
-constexpr auto kConfigGetter = signature<signature_length(kConfigGetterText)>(kConfigGetterText);
+constexpr std::string_view kStepTimeoutText =
+    "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 20 B9 03 00 00 00 C7 02 12 00 00 "
+    "00 48 8B FA E8 ? ? ? ? 84 C0 0F 84 ? ? ? ? E8 ? ? ? ? 8B D8 E8 ? ? ? ? 48 8B E8 E8 ? ? ? ? "
+    "83 F8 FF 74 0C 8B C8 E8 ? ? ? ? 48 8B F0 EB 02 33 F6 8D 43 E5 A9 FD FF FF FF 74 6F 83 FB "
+    "26 75 4D E8 ? ? ? ?";
+/** Compiled pattern bytes of the step-timeout signature. */
+constexpr auto kStepTimeout = signature<signature_length(kStepTimeoutText)>(kStepTimeoutText);
+/** The getter call inside that body: its E8, its operand, and the instruction after it. */
+constexpr std::size_t kGetterCall = 0x65;
+constexpr std::size_t kGetterOperand = 0x66;
+constexpr std::size_t kGetterNext = 0x6A;
+constexpr std::byte kCallOpcode{0xE8};
 
 /** Activity lanes the Client keeps a separate inactivity timeout for. */
 constexpr std::size_t kActivityCount = 14;
@@ -161,15 +169,19 @@ bool install() noexcept {
         ReleaseSRWLockExclusive(&g_lock);
         return true;
     }
-    std::byte* const match = scan_main_image_unique(kConfigGetter, "inactivity_config_getter");
-    if (match == nullptr) {
+    std::byte* const match = scan_main_image_unique(kStepTimeout, "inactivity_step_timeout");
+    std::byte* const getter =
+        match != nullptr && match[kGetterCall] == kCallOpcode
+            ? patterns::resolve_relative(match + kGetterOperand, match + kGetterNext)
+            : nullptr;
+    if (getter == nullptr) {
         ReleaseSRWLockExclusive(&g_lock);
         core::log::write(core::log::Channel::client,
                          core::log::Level::warn,
                          "ev=inactivity stage=install result=fail reason=target");
         return false;
     }
-    g_getter = reinterpret_cast<ConfigGetter>(match);
+    g_getter = reinterpret_cast<ConfigGetter>(getter);
     ReleaseSRWLockExclusive(&g_lock);
     core::log::write(core::log::Channel::client,
                      core::log::Level::info,

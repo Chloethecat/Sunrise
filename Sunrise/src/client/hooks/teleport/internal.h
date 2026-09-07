@@ -32,15 +32,7 @@ inline constexpr std::size_t kCameraAspect = kCameraPositionX + 0xB8;
 
 /** Object handle the physics component drives, as a u16. */
 inline constexpr std::size_t kPhysicsComponentObjectHandle = 44;
-/** Non-zero here stops the sync before it reads anything else. */
-inline constexpr std::size_t kPhysicsComponentSuppress = 568;
 
-/** Body flag word the sync tests before it publishes a transform. */
-inline constexpr std::size_t kBodyFlags = 76;
-/** The bit in that word the sync requires. Clearing it skips the transform publish entirely. */
-inline constexpr std::uint32_t kBodyActiveBit = 0x40;
-/** Motion type. The sync excludes some values from publishing a transform. */
-inline constexpr std::size_t kBodyMotionType = 352;
 /** Rigid-body array on the physics component. */
 inline constexpr std::size_t kPhysicsComponentBodyArray = 400;
 /** Index into that array, signed. */
@@ -50,8 +42,8 @@ inline constexpr std::size_t kBodyEntryStride = 80;
 inline constexpr std::size_t kBodyPointer = 32;
 
 /**
- * Rigid-body world position. Still a hypothesis: it was lined up through a third-party Havok
- * layout, and the document meant to confirm it was never written.
+ * Swept-transform centre of mass 1 of the body's motion state. The transform translation at
+ * +416 is rebuilt from it by the physics step, so a body at rest does not follow a write here.
  */
 inline constexpr std::size_t kBodyPositionX = 448;
 /** Rigid-body velocity. The sync copies this into the physics component every tick. */

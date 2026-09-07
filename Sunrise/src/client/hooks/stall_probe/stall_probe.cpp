@@ -21,6 +21,7 @@
 #include "../../../steam/runtime/runtime.h"
 #include "../../diagnostics/module_range.h"
 #include "../../memory/current_process_memory.h"
+#include "../../process/freeze/client_process_freeze.h"
 
 namespace sunrise::client::hooks::stall_probe {
 namespace {
@@ -163,12 +164,14 @@ void report_thread(std::uint32_t tid) noexcept {
     }
 }
 
-/** Captures every other thread in the process, one at a time. */
+/** Captures every other thread in the process, one at a time, as the only suspender. */
 void dump_all_threads() noexcept {
     const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
     if (snapshot == INVALID_HANDLE_VALUE) {
         return;
     }
+    // A Detours transaction suspends threads too; two suspenders at once freeze each other.
+    process::freeze::enter_exclusive();
     THREADENTRY32 entry{};
     entry.dwSize = sizeof(entry);
     const DWORD processId = GetCurrentProcessId();
@@ -179,6 +182,7 @@ void dump_all_threads() noexcept {
             report_thread(entry.th32ThreadID);
         }
     }
+    process::freeze::leave_exclusive();
     CloseHandle(snapshot);
 }
 

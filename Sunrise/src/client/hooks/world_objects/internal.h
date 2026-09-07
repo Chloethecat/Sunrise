@@ -192,6 +192,24 @@ void erase(std::uint32_t handle) noexcept;
 /** @return Signatures the squad rebind and observer trace needs, in resolve order. */
 [[nodiscard]] std::span<const patterns::Pattern> trace_patterns() noexcept;
 
+/**
+ * Decodes the actor iterator from the rebind body's own call, and checks the other four calls
+ * still reach the targets the image pass resolved.
+ * @param rebind Resolved rebind body.
+ * @param source Resolved source lookup.
+ * @param resolveSource Resolved source resolver.
+ * @param predicate Resolved predicate dispatch.
+ * @param bind Resolved actor bind.
+ * @param iterator Receives the iterator; null when any call site moved.
+ * @return True when every call site holds a near call to its expected target.
+ */
+[[nodiscard]] bool bind_rebind_calls(std::byte* rebind,
+                                     std::byte* source,
+                                     std::byte* resolveSource,
+                                     std::byte* predicate,
+                                     std::byte* bind,
+                                     std::byte*& iterator) noexcept;
+
 /** Calls native construction first, then retains the successfully initialized identity. */
 __declspec(noinline) std::uint32_t* __fastcall instantiate(std::uint32_t* output,
                                                            const void* entry,

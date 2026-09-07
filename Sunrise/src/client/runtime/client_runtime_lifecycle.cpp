@@ -9,9 +9,12 @@
 #include "../hooks/bitmap/bitmap_hook_lifecycle.h"
 #include "../hooks/bootflow/bootflow_hook_lifecycle.h"
 #include "../hooks/bootflow/bootflow_texture_override.h"
+#include "../hooks/cine_auth_probe/cine_auth_probe.h"
+#include "../hooks/cine_probe/cine_probe.h"
 #include "../hooks/config_getter/config_getter_lifecycle.h"
 #include "../hooks/cursor/runtime.h"
 #include "../hooks/graphics/graphics_hook_lifecycle.h"
+#include "../hooks/hitch_probe/hitch_probe.h"
 #include "../hooks/inactivity/inactivity_override.h"
 #include "../hooks/infinite_ammo/infinite_ammo.h"
 #include "../hooks/membership_probe/membership_probe.h"
@@ -21,6 +24,8 @@
 #include "../hooks/polled_input/runtime.h"
 #include "../hooks/queuez/queuez_hook_lifecycle.h"
 #include "../hooks/retail_log/retail_log_lifecycle.h"
+#include "../hooks/sense_chain_guard/sense_chain_guard.h"
+#include "../hooks/stall_probe/stall_probe.h"
 #include "../hooks/teleport/runtime.h"
 #include "../hooks/world_objects/world_object_registry.h"
 #include "../movement/movement_settings_store.h"
@@ -86,12 +91,48 @@ bool shutdown() noexcept {
         ReleaseSRWLockExclusive(&runtime::g_lock);
         return false;
     }
-    // Attached last, so it detaches first. The probe reads through a detour, so one left in
-    // place is a branch into code a later unload unmaps.
+    // Every probe below reads through a detour, so one left in place is a branch into code a
+    // later unload unmaps.
+    if (!hooks::cine_auth_probe::uninstall()) {
+        core::log::write(core::log::Channel::client,
+                         core::log::Level::error,
+                         "ev=shutdown stage=cine_auth_probe result=fail");
+        ReleaseSRWLockExclusive(&runtime::g_lock);
+        return false;
+    }
+    if (!hooks::cine_probe::uninstall()) {
+        core::log::write(core::log::Channel::client,
+                         core::log::Level::error,
+                         "ev=shutdown stage=cine_probe result=fail");
+        ReleaseSRWLockExclusive(&runtime::g_lock);
+        return false;
+    }
     if (!hooks::membership_probe::uninstall()) {
         core::log::write(core::log::Channel::client,
                          core::log::Level::error,
                          "ev=shutdown stage=membership_probe result=fail");
+        ReleaseSRWLockExclusive(&runtime::g_lock);
+        return false;
+    }
+    if (!hooks::sense_chain_guard::uninstall()) {
+        core::log::write(core::log::Channel::client,
+                         core::log::Level::error,
+                         "ev=shutdown stage=sense_chain_guard result=fail");
+        ReleaseSRWLockExclusive(&runtime::g_lock);
+        return false;
+    }
+    // The watcher runs on its own thread, so it stops before the targets it reads are cleared.
+    if (!hooks::stall_probe::uninstall()) {
+        core::log::write(core::log::Channel::client,
+                         core::log::Level::error,
+                         "ev=shutdown stage=stall_probe result=fail");
+        ReleaseSRWLockExclusive(&runtime::g_lock);
+        return false;
+    }
+    if (!hooks::hitch_probe::uninstall()) {
+        core::log::write(core::log::Channel::client,
+                         core::log::Level::error,
+                         "ev=shutdown stage=hitch_probe result=fail");
         ReleaseSRWLockExclusive(&runtime::g_lock);
         return false;
     }

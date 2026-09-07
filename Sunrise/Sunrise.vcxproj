@@ -207,8 +207,6 @@
     <ClCompile Include="src\client\hooks\graphics\input\graphics_raw_input_window.cpp" />
     <ClCompile Include="src\client\hooks\polled_input\polled_input_lifecycle.cpp" />
     <ClCompile Include="src\client\hooks\polled_input\polled_input_replacements.cpp" />
-    <ClCompile Include="src\client\hooks\banner\banner_bind.cpp" />
-    <ClCompile Include="src\client\hooks\banner\banner_hook_lifecycle.cpp" />
     <ClCompile Include="src\middleware\datagen\family4\loadout\subclass_socket_selection.cpp" />
     <ClCompile Include="src\state\build_data\cache\records\cache_socket_record_codec.cpp" />
     <ClCompile Include="src\state\build_data\cache\records\cache_socket_plug_record_codec.cpp" />
@@ -285,7 +283,7 @@
     <ClCompile Include="src\middleware\bap\activity_host_manager\request\selection\activity_manager_selection_bits.cpp" />
     <ClCompile Include="src\middleware\bap\activity_host_manager\request\selection\activity_manager_selection_snapshot.cpp" />
     <ClCompile Include="src\core\settings\state\activity_arrival_override_parser.cpp" />
-    <ClCompile Include="src\client\hooks\queuez\svc123_null_payload_guard.cpp" />
+    <ClCompile Include="src\client\hooks\queuez\queuez_null_payload_guard.cpp" />
     <ClCompile Include="src\client\hooks\queuez\queuez_hook_lifecycle.cpp" />
     <ClCompile Include="src\client\content\diagnostics\content_readiness_report.cpp" />
     <ClCompile Include="src\client\hooks\network\bubble_authority\bubble_authority_replacements.cpp" />
@@ -710,7 +708,6 @@
     <ClCompile Include="src\state\build_data\named_build_data_runtime.cpp" />
     <ClCompile Include="src\state\build_data\socket_entry_lists\socket_entry_list_catalog.cpp" />
     <ClCompile Include="src\client\content\handles\handle_resolver.cpp" />
-    <ClCompile Include="src\client\content\activity\activity_tag_reader.cpp" />
     <ClCompile Include="src\client\content\activity\scriptable_catalog_authored_placements.cpp" />
     <ClCompile Include="src\client\content\activity\scriptable_catalog_container_index.cpp" />
     <ClCompile Include="src\client\content\activity\scriptable_catalog_container_placements.cpp" />
@@ -786,12 +783,8 @@
     <ClCompile Include="src\middleware\content\packages\tables\authored_placement_reader.cpp" />
     <ClCompile Include="src\middleware\content\packages\tables\authored_squad_reader.cpp" />
     <ClCompile Include="src\client\content\bootstrap\bootstrap_token_publish.cpp" />
-    <ClCompile Include="src\client\content\investment\investment_source.cpp" />
     <ClCompile Include="src\client\content\investment\investment_refresh.cpp" />
     <ClCompile Include="src\client\content\investment\worker\investment_refresh_worker.cpp" />
-    <ClCompile Include="src\client\content\items\details\configured_item_detail_extractor.cpp" />
-    <ClCompile Include="src\client\content\items\details\definition_detail_reader.cpp" />
-    <ClCompile Include="src\client\content\items\details\socket_detail_reader.cpp" />
     <ClCompile Include="src\middleware\datagen\character_record\character_record_encoder.cpp" />
     <ClCompile Include="src\middleware\datagen\character_record\appearance\character_appearance_stats.cpp" />
     <ClCompile Include="src\middleware\datagen\character_record\appearance\character_appearance_abilities.cpp" />
@@ -1266,8 +1259,6 @@
     <ClInclude Include="src\client\hooks\cursor\runtime.h" />
     <ClInclude Include="src\client\hooks\polled_input\polled_input_replacements.h" />
     <ClInclude Include="src\client\hooks\polled_input\runtime.h" />
-    <ClInclude Include="src\client\hooks\banner\banner_bind.h" />
-    <ClInclude Include="src\client\hooks\banner\banner_hook_lifecycle.h" />
     <ClInclude Include="src\middleware\web_service\messages\opcode504.h" />
     <ClInclude Include="src\middleware\web_service\messages\opcode701\opcode701_codec.h" />
     <ClInclude Include="src\middleware\web_service\messages\opcode904\opcode904_codec.h" />
@@ -1362,12 +1353,6 @@
     <ClInclude Include="src\client\content\investment\source.h" />
     <ClInclude Include="src\client\content\investment\worker.h" />
     <ClInclude Include="src\client\content\items\layout.h" />
-    <ClInclude Include="src\client\content\items\details\configured_item_detail_extractor.h" />
-    <ClInclude Include="src\client\content\items\details\layout.h" />
-    <ClInclude Include="src\client\content\items\details\memory.h" />
-    <ClInclude Include="src\client\content\items\details\definition_detail_reader.h" />
-    <ClInclude Include="src\client\content\items\details\relative.h" />
-    <ClInclude Include="src\client\content\items\details\socket_detail_reader.h" />
     <ClInclude Include="src\client\network\consumer.h" />
     <ClInclude Include="src\client\hooking\detour.h" />
     <ClInclude Include="src\client\hooking\detour\transaction\detour_thread_transaction.h" />

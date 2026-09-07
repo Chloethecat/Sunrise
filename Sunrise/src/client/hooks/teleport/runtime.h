@@ -109,22 +109,6 @@ void apply_pending(void* component) noexcept;
 [[nodiscard]] void* local_player_component() noexcept;
 
 /**
- * Writes the world position of the body a physics component drives.
- * @param component Physics component.
- * @param position Three lanes to store.
- * @return True when the body was found and written.
- */
-[[nodiscard]] bool write_position(void* component, const Vector& position) noexcept;
-
-/**
- * Reads the linear velocity of the body a physics component drives.
- * @param component Physics component.
- * @param velocity Receives the three lanes.
- * @return True when the body was found and read.
- */
-[[nodiscard]] bool read_velocity(void* component, Vector& velocity) noexcept;
-
-/**
  * Writes the linear velocity of the body a physics component drives.
  * @param component Physics component.
  * @param velocity Three lanes to store.
