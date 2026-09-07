@@ -8,6 +8,7 @@
 
 #include "../../middleware/datagen/family4/loadout/loadout_resolver.h"
 #include "../build_data/runtime.h"
+#include "../investment/store_internal.h"
 #include "runtime.h"
 #include "state_account_transaction_helpers.h"
 #include "storage/internal.h"
@@ -272,18 +273,23 @@ bool prepare_direct_item_bundle(std::uint32_t sourceDefinitionHash,
  */
 bool reserve_selected_character_inventory_serial(std::int32_t& mutationSerial) noexcept {
     mutationSerial = 0;
-    AcquireSRWLockExclusive(&runtime::storage::g_stateLock);
-    AccountState& account = runtime::storage::g_state.account;
+    investment::store::g_mutex.lock();
+    AccountState account = investment::store::account();
     const std::size_t characterIndex = selected_character_index(account);
-    const bool ready =
-        account::valid(account) && characterIndex < account.characterCount
-        && account.characters[characterIndex].nextInventorySerial
-               < static_cast<std::uint32_t>((std::numeric_limits<std::int32_t>::max)());
+    bool ready = account::valid(account) && characterIndex < account.characterCount
+                 && account.characters[characterIndex].nextInventorySerial
+                        < static_cast<std::uint32_t>((std::numeric_limits<std::int32_t>::max)());
     if (ready) {
         mutationSerial =
             static_cast<std::int32_t>(account.characters[characterIndex].nextInventorySerial++);
     }
-    ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
+    if (ready) {
+        ready = investment::store::write_account(account);
+    }
+    if (!ready) {
+        mutationSerial = 0;
+    }
+    investment::store::g_mutex.unlock();
     return ready;
 }
 
@@ -466,14 +472,17 @@ bool preview_direct_item_bundle(const PendingDirectItemBundle& mutation,
 bool commit_item_acquisition(PendingItemAcquisition& mutation) noexcept {
     const PendingItemAcquisition& prepared = mutation;
     const PendingConsumption consume{mutation};
-    AcquireSRWLockExclusive(&runtime::storage::g_stateLock);
+    investment::store::g_mutex.lock();
     AccountState candidate{};
     const bool ready =
-        materialize_item_acquisition(runtime::storage::g_state.account, prepared, candidate);
+        materialize_item_acquisition(investment::store::account(), prepared, candidate);
     if (ready) {
-        runtime::storage::g_state.account = candidate;
+        if (!investment::store::write_account(candidate)) {
+            investment::store::g_mutex.unlock();
+            return false;
+        }
     }
-    ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
+    investment::store::g_mutex.unlock();
     return ready;
 }
 
@@ -689,14 +698,17 @@ bool commit_profile_item_acquisition(PendingProfileItemAcquisition& mutation) no
         return false;
     }
 
-    AcquireSRWLockExclusive(&runtime::storage::g_stateLock);
+    investment::store::g_mutex.lock();
     AccountState candidate{};
     const bool ready =
-        materialize_profile_acquisition(runtime::storage::g_state.account, prepared, candidate);
+        materialize_profile_acquisition(investment::store::account(), prepared, candidate);
     if (ready) {
-        runtime::storage::g_state.account = candidate;
+        if (!investment::store::write_account(candidate)) {
+            investment::store::g_mutex.unlock();
+            return false;
+        }
     }
-    ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
+    investment::store::g_mutex.unlock();
     return ready;
 }
 

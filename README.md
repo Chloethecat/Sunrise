@@ -83,6 +83,27 @@ $ cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=$(pwd)/linux-to-win-toolchain.c
 $ cmake --build build
 ```
 
+## Saved progression
+
+Sunrise stores account and character progression in `Sunrise/data/investment.sqlite3`, relative
+to the DLL. Inventory, currencies, sockets, subclass choices, titles, unlocks, objectives,
+seasonal progress, claims, and ownership survive restarts. Character unlock banks are separate.
+Earned world rewards also survive while waiting for their inventory grant and pickup notification.
+In-game account preferences, account keybindings, and each item's seen marker are also saved.
+Client-mod options and local server policy remain in `Sunrise/settings.json`. Selection, current
+activity, and sign-in time last only for the current run.
+
+The DLL embeds `Sunrise/resources/database/investment_schema.sql`, `investment_defaults.sql`,
+`account_settings_schema.sql`, and `account_settings_defaults.sql`. New databases use these
+defaults. Version-1 saves upgrade to version 2 without replacing their inventory or progression;
+the added account preferences start with the bundled defaults.
+Settings files with an older or missing version are deleted and replaced with bundled defaults.
+There is no settings migration or progression import. Existing SQLite saves are kept.
+
+Close the game before copying or editing the database. Back up the whole `Sunrise/data` folder.
+Removing that database starts a new save from the bundled defaults. A database with a newer
+schema is refused rather than replaced.
+
 ## Contributing
 
 Pull Requests are welcome. Please follow these rules:
@@ -107,6 +128,7 @@ Pull Requests are welcome. Please follow these rules:
 - https://github.com/ocornut/imgui
 - https://github.com/microsoft/detours
 - https://lua.org/
+- [SQLite](https://www.sqlite.org/)
 
 ### Artwork:
 

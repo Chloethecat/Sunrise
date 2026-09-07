@@ -405,23 +405,18 @@ struct PendingSettingsUpdate {
 /**
  * Loads cached build data and generates secrets with Sunrise's authored activity defaults.
  * @param module Loaded Sunrise module, or null to disable disk persistence.
- * @param initialAccount Empty State, or a complete checked account from Core settings.
  * @return True when the cached data passes its checks and every secret is generated.
  */
-[[nodiscard]] bool initialize(void* module = nullptr,
-                              const AccountState& initialAccount = {}) noexcept;
+[[nodiscard]] bool initialize(void* module = nullptr) noexcept;
 
 /**
  * Loads cached build data and publishes fixed activity defaults in one step.
  * @param module Loaded Sunrise module, or null to disable disk persistence.
- * @param initialAccount Empty State, or a complete checked account from Core settings.
  * @param activityDefaults Complete local fallback policy from immutable Core settings.
  * @return True when account, defaults, cached data, and generated secrets are valid.
  */
 [[nodiscard]] bool
-initialize(void* module,
-           const AccountState& initialAccount,
-           const activity::defaults::ActivityDefaults& activityDefaults) noexcept;
+initialize(void* module, const activity::defaults::ActivityDefaults& activityDefaults) noexcept;
 
 /** Securely clears State, including activity destinations and matchmaking descriptors. */
 void shutdown() noexcept;

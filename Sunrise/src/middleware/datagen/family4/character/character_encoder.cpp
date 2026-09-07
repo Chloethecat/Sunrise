@@ -280,7 +280,10 @@ bool encode(const state::CharacterState& state,
     }
     // Acquired flags and objective progress are live world state, written by the request that
     // changed them.
-    const state::unlocks::Table& unlocks = state::unlocks::get();
+    state::unlocks::Table unlocks;
+    if (!state::unlocks::snapshot(unlocks)) {
+        return false;
+    }
     for (std::size_t index = 0; index < object.acquiredFlags.size(); ++index) {
         object.acquiredFlags[index] = static_cast<std::byte>(
             index < unlocks.characterObjectFlags.size() ? unlocks.characterObjectFlags[index]
@@ -311,10 +314,11 @@ bool encode(const state::CharacterState& state,
         inventoryRow.quantity = item.quantity;
         inventoryRow.mutationSerial = item.mutationSerial;
         inventoryRow.flags = item.flags;
-        // Both companion arrays are indexed by inventory row, not by equipment slot, and the
-        // client's own producer marks every row it fills.
-        object.newItemFlags[item.inventoryRow / kBitsPerFlagByte] |=
-            std::byte{1U} << (item.inventoryRow % kBitsPerFlagByte);
+        // Badge state and instance watermarks are both addressed by inventory row.
+        if (!item.seen) {
+            object.newItemFlags[item.inventoryRow / kBitsPerFlagByte] |=
+                std::byte{1U} << (item.inventoryRow % kBitsPerFlagByte);
+        }
         object.instanceProgressWatermarks[item.inventoryRow] = kOccupiedRowWatermark;
         if (item.equipped) {
             object.equippedInstanceSoids[item.equipmentSlot] = item.instance.instanceSoid;

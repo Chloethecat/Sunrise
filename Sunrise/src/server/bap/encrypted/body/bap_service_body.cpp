@@ -23,6 +23,7 @@
 #include "../internal.h"
 #include "../matchmaking/matchmaking_route.h"
 #include "../queuez/queuez_state_validation.h"
+#include "state/investment/store_internal.h"
 
 namespace sunrise::server::bap::encrypted::body {
 namespace {
@@ -73,7 +74,8 @@ bool process(const ServiceRoute& route,
              std::span<const std::byte> requestBody,
              std::span<std::byte> output,
              std::size_t& written,
-             ServiceOutcome& outcome) noexcept {
+             ServiceOutcome& outcome,
+             std::span<const state::account::inventory::PresentedItemRow> presentation) noexcept {
     outcome = {};
     switch (route.bodyCodec) {
     case BodyCodec::empty:
@@ -221,8 +223,13 @@ bool process(const ServiceRoute& route,
             outcome.hasChangeCharacter = true;
             return true;
         }
+        state::investment::store::Transaction investmentTransaction;
+        if (!investmentTransaction.ready()) {
+            return false;
+        }
         web_service::Outcome webOutcome;
-        if (!sunrise::server::web_service::consume(requestBody, output, written, webOutcome)) {
+        if (!sunrise::server::web_service::consume(
+                requestBody, output, written, webOutcome, presentation)) {
             return false;
         }
         if (webOutcome.hasTitleEquip) {
@@ -679,7 +686,7 @@ bool process(const ServiceRoute& route,
                 sunrise::server::bap::arm_account_resync_everywhere();
             }
         }
-        return true;
+        return investmentTransaction.commit();
     }
     }
     written = 0;
