@@ -164,7 +164,10 @@ bool arena_initialize(Arena& arena) noexcept {
     arena.highWater = 0;
     arena.initialized = false;
     if (arena.bytes == nullptr) {
-        std::byte* const block = new (std::nothrow) std::byte[kArenaByteCapacity];
+        // The allocation function is called directly. Clang folds the nothrow array
+        // new-expression to null in the optimized build; delete[] still matches this storage.
+        auto* const block =
+            static_cast<std::byte*>(::operator new[](kArenaByteCapacity, std::nothrow));
         if (block == nullptr) {
             arena.capacity = 0;
             return false;

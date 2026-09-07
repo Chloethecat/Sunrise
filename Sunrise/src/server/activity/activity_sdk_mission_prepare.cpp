@@ -5,6 +5,7 @@
 
 #include "../../middleware/bap/activity_message/sensor_auth_update.h"
 #include "../../state/activity/runtime.h"
+#include "activity_sdk_behavior_scope.h"
 #include "activity_sdk_mission_internal.h"
 #include "activity_sdk_scriptable_route.h"
 
@@ -105,6 +106,46 @@ namespace {
 
 /** Materializes into static lock-owned storage so UI stack size stays bounded. */
 
+/** Checks the exact enabled and published mission-seed lease for one scene state. */
+[[nodiscard]] SceneStatus scene_lease_status(const sdk::BoundView& view,
+                                             const server::bap::ActivityLinkView& link,
+                                             std::uint32_t stateRow) noexcept {
+    server::bap::ActivityMissionSeedLeaseView lease{};
+    switch (server::bap::activity_mission_seed_lease(
+        view.binding, view.scenarioRow, link.activityClientGeneration, lease)) {
+    case server::bap::ActivityMissionSeedLeaseStatus::ready:
+        break;
+    case server::bap::ActivityMissionSeedLeaseStatus::noActivityLink:
+        return SceneStatus::noActivityLink;
+    case server::bap::ActivityMissionSeedLeaseStatus::staleActivityClient:
+        return SceneStatus::staleActivityClient;
+    case server::bap::ActivityMissionSeedLeaseStatus::outputBusy:
+        return SceneStatus::outputBusy;
+    case server::bap::ActivityMissionSeedLeaseStatus::wrongScenario:
+    case server::bap::ActivityMissionSeedLeaseStatus::missingLiveSliceSet:
+    case server::bap::ActivityMissionSeedLeaseStatus::wrongSliceSet:
+    case server::bap::ActivityMissionSeedLeaseStatus::refused:
+        return SceneStatus::missionSeedUnavailable;
+    }
+    if (lease.activityClientGeneration != link.activityClientGeneration) {
+        return SceneStatus::staleActivityClient;
+    }
+    if (!lease.configured || lease.revision == 0 || lease.plan.scenarioRow != view.scenarioRow) {
+        return SceneStatus::missionSeedUnavailable;
+    }
+    if (lease.plan.stateRow != stateRow
+        && !behavior_scope::live_state(view.catalog->states(), view.catalog->bubbles(),
+            view.scenarioRow, stateRow, link.effectiveRegion)) {
+        return SceneStatus::wrongState;
+    }
+    if (lease.publicationPending || lease.publishedRevision != lease.revision) {
+        return SceneStatus::missionSeedPending;
+    }
+    return SceneStatus::ready;
+}
+
+} // namespace
+
 /** Maps the shared binding result to the authored-scene refusal surface. */
 [[nodiscard]] SceneStatus scene_binding_status(const sdk::BoundView& view,
                                                server::bap::ActivityLinkView& link) noexcept {
@@ -136,44 +177,6 @@ namespace {
     }
     return SceneStatus::invalidView;
 }
-
-/** Checks the exact enabled and published mission-seed lease for one scene state. */
-[[nodiscard]] SceneStatus scene_lease_status(const sdk::BoundView& view,
-                                             const server::bap::ActivityLinkView& link,
-                                             std::uint32_t stateRow) noexcept {
-    server::bap::ActivityMissionSeedLeaseView lease{};
-    switch (server::bap::activity_mission_seed_lease(
-        view.binding, view.scenarioRow, link.activityClientGeneration, lease)) {
-    case server::bap::ActivityMissionSeedLeaseStatus::ready:
-        break;
-    case server::bap::ActivityMissionSeedLeaseStatus::noActivityLink:
-        return SceneStatus::noActivityLink;
-    case server::bap::ActivityMissionSeedLeaseStatus::staleActivityClient:
-        return SceneStatus::staleActivityClient;
-    case server::bap::ActivityMissionSeedLeaseStatus::outputBusy:
-        return SceneStatus::outputBusy;
-    case server::bap::ActivityMissionSeedLeaseStatus::wrongScenario:
-    case server::bap::ActivityMissionSeedLeaseStatus::missingLiveSliceSet:
-    case server::bap::ActivityMissionSeedLeaseStatus::wrongSliceSet:
-    case server::bap::ActivityMissionSeedLeaseStatus::refused:
-        return SceneStatus::missionSeedUnavailable;
-    }
-    if (lease.activityClientGeneration != link.activityClientGeneration) {
-        return SceneStatus::staleActivityClient;
-    }
-    if (!lease.configured || lease.revision == 0 || lease.plan.scenarioRow != view.scenarioRow) {
-        return SceneStatus::missionSeedUnavailable;
-    }
-    if (lease.plan.stateRow != stateRow) {
-        return SceneStatus::wrongState;
-    }
-    if (lease.publicationPending || lease.publishedRevision != lease.revision) {
-        return SceneStatus::missionSeedPending;
-    }
-    return SceneStatus::ready;
-}
-
-} // namespace
 
 /** Maps exact SDK binding validation to this facade's stable refusal surface. */
 [[nodiscard]] Status binding_status(const sdk::BoundView& view,

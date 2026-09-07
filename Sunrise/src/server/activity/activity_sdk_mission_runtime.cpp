@@ -6,6 +6,7 @@
 
 #include "../../middleware/bap/activity_message/sensor_auth_update.h"
 #include "../../state/activity/runtime.h"
+#include "activity_sdk_behavior_scope.h"
 #include "activity_sdk_mission_internal.h"
 #include "activity_sdk_scriptable_route.h"
 #include "host_runtime.h"
@@ -30,6 +31,7 @@ using detail::prepare_typed_behavior;
 using detail::PreparedScene;
 using detail::read_lease;
 using detail::same_plan;
+using detail::scene_binding_status;
 
 } // namespace
 
@@ -508,16 +510,14 @@ set_cinematic_active_reserved(const sdk::BoundView& view,
     if (slotRow >= slots.size()) {
         return SceneStatus::invalidSlot;
     }
-    for (std::uint32_t index = 0; index < occurrences.size(); ++index) {
-        const sdk::format::Occurrence& occurrence = occurrences[index];
-        if (occurrence.scenarioIndex != view.scenarioRow
-            || occurrence.stateIndex != snapshot.plan.stateRow
-            || occurrence.objectIndex != slots[slotRow].objectIndex) {
-            continue;
-        }
-        occurrenceRow = index;
-        break;
-    }
+    server::bap::ActivityLinkView link{};
+    const SceneStatus live = scene_binding_status(view, link);
+    if (live != SceneStatus::ready) return live;
+    const auto selected = behavior_scope::select(occurrences, view.catalog->states(),
+        view.catalog->bubbles(), view.scenarioRow, slots[slotRow].objectIndex,
+        snapshot.plan.stateRow, link.effectiveRegion);
+    if (selected.ambiguous) return SceneStatus::ambiguousTarget;
+    occurrenceRow = selected.row;
     return occurrenceRow == sdk::format::kAbsentIndex ? SceneStatus::targetUnavailable
                                                       : SceneStatus::ready;
 }

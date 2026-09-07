@@ -159,7 +159,8 @@ struct RosterPublication {
 
 /** Compact retained squad body; shared target fields and the generated group live on its group. */
 struct RetainedSquadAuth {
-    std::array<std::byte, middleware::bap::activity_message::squad_auth::kMaximumByteCount> body{};
+    std::array<std::byte, middleware::bap::activity_message::squad_auth::kMaximumRetainedByteCount>
+        body{};
     std::uint32_t generation{};
     std::uint16_t rosterSlotOffset{};
     std::uint16_t slotIndex{};

@@ -31,8 +31,9 @@ constexpr std::uint8_t kModeWidth = 3;
 constexpr std::uint32_t kModeBias = 1;
 /** A present name hash is one exact unsigned 32-bit value. */
 constexpr std::uint8_t kNameHashWidth = 32;
-/** Logical active one becomes wire two after the schema bias. */
+/** Logical active one becomes wire two after the schema bias; logical zero becomes one. */
 constexpr std::uint32_t kActiveWireValue = 2;
+constexpr std::uint32_t kInactiveWireValue = 1;
 /** Fields zero through two precede the requested-count block. */
 constexpr std::size_t kLeadingAbsentFieldCount = 3;
 /** One unused dynamic field separates requested counts from generation. */
@@ -58,9 +59,7 @@ constexpr std::size_t kAfterSpawnReferenceAbsentFieldCount = 5;
         || (guard.hasLast && preset.generation <= guard.last)) {
         return false;
     }
-    const std::uint8_t mode = static_cast<std::uint8_t>(preset.mode);
-    if (mode != static_cast<std::uint8_t>(Mode::mode0)
-        && mode != static_cast<std::uint8_t>(Mode::mode2)) {
+    if (!valid_mode(preset.mode)) {
         return false;
     }
     if (!std::ranges::all_of(preset.requestedCounts,
@@ -127,8 +126,13 @@ constexpr std::size_t kAfterSpawnReferenceAbsentFieldCount = 5;
     }
     // A name the host does not own is the no-name value, never zero: `sub_7FF7421A9720`
     // compares this field against it and walks the member collection when it differs.
+    // Active reads inactive when nothing is requested, so the client destroys the owned actors
+    // instead of only killing them.
+    const bool hasRequests = std::any_of(preset.requestedCounts.begin(),
+                                         preset.requestedCounts.end(),
+                                         [](std::int32_t count) { return count > 0; });
     if (!write_absent(writer, kAfterSpawnReferenceAbsentFieldCount)
-        || !writer.write(kActiveWireValue, kActiveWidth)
+        || !writer.write(hasRequests ? kActiveWireValue : kInactiveWireValue, kActiveWidth)
         || !writer.write(static_cast<std::uint32_t>(mode) + kModeBias, kModeWidth)
         || !writer.write(1, kPresenceWidth)
         || !writer.write(preset.nameHash.value_or(kEmptyNameHash), kNameHashWidth)) {
@@ -174,7 +178,7 @@ bool encode(const Preset& preset,
     }
 
     std::array<std::byte, kMaximumByteCount> staged{};
-    bits::Writer writer(std::span(staged).first(expectedBytes));
+    bits::Writer writer{std::span(staged).first(expectedBytes)};
     std::size_t stagedBytes = 0;
     if (!write_body(writer, preset) || !writer.finish(stagedBytes)
         || stagedBytes != expectedBytes) {

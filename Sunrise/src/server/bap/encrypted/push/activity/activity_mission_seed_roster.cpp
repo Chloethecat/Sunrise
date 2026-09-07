@@ -1,5 +1,6 @@
 #include "activity_mission_seed_roster.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <limits>
@@ -26,8 +27,9 @@ namespace layouts = state::build_data::scenarios;
                                       static_cast<int>(reason.size()),
                                       reason.data());
     if (written > 0) {
+        // A refused seed leaves the selected state unpublished, so the refusal is not debug volume.
         core::log::write(core::log::Channel::server,
-                         core::log::Level::debug,
+                         core::log::Level::warn,
                          {line.data(), static_cast<std::size_t>(written)});
     }
     return MissionSeedRosterResult::refused;
@@ -368,9 +370,9 @@ MissionSeedRosterResult append_initial_mission_seed(Session& session,
     const state::activity::membership::ClientPlacement placement =
         client_placement(session, refresh);
     const std::int32_t heldRegion = state::activity::membership::instantiated_region(placement);
-    const bool pendingRegionHeld =
-        heldRegion >= 0 && static_cast<std::uint32_t>(heldRegion) == lease.plan.effectiveRegion;
-    if (!adopting && lease.regionArrivalPending && pendingRegionHeld) {
+    // The window closes on the exact packed region, so a sibling state of one bubble counts.
+    if (!adopting && lease.regionArrivalPending
+        && mission_seed_arrival_window_closed(heldRegion, lease.plan.effectiveRegion)) {
         lease.regionArrivalPending = false;
     }
     const bool arrivalWindow = !adopting && lease.regionArrivalPending;
@@ -488,10 +490,8 @@ MissionSeedRosterResult append_initial_mission_seed(Session& session,
             publicRegion = isPublic;
         }
     }
-    const bool transitionPublication =
-        !lease.fullSetPublished
-        && ((!lease.scriptSelected && !publicRegion) || heldRegion < 0
-            || static_cast<std::uint32_t>(heldRegion) != selectedRegion);
+    const bool transitionPublication = mission_seed_transition_subset_only(
+        lease.fullSetPublished, lease.scriptSelected, publicRegion, heldRegion, selectedRegion);
     for (std::size_t source = 0; source < foldGroupCount; ++source) {
         const layouts::RosterGroup& candidate = materialized[source];
         if (!layouts::valid_roster_group(candidate)) {
@@ -586,7 +586,12 @@ MissionSeedRosterResult append_initial_mission_seed(Session& session,
                 }
             }
             if (managed && !active) {
-                continue;
+                // Removal is a cleared presence bit at the old key ordinal, not omission.
+                for (std::size_t group = 0; group < snapshot.roster.groupCount; ++group) {
+                    if (snapshot.roster.groups[group].key == key) {
+                        snapshot.roster.groups[group].retired = true;
+                    }
+                }
             }
             if (retainedCount >= scratch.rosterSubBlockKeys[blockIndex].size()) {
                 return refuse_seed("managed_key_capacity");

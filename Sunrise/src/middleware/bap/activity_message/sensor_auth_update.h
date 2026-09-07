@@ -98,6 +98,8 @@ struct Group final {
     bool hasStateSequence{};
     /** True only for a generated mission group whose non-overridden slots seed empty deltas. */
     bool missionSeedOnly{};
+    /** Retain this key's ordinal but clear its presence and omit its authority bodies. */
+    bool retired{};
 };
 
 /** One exact, already-registered slot body substituted into phase 2. */
@@ -182,6 +184,9 @@ struct Snapshot final {
     bool hasGrant{};
     bool hasRegion{};
     bool hasSpawnOverride{};
+    /** Set when the estate carries a darkness sensor body; the lifetime then names the bubble. */
+    bool hasDarknessPolicy{};
+    bool darknessEnabled{};
     /** Hold the client's spawn while it loads by emitting `awaiting_client_sync`. */
     bool awaitClientSync{};
     /** Register the groups and seed no object. Separates no components from no auth state. */

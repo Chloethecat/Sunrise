@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "../../core/logging/log.h"
+#include "../../middleware/bap/activity_message/sense_observation_packet.h"
 #include "../../state/activity/mission/runtime.h"
 #include "../../state/activity/runtime.h"
 #include "host_runtime_internal.h"
@@ -227,15 +228,14 @@ bool mission_input_sense_snapshot(std::uint64_t sequence,
     if (copied) {
         const Event& event = selected->view.event;
         const sense::DecodedPacket& packet = selected->sense;
-        copied = packet.status == sense::DecodeStatus::complete && !packet.objectsTruncated
-                 && !packet.valuesTruncated && packet.objectCount <= packet.objects.size()
-                 && packet.valueCount <= packet.values.size();
+        copied = sense::observation_packet(packet);
         if (copied) {
             output.revision = event.sequence;
             output.sourceGeneration = event.sourceGeneration;
         }
         for (std::size_t index = 0; copied && index < packet.objectCount; ++index) {
             const sense::DecodedObject& object = packet.objects[index];
+            if (object.status != sense::ObjectStatus::decoded || !object.hasGeneration) continue;
             if (object.firstValue > packet.valueCount
                 || object.valueCount > packet.valueCount - object.firstValue) {
                 copied = false;

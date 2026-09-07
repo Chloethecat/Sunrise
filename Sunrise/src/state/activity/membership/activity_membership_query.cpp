@@ -2,6 +2,8 @@
 
 #include <Windows.h>
 
+#include <limits>
+
 #include "../../runtime/storage/internal.h"
 #include "../transactions/internal.h"
 
@@ -70,6 +72,97 @@ bool arm_host_teleport(std::uint64_t sessionId,
     }
     ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
     return changed;
+}
+
+/** All-one bits is not a spawn set hash. */
+constexpr std::uint32_t kInvalidSpawnSetHash = (std::numeric_limits<std::uint32_t>::max)();
+
+/** Arms one hard wipe; the same request key is accepted again while it is armed. */
+bool arm_hard_wipe(const SessionBinding& binding,
+                   std::uint64_t requestKey,
+                   std::int32_t region,
+                   std::uint32_t spawnSetHash) noexcept {
+    if (requestKey == 0 || region < 0 || spawnSetHash == 0 || spawnSetHash == kInvalidSpawnSetHash) {
+        return false;
+    }
+    bool accepted = false;
+    AcquireSRWLockExclusive(&runtime::storage::g_stateLock);
+    ActivityState& state = runtime::storage::g_state.activity;
+    const auto target = activity::transactions::find_session(state, binding.sessionId);
+    if (target != kInvalidSessionSlot
+        && state.sessions[target].createdRevision == binding.createdRevision) {
+        MembershipState& membership = state.sessions[target].membership;
+        HardWipeState& wipe = membership.hardWipe;
+        if (wipe.requestKey == requestKey) {
+            accepted = true;
+        } else if (!wipe.active && !membership.hasHostTeleport) {
+            wipe.requestKey = requestKey;
+            wipe.region = region;
+            wipe.spawnSetHash = spawnSetHash;
+            wipe.host = {};
+            wipe.host.state = kHardWipeStartState;
+            // The token must differ from the client's current block, or the client ignores it.
+            wipe.host.opaqueByte = static_cast<std::uint8_t>(membership.spawn.opaqueByte + 1U);
+            wipe.active = true;
+            wipe.resetReady = false;
+            wipe.clientWaiting = false;
+            accepted = true;
+        }
+    }
+    ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
+    return accepted;
+}
+
+/** @return True while the client has not yet mirrored the armed wipe's spawn block. */
+bool hard_wipe_needs_publish(std::uint64_t sessionId) noexcept {
+    bool pending = false;
+    AcquireSRWLockShared(&runtime::storage::g_stateLock);
+    const ActivityState& state = runtime::storage::g_state.activity;
+    const auto target = activity::transactions::find_session(state, sessionId);
+    if (target != kInvalidSessionSlot) {
+        const MembershipState& member = state.sessions[target].membership;
+        const HardWipeState& wipe = member.hardWipe;
+        pending = wipe.active
+                  && (wipe.host.state == kHardWipeReleaseState
+                      || member.spawn.opaqueByte != wipe.host.opaqueByte
+                      || member.spawn.state < kHardWipeStartState);
+    }
+    ReleaseSRWLockShared(&runtime::storage::g_stateLock);
+    return pending;
+}
+
+/** Releases the armed wipe named by its request key. */
+bool release_hard_wipe(const SessionBinding& binding, std::uint64_t requestKey) noexcept {
+    bool accepted = false;
+    AcquireSRWLockExclusive(&runtime::storage::g_stateLock);
+    ActivityState& state = runtime::storage::g_state.activity;
+    const auto target = activity::transactions::find_session(state, binding.sessionId);
+    if (target != kInvalidSessionSlot
+        && state.sessions[target].createdRevision == binding.createdRevision) {
+        HardWipeState& wipe = state.sessions[target].membership.hardWipe;
+        if (wipe.active && wipe.requestKey == requestKey) {
+            wipe.release();
+            accepted = true;
+        }
+    }
+    ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
+    return accepted;
+}
+
+/** @return The checkpoint spawn set a wipe named for this region, or zero. */
+std::uint32_t checkpoint_spawn_hash(std::uint64_t sessionId, std::int32_t region) noexcept {
+    std::uint32_t result = 0;
+    AcquireSRWLockShared(&runtime::storage::g_stateLock);
+    const ActivityState& state = runtime::storage::g_state.activity;
+    const auto target = activity::transactions::find_session(state, sessionId);
+    if (target != kInvalidSessionSlot) {
+        const HardWipeState& wipe = state.sessions[target].membership.hardWipe;
+        if (wipe.requestKey != 0 && wipe.region == region) {
+            result = wipe.spawnSetHash;
+        }
+    }
+    ReleaseSRWLockShared(&runtime::storage::g_stateLock);
+    return result;
 }
 
 /** Reports whether a host-named teleport is still waiting for the client to move. */

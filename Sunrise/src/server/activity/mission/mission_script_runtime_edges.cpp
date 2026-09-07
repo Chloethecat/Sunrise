@@ -1,9 +1,14 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <span>
 
+#include "../../../middleware/bap/activity_message/damage_monitor_auth.h"
+#include "../../../middleware/bap/activity_message/ghost_link_auth.h"
+#include "../../../middleware/bap/activity_message/scriptable_auth_body.h"
 #include "../../../state/activity/transactions/internal.h"
 #include "../activity_sdk_mission_runtime.h"
 #include "mission_script_cinematic.h"
@@ -25,12 +30,12 @@ constexpr std::uint16_t kTriggerAnyOrdinal = 0;
 constexpr std::uint16_t kTriggerAllOrdinal = 1;
 constexpr std::uint16_t kTriggerCountOrdinal = 2;
 constexpr std::uint16_t kTriggerThresholdOrdinal = 3;
-/** Root ordinals of the two live squad fields. The rest of the root is inert on this build. */
-constexpr std::uint16_t kSquadAliveOrdinal = 3;
+/** Root ordinal of the squad removal flag. The rest of the root is inert on this build. */
 constexpr std::uint16_t kSquadRemovalOrdinal = 8;
-/** The per-slot counts are nested: a four-bit length, then the counts themselves. */
-constexpr std::uint8_t kSquadSlotLengthWidth = 4;
-constexpr std::uint8_t kSquadSlotCountWidth = 32;
+/** Root ordinals of the type-20 damage Sense body: health, shield, then the echoed revision. */
+constexpr std::uint16_t kDamageHealthOrdinal = 0;
+constexpr std::uint16_t kDamageShieldOrdinal = 1;
+constexpr std::uint16_t kDamageRevisionOrdinal = 2;
 /** Root ordinal of the authored scene's activation token. Signed, bias -2^31. */
 constexpr std::uint16_t kSceneTokenOrdinal = 0;
 /** Root ordinal of the authored scene's completion latch. A zero-width boolean. */
@@ -94,32 +99,6 @@ sense_value(std::span<const sense_values::DecodedValue> body,
     return event;
 }
 
-/**
- * Copies the squad's per-slot counts out of its nested length-prefixed list.
- * The length and the counts sit in nested schemas, so they are the values the root does not own.
- * Their declared widths tell the length apart from the counts.
- * @return Live entries written into output.
- */
-[[nodiscard]] std::uint8_t
-squad_slot_counts(std::span<const sense_values::DecodedValue> body,
-                  std::uint32_t rootSchemaRow,
-                  std::array<std::int32_t, host::kSquadSlotCapacity>& output) noexcept {
-    output = {};
-    std::size_t length = 0;
-    std::size_t written = 0;
-    for (const sense_values::DecodedValue& value : body) {
-        if (value.schemaRow == rootSchemaRow || !value.present) {
-            continue;
-        }
-        if (value.width == kSquadSlotLengthWidth) {
-            length = static_cast<std::size_t>(value.unsignedValue);
-        } else if (value.width == kSquadSlotCountWidth && written < output.size()) {
-            output[written++] = static_cast<std::int32_t>(value.signedValue);
-        }
-    }
-    return static_cast<std::uint8_t>((std::min)(written, length));
-}
-
 /** @return The retained record for one squad, allocating on a first observation. */
 [[nodiscard]] SquadObservation* find_squad(RuntimeInstance& instance,
                                            const host::SenseObservationKey& key) noexcept {
@@ -131,6 +110,13 @@ squad_slot_counts(std::span<const sense_values::DecodedValue> body,
         }
         if (!retained.used && spare == nullptr) {
             spare = &retained;
+        }
+    }
+    if (spare == nullptr) {
+        for (SquadObservation& retained : instance.squadObservations) {
+            bool empty = retained.aliveCount == 0;
+            for (const auto count : retained.slotCounts) empty = empty && count == 0;
+            if (empty) { retained = {}; spare = &retained; break; }
         }
     }
     if (spare == nullptr) {
@@ -301,20 +287,42 @@ void push_cinematic(RuntimeInstance& instance, const host::Event& incident) noex
     target.eventValue = incident.cinematicEventValue;
     cinematic::Source source{};
     const cinematic::ResolveStatus status = cinematic::resolve(*world, target, source);
+    std::array<char, 128> fields{};
+    const int written = std::snprintf(fields.data(),
+                                      fields.size(),
+                                      "registry=%08x slot_type=%d slot_index=%d target=%u",
+                                      target.registryKey,
+                                      static_cast<int>(target.slotType),
+                                      static_cast<int>(target.slotIndex),
+                                      incident.incidentTarget);
+    const std::string_view detail =
+        written > 0
+            ? std::string_view(fields.data(),
+                               (std::min)(static_cast<std::size_t>(written), fields.size() - 1))
+            : std::string_view{};
     if (status != cinematic::ResolveStatus::ready) {
         log_line(core::log::Level::warn,
                  &instance,
                  "cinematic",
                  status == cinematic::ResolveStatus::ambiguous        ? "ambiguous"
                  : status == cinematic::ResolveStatus::invalidCatalog ? "invalid_catalog"
-                                                                      : "absent");
+                                                                      : "absent",
+                 detail);
         return;
     }
+    using Signal = middleware::bap::activity_message::cinematic_incident::Signal;
+    const Signal signal = incident.cinematicSignal;
+    log_line(core::log::Level::debug,
+             &instance,
+             "cinematic",
+             signal == Signal::started         ? "started"
+             : signal == Signal::skipRequested ? "skip_requested"
+                                               : "terminated",
+             detail);
     host::Event event = incident;
-    event.kind = incident.cinematicSignal
-                         == middleware::bap::activity_message::cinematic_incident::Signal::started
-                     ? host::EventKind::cinematicStarted
-                     : host::EventKind::cinematicTerminated;
+    event.kind = signal == Signal::started         ? host::EventKind::cinematicStarted
+                 : signal == Signal::skipRequested ? host::EventKind::cinematicSkipRequested
+                                                   : host::EventKind::cinematicTerminated;
     event.firstRegistryKey = source.registryKey;
     event.slotObjectTag = source.objectTag;
     event.firstSlotIndex = source.slotIndex;
@@ -379,6 +387,240 @@ void push_trigger_edges(RuntimeInstance& instance,
     }
 }
 
+/** @return True when the observation is one complete body of the given slot type and schema. */
+[[nodiscard]] bool observation_of(const host::SenseObservation& observation,
+                                  const host::SenseObservationSnapshot& sense,
+                                  std::uint32_t slotType,
+                                  std::uint32_t senseSchema) noexcept {
+    return observation.key.slotType == slotType && observation.key.senseSchema == senseSchema
+           && observation.valueCount != 0 && observation.firstValue <= sense.valueCount
+           && observation.valueCount <= sense.valueCount - observation.firstValue;
+}
+
+/** @return The decoded values of one observation. */
+[[nodiscard]] std::span<const sense_values::DecodedValue>
+observation_values(const host::SenseObservation& observation,
+                   const host::SenseObservationSnapshot& sense) noexcept {
+    return std::span(sense.values).subspan(observation.firstValue, observation.valueCount);
+}
+
+/**
+ * Finds the retained row for one slot, allocating a free row on a first observation.
+ * @return Null when every row is in use.
+ */
+template <typename Row, std::size_t N>
+[[nodiscard]] Row* find_slot_row(std::array<Row, N>& rows,
+                                 const host::SenseObservationKey& key) noexcept {
+    Row* spare = nullptr;
+    for (Row& retained : rows) {
+        if (retained.used && retained.registryKey == key.registryKey
+            && retained.objectTag == key.objectTag && retained.slotIndex == key.slotIndex) {
+            return &retained;
+        }
+        if (!retained.used && spare == nullptr) {
+            spare = &retained;
+        }
+    }
+    if (spare != nullptr) {
+        spare->used = true;
+        spare->registryKey = key.registryKey;
+        spare->objectTag = key.objectTag;
+        spare->slotIndex = key.slotIndex;
+    }
+    return spare;
+}
+
+void push_actor_path_edges(RuntimeInstance& instance,
+                           const host::SenseObservationSnapshot& sense) noexcept {
+    namespace auth = middleware::bap::activity_message::scriptable_auth;
+    for (std::size_t index = 0; index < sense.observationCount; ++index) {
+        const host::SenseObservation& observation = sense.observations[index];
+        if (!observation_of(observation, sense, auth::kType2SlotType, auth::kType2SenseSchema)) {
+            continue;
+        }
+        ActorPathObservation* const slot = find_slot_row(instance.actorPathObservations, observation.key);
+        if (slot == nullptr
+            || !update_actor_path_level(
+                slot->level, observation_values(observation, sense), observation.key.schemaRow)) {
+            continue;
+        }
+        host::Event event = sense_edge_event(instance, observation);
+        event.kind = host::EventKind::actorPathState;
+        event.actorGeneration = slot->level.generation;
+        event.actorPathRevision = slot->level.revision;
+        event.actorPathState = slot->level.state;
+        event.actorDeliveryRevision = slot->level.deliveryRevision;
+        event.actorDeliveryState = slot->level.deliveryState;
+        event.actorDeliveryKnown = (slot->level.seen & kActorSeenDelivery) == kActorSeenDelivery;
+        event.actorDead = slot->level.dead;
+        std::array<char, 160> details{};
+        const int written = std::snprintf(details.data(),
+                                          details.size(),
+                                          "registry=%08X slot=%u generation=%d revision=%d "
+                                          "state=%d dead=%u delivery_revision=%d delivery_state=%d",
+                                          slot->registryKey,
+                                          static_cast<unsigned>(slot->slotIndex),
+                                          slot->level.generation,
+                                          slot->level.revision,
+                                          slot->level.state,
+                                          slot->level.dead ? 1U : 0U,
+                                          event.actorDeliveryKnown ? slot->level.deliveryRevision : -1,
+                                          event.actorDeliveryKnown ? slot->level.deliveryState : -1);
+        if (written > 0 && static_cast<std::size_t>(written) < details.size()) {
+            log_line(core::log::Level::debug,
+                     &instance,
+                     "actor_path",
+                     "changed",
+                     {details.data(), static_cast<std::size_t>(written)});
+        }
+        push_script_event(instance, event);
+    }
+}
+
+void push_damage_edges(RuntimeInstance& instance,
+                       const host::SenseObservationSnapshot& sense) noexcept {
+    namespace damage = middleware::bap::activity_message::damage_monitor;
+    for (std::size_t index = 0; index < sense.observationCount; ++index) {
+        const host::SenseObservation& observation = sense.observations[index];
+        if (!observation_of(observation, sense, damage::kSlotType, damage::kSenseSchema)) {
+            continue;
+        }
+        float health = -1.0F;
+        float shield = -1.0F;
+        std::int32_t revision = 0;
+        bool revisionKnown = false;
+        for (const sense_values::DecodedValue& value : observation_values(observation, sense)) {
+            if (!value.present || value.schemaRow != observation.key.schemaRow) {
+                continue;
+            }
+            if (value.fieldOrdinal == kDamageHealthOrdinal) {
+                health = value.realValue;
+            } else if (value.fieldOrdinal == kDamageShieldOrdinal) {
+                shield = value.realValue;
+            } else if (value.fieldOrdinal == kDamageRevisionOrdinal) {
+                revision = static_cast<std::int32_t>(value.signedValue);
+                revisionKnown = true;
+            }
+        }
+        if (!revisionKnown || revision <= 0 || !std::isfinite(health) || !std::isfinite(shield)) {
+            continue;
+        }
+        DamageObservation* const row = find_slot_row(instance.damageObservations, observation.key);
+        if (row == nullptr || revision < row->revision
+            || (row->revision == revision && row->health == health && row->shield == shield)) {
+            continue;
+        }
+        row->revision = revision;
+        row->health = health;
+        row->shield = shield;
+        host::Event event = sense_edge_event(instance, observation);
+        event.kind = host::EventKind::damageState;
+        event.damageHealth = health;
+        event.damageShield = shield;
+        event.damageRevision = revision;
+        std::array<char, 128> details{};
+        const int written = std::snprintf(details.data(),
+                                          details.size(),
+                                          "registry=%08X slot=%u revision=%d health=%.4f shield=%.4f",
+                                          observation.key.registryKey,
+                                          static_cast<unsigned>(observation.key.slotIndex),
+                                          revision,
+                                          static_cast<double>(health),
+                                          static_cast<double>(shield));
+        if (written > 0 && static_cast<std::size_t>(written) < details.size()) {
+            log_line(core::log::Level::debug,
+                     &instance,
+                     "damage",
+                     "changed",
+                     {details.data(), static_cast<std::size_t>(written)});
+        }
+        push_script_event(instance, event);
+    }
+}
+
+void push_object_interaction_edges(RuntimeInstance& instance,
+                                   const host::SenseObservationSnapshot& sense) noexcept {
+    for (std::size_t index = 0; index < sense.observationCount; ++index) {
+        const host::SenseObservation& observation = sense.observations[index];
+        if (!observation_of(
+                observation, sense, format::kObjectSlotType, format::kObjectSenseSchema)) {
+            continue;
+        }
+        ObjectInteractionObservation* const slot =
+            find_slot_row(instance.objectInteractionObservations, observation.key);
+        if (slot == nullptr) {
+            continue;
+        }
+        const ObjectInteractionLevel before = slot->level;
+        const bool interacted = update_object_interaction(
+            slot->level, observation_values(observation, sense), observation.key.schemaRow);
+        const ObjectInteractionLevel& level = slot->level;
+        host::Event event = sense_edge_event(instance, observation);
+        event.objectGeneration = level.generation;
+        event.objectPresent = level.present;
+        event.objectAlive = level.alive;
+        event.objectOwnerKnown = level.ownerKnown;
+        event.objectHasOwner = level.hasOwner;
+        event.objectOwnerKey = level.ownerKey;
+        const bool stateChanged =
+            level.generationKnown && level.generation > 0 && level.stateKnown
+            && (!before.stateKnown || before.generation != level.generation
+                || before.present != level.present || before.alive != level.alive
+                || before.ownerKnown != level.ownerKnown || before.hasOwner != level.hasOwner
+                || before.ownerKey != level.ownerKey);
+        if (stateChanged) {
+            event.kind = host::EventKind::objectState;
+            std::array<char, 128> details{};
+            const int written = std::snprintf(details.data(),
+                                              details.size(),
+                                              "registry=%08X slot=%u generation=%d present=%u "
+                                              "alive=%u owner_known=%u has_owner=%u",
+                                              observation.key.registryKey,
+                                              static_cast<unsigned>(observation.key.slotIndex),
+                                              level.generation,
+                                              level.present ? 1U : 0U,
+                                              level.alive ? 1U : 0U,
+                                              level.ownerKnown ? 1U : 0U,
+                                              level.hasOwner ? 1U : 0U);
+            if (written > 0 && static_cast<std::size_t>(written) < details.size()) {
+                log_line(core::log::Level::debug,
+                         &instance,
+                         "object",
+                         "changed",
+                         {details.data(), static_cast<std::size_t>(written)});
+            }
+            push_script_event(instance, event);
+        }
+        if (interacted) {
+            event.kind = host::EventKind::objectInteracted;
+            push_script_event(instance, event);
+        }
+    }
+}
+
+void push_ghost_edges(RuntimeInstance& instance,
+                      const host::SenseObservationSnapshot& sense) noexcept {
+    namespace ghost = middleware::bap::activity_message::ghost_link;
+    for (std::size_t index = 0; index < sense.observationCount; ++index) {
+        const host::SenseObservation& observation = sense.observations[index];
+        if (!observation_of(observation, sense, ghost::kSlotType, ghost::kSenseSchema)) {
+            continue;
+        }
+        GhostObservation* const slot = find_slot_row(instance.ghostObservations, observation.key);
+        if (slot == nullptr
+            || !update_ghost_level(
+                slot->level, observation_values(observation, sense), observation.key.schemaRow)) {
+            continue;
+        }
+        host::Event event = sense_edge_event(instance, observation);
+        event.kind = host::EventKind::ghostLinkState;
+        event.ghostGeneration = slot->level.generation;
+        event.ghostProgress = slot->level.progress;
+        event.ghostActive = slot->level.active;
+        push_script_event(instance, event);
+    }
+}
+
 /**
  * Raises the squad events derived from one msg 6 body.
  * The client publishes levels, so a first sighting only records them. A slot count that rose is the
@@ -395,29 +637,38 @@ void push_squad_edges(RuntimeInstance& instance,
         const std::span<const sense_values::DecodedValue> body(
             &sense.values[observation.firstValue], observation.valueCount);
         const std::uint32_t root = observation.key.schemaRow;
-        // An unchanged squad sends an empty delta, which must not read as a squad of zero.
-        if (sense_value(body, root, kSquadAliveOrdinal) == nullptr) {
-            continue;
-        }
-        const std::int32_t alive = sense_number(body, root, kSquadAliveOrdinal);
-        const bool removal = sense_flag(body, root, kSquadRemovalOrdinal);
-        std::array<std::int32_t, host::kSquadSlotCapacity> counts{};
-        const std::uint8_t countLength = squad_slot_counts(body, root, counts);
-
         SquadObservation* const squad = find_squad(instance, observation.key);
-        if (squad == nullptr) {
+        if (squad == nullptr) continue;
+        const bool costsChanged = update_squad_objective_costs(squad->objectiveCosts, body, root);
+        // Cost-only deltas retain combat counts; they must never manufacture a death.
+        std::int32_t alive = squad->aliveCount;
+        const bool hasAlive = read_squad_alive(body, root, alive);
+        const bool removal = sense_flag(body, root, kSquadRemovalOrdinal);
+        auto counts = squad->slotCounts;
+        auto countLength = squad->slotCountLength;
+        std::array<std::int32_t, host::kSquadSlotCapacity> incomingCounts{};
+        const auto incomingLength = read_squad_consumed_counts(body, incomingCounts);
+        if (incomingLength != 0) {
+            counts = incomingCounts;
+            countLength = incomingLength;
+        }
+        if (!hasAlive && !costsChanged && incomingLength == 0) {
             continue;
         }
         const bool first = !squad->used;
         squad->used = true;
         const std::int32_t previousAlive = first ? 0 : squad->aliveCount;
-        const bool changed = first || squad->aliveCount != alive || squad->removalFlag != removal
+        const bool changed = costsChanged || first || squad->aliveCount != alive
+                             || squad->removalFlag != removal
                              || squad->slotCountLength != countLength
                              || squad->slotCounts != counts;
         if (!changed) {
             continue;
         }
         host::Event state = sense_edge_event(instance, observation);
+        state.squadObjectiveCosts = squad->objectiveCosts.values;
+        state.squadObjectiveCostMask = squad->objectiveCosts.known;
+        state.squadObjectiveRevision = squad->objectiveCosts.revision;
         state.squadAliveCount = alive;
         state.squadPreviousAliveCount = previousAlive;
         state.squadRemovalFlag = removal;

@@ -21,6 +21,7 @@
 #include "../../../state/activity/mission/runtime.h"
 #include "../../../state/activity/runtime.h"
 #include "../host_runtime.h"
+#include "mission_script_event_batch.h"
 #include "mission_script_runtime_internal.h"
 #include "mission_script_vm.h"
 
@@ -47,6 +48,20 @@ snapshot_state_intents(const lua_vm::Vm& vm,
                                  const lua_vm::MissionTimer& right) noexcept {
     return left.deadlineTick < right.deadlineTick
            || (left.deadlineTick == right.deadlineTick && left.sequence < right.sequence);
+}
+
+/** @return The life of the instance's own player, from its retained participation levels. */
+[[nodiscard]] PlayerLife own_player_life(const RuntimeInstance& instance) noexcept {
+    if (!instance.occupied
+        || instance.playerLifeGeneration != instance.view.activityClientGeneration) {
+        return PlayerLife::unknown;
+    }
+    for (const PlayerLifeObservation& life : instance.playerLife) {
+        if (instance.playerKey != 0 && life.playerKey == instance.playerKey) {
+            return life.life();
+        }
+    }
+    return PlayerLife::unknown;
 }
 
 } // namespace
@@ -101,6 +116,90 @@ void log_line(core::log::Level level,
         }
     }
     core::log::write(core::log::Channel::server, level, {line.data(), length});
+}
+
+/**
+ * Raises a fireteam event on each private instance whose party life counts changed. The party
+ * is the committed destination peers; a missing or loading member counts as unknown.
+ */
+void publish_fireteam_life(std::uint64_t now) noexcept {
+    for (RuntimeInstance& instance : g_instances) {
+        if (!instance.occupied || instance.publicTarget || !instance.sessionRosterObserved
+            || instance.programStatus != ProgramStatus::loaded) {
+            continue;
+        }
+        FireteamLife counts{};
+        counts.add(own_player_life(instance));
+        for (const SessionRosterWatch& peer : instance.sessionRoster) {
+            if (!peer.used) {
+                continue;
+            }
+            PlayerLife life = PlayerLife::unknown;
+            for (const RuntimeInstance& candidate : g_instances) {
+                if (candidate.occupied && !candidate.publicTarget
+                    && candidate.view.binding.sessionId == peer.sessionId
+                    && candidate.view.binding.createdRevision == peer.createdRevision) {
+                    life = own_player_life(candidate);
+                    break;
+                }
+            }
+            counts.add(life);
+        }
+        if (instance.fireteamLifePublished && counts == instance.lastFireteamLife) {
+            continue;
+        }
+        instance.lastFireteamLife = counts;
+        instance.fireteamLifePublished = true;
+        host::Event event{};
+        event.kind = host::EventKind::fireteamState;
+        event.binding = instance.view.binding;
+        event.sequence = instance.missionStateRevision;
+        event.sourceGeneration = instance.view.activityClientGeneration;
+        event.missionSequence = instance.lastMissionSequence;
+        event.tick = now;
+        event.fireteamAlive = counts.alive;
+        event.fireteamDead = counts.dead;
+        event.fireteamUnknown = counts.unknown;
+        push_script_event(instance, event);
+        std::array<char, 96> fields{};
+        const int length = std::snprintf(fields.data(),
+                                         fields.size(),
+                                         "alive=%u dead=%u unknown=%u",
+                                         static_cast<unsigned>(counts.alive),
+                                         static_cast<unsigned>(counts.dead),
+                                         static_cast<unsigned>(counts.unknown));
+        if (length > 0) {
+            log_line(core::log::Level::debug,
+                     &instance,
+                     "fireteam_life",
+                     "changed",
+                     {fields.data(), static_cast<std::size_t>(length)});
+        }
+    }
+}
+
+/** Merges the type-13 participation records of one Sense snapshot into the instance. */
+void observe_player_life(RuntimeInstance& instance,
+                         const host::SenseObservationSnapshot& sense) noexcept {
+    if (instance.playerLifeGeneration != sense.sourceGeneration) {
+        instance.playerLife = {};
+        instance.playerLifeGeneration = sense.sourceGeneration;
+    }
+    for (std::size_t index = 0; index < sense.observationCount; ++index) {
+        const host::SenseObservation& observation = sense.observations[index];
+        if (observation.key.slotType != kParticipationSlotType
+            || observation.key.senseSchema != kParticipationSenseSchema
+            || observation.key.objectTag != kParticipationObjectTag
+            || observation.key.slotIndex < kFirstParticipationSlot
+            || observation.key.slotIndex >= kFirstParticipationSlot + kParticipationSlotCount
+            || observation.firstValue > sense.valueCount
+            || observation.valueCount > sense.valueCount - observation.firstValue) {
+            continue;
+        }
+        update_player_life(
+            instance.playerLife[observation.key.slotIndex - kFirstParticipationSlot],
+            std::span(sense.values).subspan(observation.firstValue, observation.valueCount));
+    }
 }
 
 /**
@@ -182,11 +281,15 @@ void clear_instance(RuntimeInstance& instance, bool clearPending) noexcept {
     instance.startPending = false;
     instance.timerPending = false;
     instance.triggerOccupancy = {};
+    instance.ghostObservations = {};
+    instance.actorPathObservations = {};
     instance.squadObservations = {};
     instance.sceneObservations = {};
     instance.objectiveObservations = {};
     instance.sessionRoster = {};
     instance.sessionRosterObserved = false;
+    instance.playerLife={};instance.playerLifeGeneration=0;
+    instance.lastFireteamLife={};instance.fireteamLifePublished=false;
     std::vector<host::Event>{}.swap(instance.scriptEvents);
     instance.firstScriptEventAttempt = 0;
     instance.nextScriptEventAttempt = 0;
@@ -347,30 +450,30 @@ void retire_scriptless_inputs() noexcept {
     }
 }
 
-/**
- * Delivers at most one queued host-state event per instance, in arrival order.
- * These events carry no durable state, so each head is delivered once and then retired.
- */
+/** Delivers queued derived events in arrival order until one needs output or the batch is spent. */
 void service_script_events(std::uint64_t now) noexcept {
     for (RuntimeInstance& instance : g_instances) {
-        if (!instance.occupied || instance.scriptEventRead >= instance.scriptEvents.size()
-            || instance.programStatus != ProgramStatus::loaded || instance.startPending) {
-            continue;
-        }
-        lua_vm::Intent pendingIntent{};
-        if (instance.deliveryStage != DeliveryStage::idle
-            || lua_vm::pending_intent(instance.vm, pendingIntent)) {
-            continue;
-        }
-        const bool firstAttempt = instance.scriptEventAttempts == 0;
-        if (firstAttempt) {
-            instance.firstScriptEventAttempt = now;
-        }
-        ++instance.scriptEventAttempts;
-        host::Event& head = instance.scriptEvents[instance.scriptEventRead];
-        head.tick = now;
-        static_cast<void>(dispatch_event(instance, head, nullptr, nullptr, firstAttempt, now));
-        retire_script_event(instance);
+        const auto ready = [&] {
+            if (!instance.occupied || instance.scriptEventRead >= instance.scriptEvents.size()
+                || instance.programStatus != ProgramStatus::loaded || instance.startPending) {
+                return false;
+            }
+            lua_vm::Intent pendingIntent{};
+            return instance.deliveryStage == DeliveryStage::idle
+                   && !lua_vm::pending_intent(instance.vm, pendingIntent);
+        };
+        const auto dispatch = [&] {
+            const bool firstAttempt = instance.scriptEventAttempts == 0;
+            if (firstAttempt) {
+                instance.firstScriptEventAttempt = now;
+            }
+            ++instance.scriptEventAttempts;
+            host::Event& head = instance.scriptEvents[instance.scriptEventRead];
+            head.tick = now;
+            static_cast<void>(dispatch_event(instance, head, nullptr, nullptr, firstAttempt, now));
+            retire_script_event(instance);
+        };
+        static_cast<void>(drain_script_event_batch(ready, dispatch));
     }
 }
 

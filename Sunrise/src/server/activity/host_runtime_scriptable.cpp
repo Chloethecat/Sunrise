@@ -3,6 +3,7 @@
 #include <limits>
 #include <new>
 
+#include "../../middleware/bap/activity_message/mission_auth_patch.h"
 #include "../../middleware/bap/activity_message/sensor_auth_update.h"
 #include "../../state/activity/mission/runtime.h"
 #include "../../state/activity/runtime.h"
@@ -523,6 +524,41 @@ void apply_scriptable_control(const ScriptableRequest& request, std::uint64_t no
         std::copy_n(request.authBody.begin(), written, pending.body.begin());
     } else {
         encoded = false;
+    }
+    // A mission API body carries only the root fields it sets, and the native override replaces
+    // the whole object. Compose it over the last transported body for the same ClientRef first.
+    namespace patching = middleware::bap::activity_message::mission_auth_patch;
+    const std::span<const std::byte> patch = std::span(pending.body).first(written);
+    patching::Layout layout{};
+    const bool rootPatch =
+        encoded
+        && (request.kind == ScriptableOverrideKind::squad
+            || request.kind == ScriptableOverrideKind::sdkAuth)
+        && patching::parse(request.target.authSchema, patch, pending.bitCount, layout);
+    if (rootPatch) {
+        std::span<const std::byte> previous{};
+        std::size_t previousBits = 0;
+        // A tail never holds the same ClientRef as another pending body, so the predecessor is
+        // always in the transported estate.
+        for (const auto& retained : instance->scriptableAuthEstate) {
+            if (same_client_ref(retained.target, request.target)) {
+                previous = std::span(retained.body).first(retained.byteCount);
+                previousBits = retained.bitCount;
+                break;
+            }
+        }
+        std::size_t composedBits = 0;
+        encoded = patching::compose(request.target.authSchema,
+                                    previous,
+                                    previousBits,
+                                    patch,
+                                    pending.bitCount,
+                                    pending.body,
+                                    written,
+                                    composedBits);
+        if (encoded) {
+            pending.bitCount = static_cast<std::uint16_t>(composedBits);
+        }
     }
     if (!encoded || written > (std::numeric_limits<std::uint16_t>::max)()) {
         ++g_refusedControls;

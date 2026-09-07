@@ -24,6 +24,10 @@ struct PreparedScene final {
 [[nodiscard]] Status binding_status(const state::activity_sdk::BoundView& view,
                                     server::bap::ActivityLinkView& link) noexcept;
 
+/** Maps the shared binding result to the authored-scene refusal surface. */
+[[nodiscard]] SceneStatus scene_binding_status(const state::activity_sdk::BoundView& view,
+                                               server::bap::ActivityLinkView& link) noexcept;
+
 /** Maps the transport lease's closed set of connection and refusal outcomes. */
 [[nodiscard]] Status lease_status(server::bap::ActivityMissionSeedLeaseStatus status) noexcept;
 
