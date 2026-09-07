@@ -24,7 +24,6 @@
 #include "../hooks/cursor/runtime.h"
 #include "../hooks/graphics/graphics_hook_lifecycle.h"
 #include "../hooks/hitch_probe/hitch_probe.h"
-#include "../hooks/harvester_drop/harvester_drop_experiment.h"
 #include "../hooks/inactivity/inactivity_override.h"
 #include "../hooks/infinite_ammo/infinite_ammo.h"
 #include "../hooks/membership_probe/membership_probe.h"
@@ -175,8 +174,6 @@ void clear_game_targets() noexcept {
                                  : "ev=activate stage=package_keys result=fail");
     // Diagnostic capture reports its own outcome and never demotes this stage.
     (void)hooks::retail_log::install();
-    (void)hooks::vendor_banner::install();
-    (void)hooks::harvester_drop::install();
     (void)hooks::assert_handler::install();
     // Read-only. At a hitch it dumps every in-flight job record from the watchdog snapshot,
     // which names the job and thread the in-world freeze blocks on.

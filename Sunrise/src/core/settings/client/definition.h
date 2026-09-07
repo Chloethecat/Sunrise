@@ -32,8 +32,6 @@ struct Settings {
      * suppresses the orbit-side entry cinematic.
      */
     bool skipOrbitCinematicWait{false};
-    /** Force LoadingCinematics_Suppressed only for 1AU; other activities use the native predicate. */
-    bool suppressLoadingCinematics{false};
     /**
      * Pins the participation record to the replicated snapshot at `comp + 496`.
      * The msg-5 spawn hold reaches no other record.

@@ -1,14 +1,3 @@
-#include "../../../middleware/bap/activity_message/music_section_auth.h"
-#include "../../../middleware/bap/activity_message/mission_effect_auth.h"
-#include "../../../middleware/bap/activity_message/darkness_zone_auth.h"
-#include "../../../middleware/bap/activity_message/squad_objective_auth.h"
-#include "../../../middleware/bap/activity_message/combatant_path_auth.h"
-#include "../../../middleware/bap/activity_message/combatant_action_auth.h"
-#include "../../../middleware/bap/activity_message/combatant_delivery_auth.h"
-#include "../../../middleware/bap/activity_message/combatant_retire_auth.h"
-#include "../../../middleware/bap/activity_message/ghost_link_auth.h"
-#include "../../../middleware/bap/activity_message/interactable_object_auth.h"
-#include "../../../middleware/bap/activity_message/scene_events_auth.h"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -21,7 +10,16 @@
 #include <string_view>
 
 #include "../../../middleware/bap/activity_message/auth_schema_catalog.h"
+#include "../../../middleware/bap/activity_message/combatant_auth.h"
+#include "../../../middleware/bap/activity_message/damage_monitor_auth.h"
+#include "../../../middleware/bap/activity_message/darkness_zone_auth.h"
+#include "../../../middleware/bap/activity_message/ghost_link_auth.h"
+#include "../../../middleware/bap/activity_message/interactable_object_auth.h"
+#include "../../../middleware/bap/activity_message/mission_effect_auth.h"
+#include "../../../middleware/bap/activity_message/music_section_auth.h"
+#include "../../../middleware/bap/activity_message/scene_events_auth.h"
 #include "../../../middleware/bap/activity_message/sensor_auth_update.h"
+#include "../../../middleware/bap/activity_message/squad_objective_auth.h"
 #include "../../../middleware/encoding/bit_writer.h"
 #include "../../../state/activity_sdk/format.h"
 #include "../../../state/activity_sdk/runtime.h"
@@ -33,6 +31,7 @@ namespace format = state::activity_sdk::format;
 namespace slot_transport = middleware::bap::activity_message::sensor_auth_update;
 namespace scriptable_auth = middleware::bap::activity_message::scriptable_auth;
 namespace auth_catalog = middleware::bap::activity_message::auth_schema_catalog;
+namespace auth_fields = middleware::bap::activity_message::auth_fields;
 
 namespace {
 /** @return True when one live Slot row is an exact type-23 device. */
@@ -42,6 +41,39 @@ namespace {
            && definition.senseSchema == format::kDeviceSenseSchema
            && definition.authSchema == format::kDeviceAuthSchema
            && (definition.flags & format::kSlotSchemaJoinExact) != 0;
+}
+
+/** Positive 31-bit generations and revisions are the counters every typed Auth body accepts. */
+[[nodiscard]] bool valid_counter(lua_Integer value) noexcept {
+    return value > 0 && value <= auth_fields::kMaximumCounter;
+}
+
+/**
+ * Reads one optional slot-handle argument into a ClientRef.
+ * @param slotType Slot type the referenced slot must have.
+ * @param output Left unset when the argument is nil.
+ * @return False when the argument is present but stale or of another type.
+ */
+[[nodiscard]] bool optional_slot_reference(lua_State* state,
+                                           const char* name,
+                                           std::uint32_t slotType,
+                                           scriptable_auth::Type2LaneClientRef& output) {
+    lua_getfield(state, 2, name);
+    bool valid = true;
+    if (!lua_isnil(state, -1)) {
+        const auto* const handle =
+            static_cast<const SlotHandle*>(luaL_checkudata(state, -1, kSlotMetatable));
+        SlotDefinition definition{};
+        valid = current_slot(state, *handle, definition) && definition.slotType == slotType
+                && definition.slotIndex <= auth_fields::kMaximumClientRefIndex;
+        if (valid) {
+            output = {definition.registryKey,
+                      static_cast<std::int8_t>(slotType),
+                      static_cast<std::int16_t>(definition.slotIndex)};
+        }
+    }
+    lua_pop(state, 1);
+    return valid;
 }
 
 /** @return True when one live Slot row is an exact type-4 authored object. */
@@ -229,7 +261,9 @@ constexpr std::size_t kOccupancyAuthByteCount = 11;
 [[nodiscard]] int slot_set_directive(lua_State* state) {
     const auto* const handle =
         static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
-    static constexpr std::array<std::string_view, 4> kDeclared{"directive", "state", "navpoint", "audience"};
+    // Named arguments this call accepts. Any other key is refused.
+    static constexpr std::array<std::string_view, 4> kDeclared{
+        "directive", "state", "navpoint", "audience"};
     refuse_unknown_arguments(state, kDeclared);
     SlotDefinition slot{};
     if (!current_slot(state, *handle, slot)) {
@@ -266,26 +300,18 @@ constexpr std::size_t kOccupancyAuthByteCount = 11;
                                          .elementIndex = resolved.elementIndex,
                                          .state = static_cast<std::int8_t>(directiveState),
                                          .visible = true};
-    lua_getfield(state, 2, "audience");
-    if (!lua_isnil(state, -1)) {
-        const auto* ref = static_cast<const SlotHandle*>(luaL_checkudata(state, -1, kSlotMetatable));
-        SlotDefinition filter{};
-        if (!current_slot(state, *ref, filter) || filter.slotType != 70 || filter.slotIndex < 0
-            || filter.slotIndex > INT16_MAX)
-            return luaL_error(state, "directive audience requires an authored type-70 engagement sensor");
-        preset.audience = {filter.registryKey, 70, static_cast<std::int16_t>(filter.slotIndex)};
+    if (!optional_slot_reference(state,
+                                 "audience",
+                                 scriptable_auth::kType70SlotType,
+                                 preset.audience)) {
+        return luaL_error(state, "directive audience requires an authored type-70 engagement sensor");
     }
-    lua_pop(state, 1);
-    lua_getfield(state, 2, "navpoint");
-    if (!lua_isnil(state, -1)) {
-        const auto* targetHandle = static_cast<const SlotHandle*>(luaL_checkudata(state, -1, kSlotMetatable));
-        SlotDefinition target{};
-        if (!current_slot(state, *targetHandle, target) || target.slotType != 47
-            || target.slotIndex < 0 || target.slotIndex > INT16_MAX)
-            return luaL_error(state, "directive navpoint requires a current authored type-47 slot");
-        preset.navpoint = {target.registryKey, 47, static_cast<std::int16_t>(target.slotIndex)};
+    if (!optional_slot_reference(state,
+                                 "navpoint",
+                                 scriptable_auth::kType47SlotType,
+                                 preset.navpoint)) {
+        return luaL_error(state, "directive navpoint requires a current authored type-47 slot");
     }
-    lua_pop(state, 1);
     std::array<std::byte, scriptable_auth::kType68ByteCount> body{};
     std::size_t written = 0;
     if (!scriptable_auth::encode_type68(preset, body, written) || written != body.size()) {
@@ -347,168 +373,239 @@ constexpr std::size_t kOccupancyAuthByteCount = 11;
         state, slot, scriptable_auth::kType70Schema, scriptable_auth::kType70BitCount, body);
 }
 
-/** Enables the native restriction; roster assembly supplies its matching bubble. */
+/** Enables the native darkness restriction; roster assembly supplies its matching bubble. */
 [[nodiscard]] int slot_set_darkness_zone(lua_State* state) {
-    namespace darkness=middleware::bap::activity_message::darkness_zone;
-    const auto* handle=static_cast<const SlotHandle*>(luaL_checkudata(state,1,kSlotMetatable));
-    static constexpr std::array<std::string_view,2> declared{"enabled","wipe_seconds"};
-    refuse_unknown_arguments(state,declared);
+    namespace darkness = middleware::bap::activity_message::darkness_zone;
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    static constexpr std::array<std::string_view, 2> kDeclared{"enabled", "wipe_seconds"};
+    refuse_unknown_arguments(state, kDeclared);
     SlotDefinition slot{};
-    if (!current_slot(state,*handle,slot)||slot.slotType!=darkness::kSlotType
-        ||slot.componentClass!=darkness::kClass||slot.authSchema!=darkness::kSchema
-        ||(slot.flags&format::kSlotSchemaJoinExact)==0)
-        return luaL_error(state,"darkness zone requires the exact hard-wipe globals sensor");
-    std::array<std::byte,darkness::kBytes> body{};
-    const auto wipe=optional_integer_argument(state,"wipe_seconds",-1);
-    if (wipe < -1 || wipe>3
-        || !darkness::encode(optional_boolean_argument(state,"enabled",false),body,static_cast<int>(wipe)))
-        return luaL_error(state,"darkness zone encoder failed");
-    return queue_slot_auth(state,slot,darkness::kSchema,darkness::kBits,body);
+    if (!current_slot(state, *handle, slot) || slot.slotType != darkness::kSlotType
+        || slot.componentClass != darkness::kComponentClass || slot.authSchema != darkness::kSchema
+        || (slot.flags & format::kSlotSchemaJoinExact) == 0) {
+        return luaL_error(state, "darkness zone requires the exact hard-wipe globals sensor");
+    }
+    const lua_Integer wipe = optional_integer_argument(state, "wipe_seconds", darkness::kNoWipe);
+    std::array<std::byte, darkness::kBytes> body{};
+    if (wipe < darkness::kNoWipe || wipe > darkness::kMaximumWipeSeconds
+        || !darkness::encode(
+            optional_boolean_argument(state, "enabled", false), body, static_cast<int>(wipe))) {
+        return luaL_error(state, "darkness zone encoder failed");
+    }
+    return queue_slot_auth(state, slot, darkness::kSchema, darkness::kBits, body);
 }
+
+/** Volumes one filter may test; leaves room for the players, target and inside predicates. */
+constexpr std::size_t kMaximumFilterVolumes = 5;
+/** Type-34 predicate modes: 0 tests the flag or reference as given, 1 tests inside a volume. */
+constexpr std::int8_t kFilterModeDirect = 0;
+constexpr std::int8_t kFilterModeInside = 1;
 
 /** Native typed object filters: players, one object, and volume intersection. */
 [[nodiscard]] int slot_set_object_filter(lua_State* state) {
-    namespace auth = middleware::bap::activity_message::scriptable_auth;
-    const auto* handle=static_cast<const SlotHandle*>(luaL_checkudata(state,1,kSlotMetatable));
-    static constexpr std::array<std::string_view,4> fields{"players","target","inside","inside_any"};
-    refuse_unknown_arguments(state,fields);
+    namespace auth = scriptable_auth;
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    static constexpr std::array<std::string_view, 4> kDeclared{
+        "players", "target", "inside", "inside_any"};
+    refuse_unknown_arguments(state, kDeclared);
     SlotDefinition slot{};
-    if (!current_slot(state,*handle,slot) || slot.slotType!=34 || slot.authSchema!=auth::kType34Schema)
-        return luaL_error(state,"object filter requires an authored type-34 sensor");
+    if (!current_slot(state, *handle, slot) || slot.slotType != auth::kType34SlotType
+        || slot.authSchema != auth::kType34Schema) {
+        return luaL_error(state, "object filter requires an authored type-34 sensor");
+    }
     auth::Type34Body body{};
     lua_getfield(state, 2, "inside_any");
     const bool volumes = !lua_isnil(state, -1);
     if (volumes) {
         luaL_checktype(state, -1, LUA_TTABLE);
-        const auto count = lua_rawlen(state, -1);
-        if (count == 0 || count > 5) return luaL_error(state, "inside_any requires 1..5 authored volumes");
+        const std::size_t count = lua_rawlen(state, -1);
+        if (count == 0 || count > kMaximumFilterVolumes) {
+            return luaL_error(state, "inside_any volume count is outside the filter capacity");
+        }
         for (std::size_t index = 1; index <= count; ++index) {
             lua_rawgeti(state, -1, static_cast<lua_Integer>(index));
-            const auto* ref = static_cast<const SlotHandle*>(luaL_checkudata(state, -1, kSlotMetatable));
+            const auto* const volumeHandle =
+                static_cast<const SlotHandle*>(luaL_checkudata(state, -1, kSlotMetatable));
             SlotDefinition volume{};
-            if (!current_slot(state, *ref, volume) || volume.slotType != 60)
+            if (!current_slot(state, *volumeHandle, volume)
+                || volume.slotType != auth::kType60SlotType) {
                 return luaL_error(state, "inside_any requires authored type-60 volumes");
-            body.predicates[body.count++] = auth::Type34ModeFlagSlotRef{0, true,
-                {volume.registryKey, 60, static_cast<std::int16_t>(volume.slotIndex)}};
+            }
+            body.predicates[body.count++] = auth::Type34ModeFlagSlotRef{
+                kFilterModeDirect,
+                true,
+                {volume.registryKey,
+                 static_cast<std::int8_t>(auth::kType60SlotType),
+                 static_cast<std::int16_t>(volume.slotIndex)}};
             lua_pop(state, 1);
         }
     }
     lua_pop(state, 1);
-    if (optional_boolean_argument(state,"players",false))
-        body.predicates[body.count++]=auth::Type34ModeOnlyB{static_cast<std::int8_t>(volumes ? 1 : 0)};
-    for (const auto name : {"target", "inside"}) {
-        lua_getfield(state,2,name);
-        if (!lua_isnil(state,-1)) {
-            const auto* ref=static_cast<const SlotHandle*>(luaL_checkudata(state,-1,kSlotMetatable));
-            SlotDefinition target{};
-            if (!current_slot(state,*ref,target) || target.slotType != (std::string_view(name)=="target" ? 4 : 60))
-                return luaL_error(state,"filter target must be type 4; inside must be type 60");
-            const auth::Type2LaneClientRef client{target.registryKey,static_cast<std::int8_t>(target.slotType),static_cast<std::int16_t>(target.slotIndex)};
-            if (std::string_view(name)=="target") body.predicates[body.count++]=auth::Type34ModeSlotRefC{0,client};
-            else body.predicates[body.count++]=auth::Type34ModeFlagSlotRef{1,false,client};
-        }
-        lua_pop(state,1);
+    if (optional_boolean_argument(state, "players", false)) {
+        body.predicates[body.count++] =
+            auth::Type34ModeOnlyB{static_cast<std::int8_t>(volumes ? 1 : 0)};
     }
-    std::array<std::byte,auth::kType34MaximumByteCount> bytes{};std::size_t written{},bits{};
-    if (!auth::encode_type34(body,bytes,written,bits)) return luaL_error(state,"object filter encoder failed");
-    return queue_slot_auth(state,slot,auth::kType34Schema,bits,std::span(bytes).first(written));
+    auth::Type2LaneClientRef target{};
+    if (!optional_slot_reference(state, "target", auth::kType4SlotType, target)) {
+        return luaL_error(state, "filter target must be an authored type-4 object");
+    }
+    if (target.slotIndex >= 0) {
+        body.predicates[body.count++] = auth::Type34ModeSlotRefC{kFilterModeDirect, target};
+    }
+    auth::Type2LaneClientRef inside{};
+    if (!optional_slot_reference(state, "inside", auth::kType60SlotType, inside)) {
+        return luaL_error(state, "filter inside must be an authored type-60 volume");
+    }
+    if (inside.slotIndex >= 0) {
+        body.predicates[body.count++] = auth::Type34ModeFlagSlotRef{kFilterModeInside, false, inside};
+    }
+    std::array<std::byte, auth::kType34MaximumByteCount> bytes{};
+    std::size_t written = 0;
+    std::size_t bits = 0;
+    if (!auth::encode_type34(body, bytes, written, bits)) {
+        return luaL_error(state, "object filter encoder failed");
+    }
+    return queue_slot_auth(state, slot, auth::kType34Schema, bits, std::span(bytes).first(written));
 }
+/** Attaches the authored hop-on effect to the entities a type-34 filter selects. */
 [[nodiscard]] int slot_set_mission_effect(lua_State* state) {
-    namespace effect=middleware::bap::activity_message::mission_effect;
-    namespace auth=middleware::bap::activity_message::scriptable_auth;
-    const auto* handle=static_cast<const SlotHandle*>(luaL_checkudata(state,1,kSlotMetatable));
-    static constexpr std::array<std::string_view,3> fields{"filter","enabled","revision"};
-    refuse_unknown_arguments(state,fields);
+    namespace effect = middleware::bap::activity_message::mission_effect;
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    static constexpr std::array<std::string_view, 3> kDeclared{"filter", "enabled", "revision"};
+    refuse_unknown_arguments(state, kDeclared);
     SlotDefinition slot{};
-    if (!current_slot(state,*handle,slot) || slot.slotType!=26 || slot.authSchema!=0x8080954BU)
-        return luaL_error(state,"mission effect requires an authored type-26 hop-on");
-    const bool enabled=optional_boolean_argument(state,"enabled",true);
-    auth::Type2LaneClientRef client{};
-    if (enabled) {
-        lua_getfield(state,2,"filter");
-        const auto* ref=static_cast<const SlotHandle*>(luaL_checkudata(state,-1,kSlotMetatable));
-        SlotDefinition filter{};
-        if (!current_slot(state,*ref,filter) || filter.slotType!=34) return luaL_error(state,"mission effect requires a type-34 filter");
-        client={filter.registryKey,34,static_cast<std::int16_t>(filter.slotIndex)};lua_pop(state,1);
+    if (!current_slot(state, *handle, slot) || slot.slotType != effect::kSlotType
+        || slot.authSchema != effect::kSchema) {
+        return luaL_error(state, "mission effect requires an authored type-26 hop-on");
     }
-    const auto revision=optional_integer_argument(state,"revision",1);
-    if (revision<=0 || revision>INT32_MAX) return luaL_error(state,"effect revision must be positive");
-    std::array<std::byte,effect::kBytes> body{};std::size_t written{};
-    if (!effect::encode(client,enabled,static_cast<std::int32_t>(revision),body,written)) return luaL_error(state,"mission effect encoder failed");
-    return queue_slot_auth(state,slot,0x8080954BU,effect::kBits,body);
+    const bool enabled = optional_boolean_argument(state, "enabled", true);
+    scriptable_auth::Type2LaneClientRef filter{};
+    if (enabled) {
+        lua_getfield(state, 2, "filter");
+        const bool present = !lua_isnil(state, -1);
+        lua_pop(state, 1);
+        if (!present
+            || !optional_slot_reference(state, "filter", scriptable_auth::kType34SlotType, filter)) {
+            return luaL_error(state, "mission effect requires a type-34 filter");
+        }
+    }
+    const lua_Integer revision = optional_integer_argument(state, "revision", 1);
+    if (!valid_counter(revision)) {
+        return luaL_error(state, "effect revision must be positive");
+    }
+    std::array<std::byte, effect::kBytes> body{};
+    std::size_t written = 0;
+    if (!effect::encode(filter, enabled, static_cast<std::int32_t>(revision), body, written)) {
+        return luaL_error(state, "mission effect encoder failed");
+    }
+    return queue_slot_auth(state, slot, effect::kSchema, effect::kBits, body);
 }
 
-/** Binds an authored damage monitor to its exact object, with a retry revision. */
+/** Binds an authored damage monitor to one exact object; a new revision re-binds it. */
 [[nodiscard]] int slot_watch_damage(lua_State* state) {
-    const auto* handle = static_cast<const SlotHandle*>(luaL_checkudata(state,1,kSlotMetatable));
-    static constexpr std::array<std::string_view,2> fields{"target", "revision"};
-    refuse_unknown_arguments(state,fields);
-    SlotDefinition slot{}, target{};
-    if (!current_slot(state,*handle,slot) || slot.slotType != 20 || slot.authSchema != 0x80809563U)
-        return luaL_error(state,"damage watch requires an authored type-20 monitor");
-    lua_getfield(state,2,"target");
-    const auto* ref = static_cast<const SlotHandle*>(luaL_checkudata(state,-1,kSlotMetatable));
-    if (!current_slot(state,*ref,target) || !exact_object_slot(target))
-        return luaL_error(state,"damage target must be an authored type-4 object");
-    lua_pop(state,1);
-    const auto revision = optional_integer_argument(state,"revision",1);
-    if (revision <= 0 || revision > INT32_MAX) return luaL_error(state,"damage revision must be positive");
-    std::array<std::byte,11> body{}; std::size_t written{};
-    middleware::encoding::bits::Writer writer(body);
-    if (!writer.write(target.registryKey,32) || !writer.write(5,7)
-        || !writer.write(static_cast<std::uint16_t>(target.slotIndex) + 32768U,16)
-        || !writer.write(static_cast<std::uint32_t>(revision) + 0x80000000U,32)
-        || !writer.finish(written)) return luaL_error(state,"damage monitor encoder failed");
-    return queue_slot_auth(state,slot,0x80809563U,87,body);
+    namespace damage = middleware::bap::activity_message::damage_monitor;
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    static constexpr std::array<std::string_view, 2> kDeclared{"target", "revision"};
+    refuse_unknown_arguments(state, kDeclared);
+    SlotDefinition slot{};
+    if (!current_slot(state, *handle, slot) || slot.slotType != damage::kSlotType
+        || slot.authSchema != damage::kAuthSchema) {
+        return luaL_error(state, "damage watch requires an authored type-20 monitor");
+    }
+    lua_getfield(state, 2, "target");
+    const auto* const targetHandle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, -1, kSlotMetatable));
+    SlotDefinition target{};
+    const bool exact = current_slot(state, *targetHandle, target) && exact_object_slot(target);
+    lua_pop(state, 1);
+    if (!exact) {
+        return luaL_error(state, "damage target must be an authored type-4 object");
+    }
+    const lua_Integer revision = optional_integer_argument(state, "revision", 1);
+    if (!valid_counter(revision)) {
+        return luaL_error(state, "damage revision must be positive");
+    }
+    std::array<std::byte, damage::kBytes> body{};
+    std::size_t written = 0;
+    if (!damage::encode(target.registryKey,
+                        static_cast<std::uint16_t>(target.slotIndex),
+                        static_cast<std::int32_t>(revision),
+                        body,
+                        written)) {
+        return luaL_error(state, "damage monitor encoder failed");
+    }
+    return queue_slot_auth(state, slot, damage::kAuthSchema, damage::kBits, body);
 }
 
-/** Selects one authored section in a native music sensor's 128-bit mask. */
+/** Selects one authored section in a native music sensor's selection mask. */
 [[nodiscard]] int slot_set_music_section(lua_State* state) {
     namespace music = middleware::bap::activity_message::music_section;
-    const auto* handle = static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
-    static constexpr std::array<std::string_view, 2> declared{"section", "enabled"};
-    refuse_unknown_arguments(state, declared);
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    static constexpr std::array<std::string_view, 2> kDeclared{"section", "enabled"};
+    refuse_unknown_arguments(state, kDeclared);
     SlotDefinition slot{};
-    const auto section = checked_integer_argument(state, "section");
-    if (!current_slot(state, *handle, slot) || slot.slotType != 11 || slot.componentClass != music::kClass
-        || slot.authSchema != music::kSchema || !(slot.flags & format::kSlotSchemaJoinExact)
-        || section < 0 || section >= 128)
-        return luaL_error(state, "music requires an exact type-11 sensor and section index 0..127");
+    const lua_Integer section = checked_integer_argument(state, "section");
+    if (!current_slot(state, *handle, slot) || slot.slotType != music::kSlotType
+        || slot.componentClass != music::kComponentClass || slot.authSchema != music::kSchema
+        || (slot.flags & format::kSlotSchemaJoinExact) == 0 || section < 0
+        || section >= static_cast<lua_Integer>(music::kSectionCount)) {
+        return luaL_error(state, "music requires an exact type-11 sensor and a section index");
+    }
     std::array<std::byte, music::kBytes> body{};
-    std::size_t written{};
-    if (!music::encode(static_cast<std::uint8_t>(section), optional_boolean_argument(state, "enabled", true), body, written))
+    std::size_t written = 0;
+    if (!music::encode(static_cast<std::uint8_t>(section),
+                       optional_boolean_argument(state, "enabled", true),
+                       body,
+                       written)) {
         return luaL_error(state, "music section encoder failed");
+    }
     return queue_slot_auth(state, slot, music::kSchema, music::kBits, body);
 }
 
 /** Spawns authored entry zero and subscribes to accepted native player use. */
 [[nodiscard]] int slot_set_interactable_object(lua_State* state) {
     namespace object = middleware::bap::activity_message::interactable_object;
-    const auto* handle = static_cast<const SlotHandle*>(luaL_checkudata(state,1,kSlotMetatable));
-    static constexpr std::array<std::string_view,3> declared{"generation", "track_owner", "active"};
-    refuse_unknown_arguments(state,declared);
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    static constexpr std::array<std::string_view, 3> kDeclared{"generation", "track_owner", "active"};
+    refuse_unknown_arguments(state, kDeclared);
     SlotDefinition slot{};
-    if (!current_slot(state,*handle,slot) || !exact_object_slot(slot))
-        return luaL_error(state,"interaction requires an exact authored object");
-    const auto generation = optional_integer_argument(state,"generation",1);
-    if (generation <= 0 || generation > 0x7FFFFFFF)
-        return luaL_error(state,"object generation must be a positive int32");
-    const bool trackOwner = optional_boolean_argument(state,"track_owner",false);
-    std::array<std::byte,object::kOwnerBytes> body{};
-    std::size_t written{};
-    if (!object::encode(static_cast<std::int32_t>(generation),body,written,trackOwner,
-        optional_boolean_argument(state,"active",true)))
-        return luaL_error(state,"interactable object encoder failed");
-    return queue_slot_auth(state,slot,object::kSchema,trackOwner ? object::kOwnerBits : object::kBits,
-        std::span(body).first(written));
+    if (!current_slot(state, *handle, slot) || !exact_object_slot(slot)) {
+        return luaL_error(state, "interaction requires an exact authored object");
+    }
+    const lua_Integer generation = optional_integer_argument(state, "generation", 1);
+    if (!valid_counter(generation)) {
+        return luaL_error(state, "object generation must be a positive int32");
+    }
+    const bool trackOwner = optional_boolean_argument(state, "track_owner", false);
+    std::array<std::byte, object::kOwnerBytes> body{};
+    std::size_t written = 0;
+    if (!object::encode(static_cast<std::int32_t>(generation),
+                        body,
+                        written,
+                        trackOwner,
+                        optional_boolean_argument(state, "active", true))) {
+        return luaL_error(state, "interactable object encoder failed");
+    }
+    return queue_slot_auth(state,
+                           slot,
+                           object::kSchema,
+                           trackOwner ? object::kOwnerBits : object::kBits,
+                           std::span(body).first(written));
 }
 
 /** Enables the authored Ghost interaction without replacing its action hash. */
 [[nodiscard]] int slot_set_ghost_link(lua_State* state) {
     namespace ghost = middleware::bap::activity_message::ghost_link;
-    const auto* handle = static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
-    static constexpr std::array<std::string_view, 2> declared{"generation", "enabled"};
-    refuse_unknown_arguments(state, declared);
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    static constexpr std::array<std::string_view, 2> kDeclared{"generation", "enabled"};
+    refuse_unknown_arguments(state, kDeclared);
     SlotDefinition slot{};
     if (!current_slot(state, *handle, slot) || slot.slotType != ghost::kSlotType
         || slot.componentClass != ghost::kComponentClass || slot.authSchema != ghost::kAuthSchema
@@ -516,7 +613,7 @@ constexpr std::size_t kOccupancyAuthByteCount = 11;
         return luaL_error(state, "activity slot is not an exact Ghost-link sensor");
     }
     const lua_Integer generation = checked_integer_argument(state, "generation");
-    if (generation <= 0 || generation > 0x7FFFFFFF) {
+    if (!valid_counter(generation)) {
         return luaL_error(state, "Ghost-link generation must be a positive int32");
     }
     const bool enabled = optional_boolean_argument(state, "enabled", true);
@@ -590,154 +687,227 @@ constexpr std::size_t kOccupancyAuthByteCount = 11;
         state, slot, scriptable_auth::kType71Schema, scriptable_auth::kType71BitCount, bytes);
 }
 
+/** @return True when one live Slot row is an exact squad in the given registry. */
+[[nodiscard]] bool exact_squad_of(const SlotDefinition& squad, const SlotDefinition& owner) noexcept {
+    return squad.slotType == format::kSquadSlotType
+           && squad.componentClass == format::kSquadComponentClass
+           && (squad.flags & format::kSlotSchemaJoinExact) != 0
+           && squad.registryKey == owner.registryKey && squad.objectTag == owner.objectTag
+           && squad.slotIndex <= auth_fields::kMaximumClientRefIndex;
+}
+
 /** Assigns a squad to a native combat objective and its selected task group. */
 [[nodiscard]] int slot_assign_combat_objective(lua_State* state) {
     namespace objective = middleware::bap::activity_message::squad_objective;
-    const auto* handle = static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
-    static constexpr std::array<std::string_view, 4> declared{"objective", "revision", "task_group", "reserved"};
-    refuse_unknown_arguments(state, declared);
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    static constexpr std::array<std::string_view, 4> kDeclared{
+        "objective", "revision", "task_group", "reserved"};
+    refuse_unknown_arguments(state, kDeclared);
     const auto reference = checked_argument<SlotHandle>(state, "objective", kSlotMetatable);
-    const auto revision = checked_integer_argument(state, "revision");
-    const auto group = checked_integer_argument(state, "task_group");
+    const lua_Integer revision = checked_integer_argument(state, "revision");
+    const lua_Integer group = checked_integer_argument(state, "task_group");
     const bool reserved = optional_boolean_argument(state, "reserved", false);
-    SlotDefinition squad{}, target{};
-    if (!current_slot(state, *handle, squad) || squad.slotType != 1
+    SlotDefinition squad{};
+    SlotDefinition target{};
+    if (!current_slot(state, *handle, squad) || squad.slotType != format::kSquadSlotType
         || squad.componentClass != format::kSquadComponentClass
-        || squad.authSchema != objective::kSchema || !(squad.flags & format::kSlotSchemaJoinExact)
+        || squad.authSchema != objective::kSchema
+        || (squad.flags & format::kSlotSchemaJoinExact) == 0
         || !current_slot(state, reference, target) || !exact_objective_reset_slot(target)
-        || target.componentClass != 0x80808348 || squad.registryKey != target.registryKey)
-        return luaL_error(state, "combat objective requires exact squad/objective slots in the same registry");
-    if (revision <= 0 || revision > 0x7fffffff || group < -1 || group >= 24 || target.slotIndex > 32767)
-        return luaL_error(state, "combat objective revision, group or index is outside its native range");
+        || target.componentClass != format::kObjectiveComponentClass
+        || squad.registryKey != target.registryKey) {
+        return luaL_error(
+            state, "combat objective requires exact squad/objective slots in the same registry");
+    }
+    if (!valid_counter(revision) || group < objective::kNoTaskGroup
+        || group >= objective::kTaskGroupCount
+        || target.slotIndex > auth_fields::kMaximumClientRefIndex) {
+        return luaL_error(
+            state, "combat objective revision, group or index is outside its native range");
+    }
     std::array<std::byte, objective::kBytes> body{};
-    if (!objective::encode({target.registryKey, static_cast<std::uint32_t>(revision),
-                           static_cast<std::uint16_t>(target.slotIndex), static_cast<std::int32_t>(group), reserved}, body))
+    if (!objective::encode({target.registryKey,
+                            static_cast<std::uint32_t>(revision),
+                            static_cast<std::uint16_t>(target.slotIndex),
+                            static_cast<std::int32_t>(group),
+                            reserved},
+                           body)) {
         return luaL_error(state, "combat objective encoder failed");
+    }
     return queue_slot_auth(state, squad, objective::kSchema, objective::kBits, body);
 }
 
 /** Creates a named actor and starts one package-authored movement path. */
 [[nodiscard]] int slot_play_actor_path(lua_State* state) {
-    namespace path = middleware::bap::activity_message::combatant_path;
-    const auto* handle = static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
-    static constexpr std::array<std::string_view, 3> declared{"generation", "revision", "path"};
-    refuse_unknown_arguments(state, declared);
-    const auto generation = checked_integer_argument(state, "generation");
-    const auto revision = checked_integer_argument(state, "revision");
+    namespace combatant = middleware::bap::activity_message::combatant_auth;
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    static constexpr std::array<std::string_view, 3> kDeclared{"generation", "revision", "path"};
+    refuse_unknown_arguments(state, kDeclared);
+    const lua_Integer generation = checked_integer_argument(state, "generation");
+    const lua_Integer revision = checked_integer_argument(state, "revision");
     const auto reference = checked_argument<SlotHandle>(state, "path", kSlotMetatable);
-    SlotDefinition actor{}, sequence{};
+    SlotDefinition actor{};
+    SlotDefinition path{};
     if (!current_slot(state, *handle, actor) || !exact_combatant_slot(actor)
-        || !current_slot(state, reference, sequence) || sequence.slotType != 58
-        || sequence.componentClass != 0x80807D9B || actor.objectTag != sequence.objectTag
-        || actor.registryKey != sequence.registryKey)
-        return luaL_error(state, "actor path requires an exact member and same-registry type-58 path");
-    if (generation <= 0 || generation > 0x7fffffff || revision <= 0 || revision > 0x7fffffff
-        || sequence.slotIndex > 32767)
-        return luaL_error(state, "actor path generation, revision or index is outside its native range");
-    std::array<std::byte, path::kBytes> body{};
-    if (!path::encode({static_cast<std::uint32_t>(generation), static_cast<std::uint32_t>(revision),
-                      sequence.registryKey, static_cast<std::uint16_t>(sequence.slotIndex)}, body))
+        || !current_slot(state, reference, path) || path.slotType != combatant::kPathSlotType
+        || path.componentClass != combatant::kPathComponentClass
+        || actor.objectTag != path.objectTag || actor.registryKey != path.registryKey) {
+        return luaL_error(state,
+                          "actor path requires an exact member and same-registry type-58 path");
+    }
+    if (!valid_counter(generation) || !valid_counter(revision)
+        || path.slotIndex > auth_fields::kMaximumClientRefIndex) {
+        return luaL_error(
+            state, "actor path generation, revision or index is outside its native range");
+    }
+    std::array<std::byte, combatant::kPathBytes> body{};
+    if (!combatant::encode_path({static_cast<std::uint32_t>(generation),
+                                 static_cast<std::uint32_t>(revision),
+                                 path.registryKey,
+                                 static_cast<std::uint16_t>(path.slotIndex)},
+                                body)) {
         return luaL_error(state, "actor path encoder failed");
-    return queue_slot_auth(state, actor, path::kSchema, path::kBits, body);
+    }
+    return queue_slot_auth(state, actor, combatant::kSchema, combatant::kPathBits, body);
 }
 
 /** Runs an authored native custom action without recreating its actor. */
 [[nodiscard]] int slot_play_actor_action(lua_State* state) {
-    namespace action = middleware::bap::activity_message::combatant_action;
-    const auto* handle = static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
-    static constexpr std::array<std::string_view, 4> declared{"generation", "revision", "group", "action"};
-    refuse_unknown_arguments(state, declared);
-    const auto generation = checked_integer_argument(state, "generation");
-    const auto revision = checked_integer_argument(state, "revision");
-    const auto group = checked_integer_argument(state, "group");
-    const auto name = checked_integer_argument(state, "action");
+    namespace combatant = middleware::bap::activity_message::combatant_auth;
+    constexpr lua_Integer kMaximumHash = (std::numeric_limits<std::uint32_t>::max)();
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    static constexpr std::array<std::string_view, 4> kDeclared{
+        "generation", "revision", "group", "action"};
+    refuse_unknown_arguments(state, kDeclared);
+    const lua_Integer generation = checked_integer_argument(state, "generation");
+    const lua_Integer revision = checked_integer_argument(state, "revision");
+    const lua_Integer group = checked_integer_argument(state, "group");
+    const lua_Integer action = checked_integer_argument(state, "action");
     SlotDefinition actor{};
     if (!current_slot(state, *handle, actor) || !exact_combatant_slot(actor)
-        || generation <= 0 || generation > 0x7fffffff || revision <= 0 || revision > 0x7fffffff
-        || group < 0 || group > 0xffffffffLL || name <= 0 || name > 0xffffffffLL)
-        return luaL_error(state, "actor action requires an exact member and valid native identities");
-    std::array<std::byte, action::kBytes> body{};
-    if (!action::encode({static_cast<std::uint32_t>(generation), static_cast<std::uint32_t>(revision),
-                        static_cast<std::uint32_t>(group), static_cast<std::uint32_t>(name)}, body))
-        return luaL_error(state, "actor action encoder failed");
-    return queue_slot_auth(state, actor, action::kSchema, action::kBits, body);
-}
-
-/** Gives a reserved squad to the named actor's native passenger-delivery component. */
-[[nodiscard]] int slot_deliver_squad(lua_State* state) {
-    namespace delivery = middleware::bap::activity_message::combatant_delivery;
-    const auto* handle = static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
-    static constexpr std::array<std::string_view, 3> declared{"generation", "revision", "squad"};
-    refuse_unknown_arguments(state, declared);
-    const auto generation = checked_integer_argument(state, "generation");
-    const auto revision = checked_integer_argument(state, "revision");
-    const auto reference = checked_argument<SlotHandle>(state, "squad", kSlotMetatable);
-    SlotDefinition actor{}, squad{};
-    if (!current_slot(state, *handle, actor) || !exact_combatant_slot(actor)
-        || !current_slot(state, reference, squad) || squad.slotType != 1
-        || squad.componentClass != format::kSquadComponentClass
-        || !(squad.flags & format::kSlotSchemaJoinExact)
-        || actor.objectTag != squad.objectTag || actor.registryKey != squad.registryKey)
-        return luaL_error(state, "delivery requires an exact member and same-registry squad");
-    if (generation <= 0 || generation > 0x7fffffff || revision <= 0 || revision > 0x7fffffff
-        || squad.slotIndex > 32767)
-        return luaL_error(state, "delivery generation, revision or index is outside its native range");
-    std::array<std::byte, delivery::kBytes> body{};
-    if (!delivery::encode({static_cast<std::uint32_t>(generation), static_cast<std::uint32_t>(revision),
-                          squad.registryKey, static_cast<std::uint16_t>(squad.slotIndex)}, body))
-        return luaL_error(state, "delivery encoder failed");
-    return queue_slot_auth(state, actor, delivery::kSchema, delivery::kBits, body);
-}
-
-/** Sends one native manifest so multiple reserved squads share the same ship and unload. */
-[[nodiscard]] int slot_deliver_squads(lua_State* state) {
-    namespace delivery = middleware::bap::activity_message::combatant_delivery;
-    const auto* handle = static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
-    static constexpr std::array<std::string_view,3> declared{"generation","revision","squads"};
-    refuse_unknown_arguments(state, declared);
-    const auto generation = checked_integer_argument(state, "generation");
-    const auto revision = checked_integer_argument(state, "revision");
-    SlotDefinition actor{};
-    if (!current_slot(state,*handle,actor) || !exact_combatant_slot(actor)
-        || generation <= 0 || generation > 0x7fffffff || revision <= 0 || revision > 0x7fffffff)
-        return luaL_error(state,"delivery requires an exact actor and positive generation/revision");
-    lua_getfield(state,2,"squads"); luaL_checktype(state,-1,LUA_TTABLE);
-    const int list=lua_gettop(state); const auto count=lua_rawlen(state,list);
-    if (count==0 || count>delivery::kMaxSquads) return luaL_error(state,"delivery needs 1..8 reserved squads");
-    std::array<delivery::SquadReference,delivery::kMaxSquads> refs{};
-    for (std::size_t i=0;i<count;++i) {
-        lua_rawgeti(state,list,static_cast<lua_Integer>(i+1));
-        const auto* squadHandle=static_cast<const SlotHandle*>(luaL_checkudata(state,-1,kSlotMetatable));
-        SlotDefinition squad{};
-        if (!current_slot(state,*squadHandle,squad) || squad.slotType!=1
-            || squad.componentClass!=format::kSquadComponentClass || !(squad.flags & format::kSlotSchemaJoinExact)
-            || squad.registryKey!=actor.registryKey || squad.objectTag!=actor.objectTag || squad.slotIndex>32767)
-            return luaL_error(state,"delivery squads must be exact and in the actor's registry");
-        refs[i]={squad.registryKey,static_cast<std::uint16_t>(squad.slotIndex)};
-        lua_pop(state,1);
+        || !valid_counter(generation) || !valid_counter(revision) || group < 0
+        || group > kMaximumHash || action <= 0 || action > kMaximumHash) {
+        return luaL_error(state,
+                          "actor action requires an exact member and valid native identities");
     }
-    lua_pop(state,1);
-    std::array<std::byte,delivery::kMaxBytes> body{}; std::size_t written{},bits{};
-    if (!delivery::encode_many(static_cast<std::uint32_t>(generation),static_cast<std::uint32_t>(revision),
-        std::span(refs).first(count),body,written,bits)) return luaL_error(state,"invalid delivery manifest");
-    return queue_slot_auth(state,actor,delivery::kSchema,bits,std::span(body).first(written));
+    std::array<std::byte, combatant::kActionBytes> body{};
+    if (!combatant::encode_action({static_cast<std::uint32_t>(generation),
+                                   static_cast<std::uint32_t>(revision),
+                                   static_cast<std::uint32_t>(group),
+                                   static_cast<std::uint32_t>(action)},
+                                  body)) {
+        return luaL_error(state, "actor action encoder failed");
+    }
+    return queue_slot_auth(state, actor, combatant::kSchema, combatant::kActionBits, body);
 }
 
-/** Disables the named actor after completion, including retained Auth on region reload. */
-[[nodiscard]] int slot_retire_actor(lua_State* state) {
-    namespace retire = middleware::bap::activity_message::combatant_retire;
-    const auto* handle = static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
-    static constexpr std::array<std::string_view, 1> declared{"generation"};
-    refuse_unknown_arguments(state, declared);
-    const auto generation = checked_integer_argument(state, "generation");
+/**
+ * Encodes and queues one delivery manifest for the named actor.
+ * @param squads Reserved squads in the actor's registry.
+ */
+[[nodiscard]] int queue_delivery(
+    lua_State* state,
+    const SlotDefinition& actor,
+    lua_Integer generation,
+    lua_Integer revision,
+    std::span<const middleware::bap::activity_message::combatant_auth::SquadReference> squads) {
+    namespace combatant = middleware::bap::activity_message::combatant_auth;
+    std::array<std::byte, combatant::kDeliveryMaximumBytes> body{};
+    std::size_t written = 0;
+    std::size_t bits = 0;
+    if (!combatant::encode_delivery(static_cast<std::uint32_t>(generation),
+                                    static_cast<std::uint32_t>(revision),
+                                    squads,
+                                    body,
+                                    written,
+                                    bits)) {
+        return luaL_error(state, "invalid delivery manifest");
+    }
+    return queue_slot_auth(state, actor, combatant::kSchema, bits, std::span(body).first(written));
+}
+
+/** Gives one reserved squad to the named actor's native passenger-delivery component. */
+[[nodiscard]] int slot_deliver_squad(lua_State* state) {
+    namespace combatant = middleware::bap::activity_message::combatant_auth;
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    static constexpr std::array<std::string_view, 3> kDeclared{"generation", "revision", "squad"};
+    refuse_unknown_arguments(state, kDeclared);
+    const lua_Integer generation = checked_integer_argument(state, "generation");
+    const lua_Integer revision = checked_integer_argument(state, "revision");
+    const auto reference = checked_argument<SlotHandle>(state, "squad", kSlotMetatable);
+    SlotDefinition actor{};
+    SlotDefinition squad{};
+    if (!current_slot(state, *handle, actor) || !exact_combatant_slot(actor)
+        || !current_slot(state, reference, squad) || !exact_squad_of(squad, actor)) {
+        return luaL_error(state, "delivery requires an exact member and same-registry squad");
+    }
+    if (!valid_counter(generation) || !valid_counter(revision)) {
+        return luaL_error(state, "delivery generation or revision is outside its native range");
+    }
+    const std::array<combatant::SquadReference, 1> squads{
+        {{squad.registryKey, static_cast<std::uint16_t>(squad.slotIndex)}}};
+    return queue_delivery(state, actor, generation, revision, squads);
+}
+
+/** Sends one manifest so several reserved squads share the same ship and unload together. */
+[[nodiscard]] int slot_deliver_squads(lua_State* state) {
+    namespace combatant = middleware::bap::activity_message::combatant_auth;
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    static constexpr std::array<std::string_view, 3> kDeclared{"generation", "revision", "squads"};
+    refuse_unknown_arguments(state, kDeclared);
+    const lua_Integer generation = checked_integer_argument(state, "generation");
+    const lua_Integer revision = checked_integer_argument(state, "revision");
     SlotDefinition actor{};
     if (!current_slot(state, *handle, actor) || !exact_combatant_slot(actor)
-        || generation <= 0 || generation > 0x7fffffff)
+        || !valid_counter(generation) || !valid_counter(revision)) {
+        return luaL_error(state, "delivery requires an exact actor and positive generation/revision");
+    }
+    lua_getfield(state, 2, "squads");
+    luaL_checktype(state, -1, LUA_TTABLE);
+    const int list = lua_gettop(state);
+    const std::size_t count = lua_rawlen(state, list);
+    if (count == 0 || count > combatant::kMaximumManifestSquads) {
+        return luaL_error(state, "delivery manifest squad count is outside its native range");
+    }
+    std::array<combatant::SquadReference, combatant::kMaximumManifestSquads> squads{};
+    for (std::size_t index = 0; index < count; ++index) {
+        lua_rawgeti(state, list, static_cast<lua_Integer>(index + 1));
+        const auto* const squadHandle =
+            static_cast<const SlotHandle*>(luaL_checkudata(state, -1, kSlotMetatable));
+        SlotDefinition squad{};
+        if (!current_slot(state, *squadHandle, squad) || !exact_squad_of(squad, actor)) {
+            return luaL_error(state, "delivery squads must be exact and in the actor's registry");
+        }
+        squads[index] = {squad.registryKey, static_cast<std::uint16_t>(squad.slotIndex)};
+        lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+    return queue_delivery(state, actor, generation, revision, std::span(squads).first(count));
+}
+
+/** Retires the named actor on a new generation, which also clears retained Auth on reload. */
+[[nodiscard]] int slot_retire_actor(lua_State* state) {
+    namespace combatant = middleware::bap::activity_message::combatant_auth;
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    static constexpr std::array<std::string_view, 1> kDeclared{"generation"};
+    refuse_unknown_arguments(state, kDeclared);
+    const lua_Integer generation = checked_integer_argument(state, "generation");
+    SlotDefinition actor{};
+    if (!current_slot(state, *handle, actor) || !exact_combatant_slot(actor)
+        || !valid_counter(generation)) {
         return luaL_error(state, "actor retirement requires an exact member and positive generation");
-    std::array<std::byte, retire::kBytes> body{};
-    if (!retire::encode(static_cast<std::uint32_t>(generation), body))
+    }
+    std::array<std::byte, combatant::kRetireBytes> body{};
+    if (!combatant::encode_retire(static_cast<std::uint32_t>(generation), body)) {
         return luaL_error(state, "actor retirement encoder failed");
-    return queue_slot_auth(state, actor, retire::kSchema, retire::kBits, body);
+    }
+    return queue_slot_auth(state, actor, combatant::kSchema, combatant::kRetireBits, body);
 }
 
 /** Binds one exact combatant to its package-authored squad member. */
@@ -907,30 +1077,49 @@ constexpr std::size_t kOccupancyAuthByteCount = 11;
 
 /** Publishes one scene generation and its cumulative authored event keys. */
 [[nodiscard]] int slot_set_scene_events(lua_State* state) {
-    namespace scene=middleware::bap::activity_message::scene_events;
-    const auto* handle=static_cast<const SlotHandle*>(luaL_checkudata(state,1,kSlotMetatable));
+    namespace scene = middleware::bap::activity_message::scene_events;
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    static constexpr std::array<std::string_view, 2> kDeclared{"generation", "events"};
+    refuse_unknown_arguments(state, kDeclared);
     SlotDefinition slot{};
-    if (!current_slot(state,*handle,slot) || slot.slotType!=43 || slot.componentClass!=0x80806382U
-        || slot.authSchema!=scene::kSchema || (slot.flags&format::kSlotSchemaJoinExact)==0)
-        return luaL_error(state,"scene events require an exact type-43 scene");
-    static constexpr std::array<std::string_view,2> declared{"generation","events"};
-    refuse_unknown_arguments(state,declared);
-    lua_getfield(state,2,"generation"); const auto generation=luaL_checkinteger(state,-1);lua_pop(state,1);
-    if (generation<=0 || generation>0x7FFFFFFF) return luaL_error(state,"scene generation must be positive int32");
-    lua_getfield(state,2,"events");luaL_checktype(state,-1,LUA_TTABLE);
-    const auto count=lua_rawlen(state,-1);
-    if (count>scene::kMaximumEvents) return luaL_error(state,"scene event list exceeds 32 keys");
-    std::array<std::uint32_t,scene::kMaximumEvents> events{};
-    for (std::size_t i=0;i<count;++i) {
-        lua_rawgeti(state,-1,static_cast<lua_Integer>(i+1));const auto event=luaL_checkinteger(state,-1);lua_pop(state,1);
-        if (event<=0 || event>=0xFFFFFFFFLL) return luaL_error(state,"invalid scene event key");
-        events[i]=static_cast<std::uint32_t>(event);
+    if (!current_slot(state, *handle, slot) || slot.slotType != scene::kSlotType
+        || slot.componentClass != scene::kComponentClass || slot.authSchema != scene::kSchema
+        || (slot.flags & format::kSlotSchemaJoinExact) == 0) {
+        return luaL_error(state, "scene events require an exact type-43 scene");
     }
-    lua_pop(state,1);
-    std::array<std::byte,scene::kMaximumBytes> body{};std::size_t bytes{},bits{};
-    if (!scene::encode(static_cast<std::int32_t>(generation),std::span(events).first(count),body,bytes,bits))
-        return luaL_error(state,"scene event keys must be unique");
-    return queue_slot_auth(state,slot,scene::kSchema,bits,std::span(body).first(bytes));
+    const lua_Integer generation = checked_integer_argument(state, "generation");
+    if (!valid_counter(generation)) {
+        return luaL_error(state, "scene generation must be a positive int32");
+    }
+    lua_getfield(state, 2, "events");
+    luaL_checktype(state, -1, LUA_TTABLE);
+    const std::size_t count = lua_rawlen(state, -1);
+    if (count > scene::kMaximumEvents) {
+        return luaL_error(state, "scene event list exceeds the manifest capacity");
+    }
+    std::array<std::uint32_t, scene::kMaximumEvents> events{};
+    for (std::size_t index = 0; index < count; ++index) {
+        lua_rawgeti(state, -1, static_cast<lua_Integer>(index + 1));
+        const lua_Integer event = luaL_checkinteger(state, -1);
+        lua_pop(state, 1);
+        if (event <= 0 || event >= static_cast<lua_Integer>(scene::kInvalidEventKey)) {
+            return luaL_error(state, "invalid scene event key");
+        }
+        events[index] = static_cast<std::uint32_t>(event);
+    }
+    lua_pop(state, 1);
+    std::array<std::byte, scene::kMaximumBytes> body{};
+    std::size_t bytes = 0;
+    std::size_t bits = 0;
+    if (!scene::encode(static_cast<std::int32_t>(generation),
+                       std::span(events).first(count),
+                       body,
+                       bytes,
+                       bits)) {
+        return luaL_error(state, "scene event keys must be unique");
+    }
+    return queue_slot_auth(state, slot, scene::kSchema, bits, std::span(body).first(bytes));
 }
 
 /** Lua `play_sequence` on a slot. Errors unless the slot is an exact type-5 sequence. */

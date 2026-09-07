@@ -348,7 +348,6 @@ bool request_squad_override(
     const ScriptableOutputReservation* reservation,
     std::array<std::int8_t, 4> authoredProfile,
     state::gameplay::squad_entity_retirement::Eligibility squadRetirement) noexcept {
-    const auto rawMode = static_cast<std::uint8_t>(mode);
     if (squadRetirement.enabled
         && (squadRetirement.squad.key != target.registryKey
             || squadRetirement.squad.index != target.slotIndex
@@ -365,8 +364,7 @@ bool request_squad_override(
         || requestedCounts.size() < squad::kMinimumRequestedCountLength
         || requestedCounts.size() > squad::kMaximumRequestedCountLength
         || expectedActivityClientGeneration == 0
-        || (rawMode != static_cast<std::uint8_t>(squad::Mode::mode0)
-            && rawMode != static_cast<std::uint8_t>(squad::Mode::mode2))
+        || !squad::valid_mode(mode)
         || !std::ranges::all_of(requestedCounts, [](std::int32_t count) { return count >= 0; })) {
         return false;
     }

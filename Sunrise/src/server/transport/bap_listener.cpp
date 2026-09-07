@@ -113,6 +113,7 @@ void receive_peer(Peer& peer) noexcept {
 
 /**
  * Services one peer with one read, a bounded frame batch and one due poll.
+ * @param peer Live peer.
  * @param readable Ready-read set from select.
  * @param writable Ready-write set from select.
  * @param wasPending True when select saw output.

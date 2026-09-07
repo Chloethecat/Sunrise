@@ -76,7 +76,6 @@ enum class IntentKind : std::uint8_t {
     actorCommand,
     playPerformance,
     restartCheckpoint,
-    playPrerenderedMovie,
 };
 
 /** One object a mission omits, named the way a roster group is: its tag and its registry key. */
@@ -107,7 +106,9 @@ struct TypedIntent final {
     std::uint32_t authSchema{};
     /** SDK-selected actor-command selector, never a wire constant owned by Mission State. */
     std::uint32_t actorCommandSelector{};
+    /** Spawn set a checkpoint restart respawns at. */
     std::uint32_t checkpointSpawnHash{};
+    /** Request key of the wipe a checkpoint release ends; zero arms one instead. */
     std::uint64_t checkpointReleaseRequest{};
     /** Authored effective region selected by the generated mission-state table. */
     std::int32_t effectiveRegion{-1};

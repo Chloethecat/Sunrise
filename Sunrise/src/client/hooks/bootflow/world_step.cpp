@@ -7,10 +7,7 @@
 #include "../../../core/logging/log.h"
 #include "bootflow_hook_lifecycle.h"
 #include "internal.h"
-#include "spawn/probe.h"
-#include "../mission_retirement/mission_retirement.h"
-#include "../ember_movies/ember_movies.h"
-#include "../ember_movies/orbit_return.h"
+#include "spawn/slice_set_sample.h"
 
 namespace sunrise::client::hooks::bootflow {
 namespace {
@@ -63,16 +60,6 @@ void poll_world_step() noexcept {
 /** Publishes the client's current local slice-set index. */
 void poll_current_slice_set() noexcept {
     const std::int32_t index = spawn::sample_current_slice_set();
-    mission_retirement::poll(index);
-    ember_movies::poll(index, read_step());
-    ember_movies::orbit_return::poll(index, read_step());
-    const std::int32_t previous = g_publishedSliceSet.load(std::memory_order_relaxed);
-    // A slice-set change is a world replacement whose transition arms a fresh fade, and a
-    // teleport never passes the off-destination step that re-arms the release. Re-arm here or
-    // the new world stays black behind the spent one-shot.
-    if (index >= 0 && previous >= 0 && index != previous) {
-        rearm_fade_release();
-    }
     g_publishedSliceSet.store(index, std::memory_order_relaxed);
     g_publishedSliceSetTick.store(GetTickCount64(), std::memory_order_release);
 }

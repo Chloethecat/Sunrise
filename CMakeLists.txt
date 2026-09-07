@@ -18,10 +18,11 @@ file(GLOB_RECURSE VENDOR_SOURCES CONFIGURE_DEPENDS
     "Sunrise/vendor/lua/*.c"
     "Sunrise/vendor/lua/*.h"
 )
-file(GLOB LUA_SOURCES CONFIGURE_DEPENDS "Sunrise/vendor/lua/*.c")
-# Match the Visual Studio project: the embedded Lua runtime uses C++ linkage.
+# Lua builds as C++ here, matching the MSVC project's CompileAsCpp setting.
+file(GLOB_RECURSE LUA_SOURCES CONFIGURE_DEPENDS
+    "Sunrise/vendor/lua/*.c"
+)
 set_source_files_properties(${LUA_SOURCES} PROPERTIES LANGUAGE CXX)
-list(APPEND VENDOR_SOURCES ${LUA_SOURCES})
 file(GLOB_RECURSE RESOURCE_FILES CONFIGURE_DEPENDS
     "Sunrise/resources/*.rc"
     "Sunrise/resources/*.h"
@@ -83,7 +84,9 @@ target_compile_definitions(steam_api64 PRIVATE
 )
 
 if(MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    target_compile_options(steam_api64 PRIVATE /EHsc)
+    # The vendored Lua interpreter throws, so its error path needs C++ unwinding.
+    target_compile_options(steam_api64 PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHsc>)
+
     # Clang warnings are more strict the MSVC I guess, this only works on real clang
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         list(APPEND STRICT_WARNING_FLAGS

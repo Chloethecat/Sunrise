@@ -159,7 +159,8 @@ struct RosterPublication {
 
 /** Compact retained squad body; shared target fields and the generated group live on its group. */
 struct RetainedSquadAuth {
-    std::array<std::byte, middleware::bap::activity_message::squad_auth::kMaximumRetainedByteCount> body{};
+    std::array<std::byte, middleware::bap::activity_message::squad_auth::kMaximumRetainedByteCount>
+        body{};
     std::uint32_t generation{};
     std::uint16_t rosterSlotOffset{};
     std::uint16_t slotIndex{};
@@ -228,10 +229,6 @@ struct MissionSeedLease {
     bool regionArrivalPending{};
     /** Set when a mission script selected the plan. An adopted default plan is not a selection. */
     bool scriptSelected{};
-    /** 1AU's same-bubble bookends must retain the applied key ordinals across both movies. */
-    std::array<std::uint32_t, middleware::bap::activity_message::sensor_auth_update::kBubbleKeyCapacity>
-        emberApexKeyOrder{};
-    std::uint8_t emberApexKeyCount{};
 };
 
 static_assert(middleware::bap::activity_message::sensor_auth_update::kAuthOverrideCapacity
@@ -256,8 +253,6 @@ struct ActivityClientBinding {
     std::uint64_t bindingGeneration{};
     /** Epoch this host authored in the accepted join result. */
     std::uint8_t replicationEpoch{};
-    /** Msg24/25 entity-slot sequence; native manager starts at zero independently of msg44. */
-    std::uint8_t authorityEpoch{};
     /** Private: last citizen region. Public: immutable region captured by the host binding. */
     std::int32_t advertisedRegion{-1};
     /** True when the last advertisement named a private region's own Bubble Host. */

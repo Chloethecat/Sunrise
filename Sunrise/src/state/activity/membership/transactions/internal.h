@@ -4,7 +4,6 @@
 #include <cstdint>
 
 #include "../activity_membership_query.h"
-#include "../teleport_rules.h"
 
 namespace sunrise::state::activity::membership::transactions {
 
@@ -84,8 +83,7 @@ inline MembershipState merge(const MembershipState& state,
     // client report would revert the arm's advance, and the client would then reject the target
     // region record. The client owns the token again once the teleport is spent.
     const bool hostDrivesToken =
-        state.hasHostTeleport && !state.hostTeleportQualified
-        && state.hostTeleport.state != kHostTeleportSpawnState;
+        state.hasHostTeleport && state.hostTeleport.state != kHostTeleportSpawnState;
     if (update.hasTransitionToken && !hostDrivesToken) {
         merged.transitionToken = update.transitionToken;
         merged.hasTransitionToken = true;
@@ -110,16 +108,14 @@ inline MembershipState merge(const MembershipState& state,
     // The client has reported the region the arm named, so the move is done and the same machine
     // owes the spawn. Its step 3 runs the spawn only while the host state reads 3, so the arm is
     // raised rather than dropped. Step 0 refuses to re-latch on 3, so this cannot re-arm.
-    if (merged.hostTeleportQualified) {
-        observe_qualified_teleport(merged);
-    } else if (merged.hasHostTeleport && merged.region.index >= 0
+    if (merged.hasHostTeleport && merged.region.index >= 0
         && merged.region.index == merged.hostTeleport.sliceSetIndex) {
         merged.hostTeleport.state = kHostTeleportSpawnState;
     }
     // The machine wraps its state byte to 0 at the spawn and keeps the latched token, so state 0
     // with this token is the client saying the teleport finished. Retire it here, not at the
     // commit, so the answering body carries the client's own block and its screen releases.
-    if (!merged.hostTeleportQualified && merged.hasHostTeleport && merged.hostTeleport.state == kHostTeleportSpawnState
+    if (merged.hasHostTeleport && merged.hostTeleport.state == kHostTeleportSpawnState
         && merged.teleport.state == 0 && merged.teleport.token == merged.hostTeleport.token) {
         merged.hasHostTeleport = false;
         merged.hostTeleport = {};
@@ -163,9 +159,8 @@ inline bool equal_authoritative(const MembershipState& first,
            && first.hasTransitionToken == second.hasTransitionToken
            && equal(first.spawn, second.spawn) && equal(first.teleport, second.teleport)
            && first.hasHostTeleport == second.hasHostTeleport
-           && first.hostTeleportQualified == second.hostTeleportQualified
            && first.hardWipe.active == second.hardWipe.active
-           && equal(first.hardWipe.host,second.hardWipe.host)
+           && equal(first.hardWipe.host, second.hardWipe.host)
            && equal(first.hostTeleport, second.hostTeleport)
            && equal(first.currentRegion, second.currentRegion) && equal(first.region, second.region)
            && first.currentReported == second.currentReported
@@ -196,6 +191,7 @@ inline Snapshot make_snapshot(const MembershipState& state,
                               std::uint32_t revision) noexcept {
     Snapshot snapshot{};
     snapshot.identity = identity;
+    // An armed wipe publishes the host's spawn block; the client's own block returns after it.
     snapshot.spawn = state.hardWipe.active ? state.hardWipe.host : state.spawn;
     // An armed host teleport replaces the mirror, because these are the fields the client's
     // teleport arm reads. Everything else about the block stays the client's own report.

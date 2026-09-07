@@ -175,6 +175,7 @@ inline constexpr std::size_t kType2MaximumBodyByteCount = (kType2MaximumBodyBitC
 
 /** ClientRef slot type and Auth schema for the object-filter sensor. */
 inline constexpr std::uint8_t kType34SlotType = 34;
+inline constexpr std::uint32_t kType34ComponentClass = 0x80809568U;
 inline constexpr std::uint32_t kType34Schema = 0x8080956AU;
 inline constexpr std::size_t kType34PredicateCapacity = 8;
 
@@ -418,6 +419,10 @@ inline constexpr std::uint32_t kType68Schema = 0x80804F67;
 inline constexpr std::size_t kType68EntryCount = 3;
 inline constexpr std::size_t kType68BitCount = 4'802;
 inline constexpr std::size_t kType68ByteCount = (kType68BitCount + 7) / 8;
+/** ClientRef slot type of an authored navigation marker a directive may point at. */
+inline constexpr std::uint8_t kType47SlotType = 47;
+/** ClientRef slot type of an authored volume an object filter may test against. */
+inline constexpr std::uint8_t kType60SlotType = 60;
 /** ClientRef slot type for the encounter/player engagement observer. */
 inline constexpr std::uint8_t kType70SlotType = 70;
 inline constexpr std::uint32_t kType70Schema = 0x808094F1;
@@ -466,7 +471,7 @@ struct Type68Preset final {
     bool visible{true};
     /** Authored type-47 destination; absent removes the explicit guidance marker. */
     Type2LaneClientRef navpoint{};
-    /** Player audience checked by native 1009740 before showing the mission banner. */
+    /** Type-70 engagement sensor the client tests before it shows the mission banner. */
     Type2LaneClientRef audience{};
 };
 

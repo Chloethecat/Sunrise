@@ -280,15 +280,7 @@
     <ClCompile Include="src\client\hooks\bootflow\orbit_slice_set.cpp" />
     <ClCompile Include="src\client\hooks\bootflow\region_private.cpp" />
     <ClCompile Include="src\client\hooks\bootflow\world_step.cpp" />
-    <ClCompile Include="src\client\hooks\ember_movies\ember_movies.cpp" />
-    <ClCompile Include="src\client\hooks\ember_movies\resources.cpp" />
-    <ClCompile Include="src\client\hooks\bootflow\ember_movie_tick.cpp" />
-    <ClCompile Include="src\client\hooks\bootflow\ember_sunburn.cpp" />
-    <ClCompile Include="src\client\hooks\bootflow\spawn_hold.cpp" />
-    <ClCompile Include="src\client\hooks\bootflow\fade_release.cpp" />
-    <ClCompile Include="src\client\hooks\bootflow\spawn\spawn_gate_probe.cpp" />
-    <ClCompile Include="src\client\hooks\bootflow\spawn\spawn_gate_targets.cpp" />
-    <ClCompile Include="src\client\hooks\bootflow\spawn\spawn_gate_record_dump.cpp" />
+    <ClCompile Include="src\client\hooks\bootflow\spawn\slice_set_sample.cpp" />
     <ClCompile Include="src\server\bap\encrypted\push\activity\activity_arrival.cpp" />
     <ClCompile Include="src\middleware\bap\activity_host_manager\request\selection\activity_manager_selection_bits.cpp" />
     <ClCompile Include="src\middleware\bap\activity_host_manager\request\selection\activity_manager_selection_snapshot.cpp" />
@@ -1249,11 +1241,6 @@
     <ClCompile Remove="vendor\lua\lzio.c" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\client\hooks\ember_movies\ember_movies.h" />
-    <ClInclude Include="src\client\hooks\ember_movies\resources.h" />
-    <ClInclude Include="src\client\hooks\ember_movies\readiness_rules.h" />
-    <ClInclude Include="src\client\hooks\ember_movies\sunburn_rules.h" />
-    <ClInclude Include="src\client\hooks\ember_movies\playback_rules.h" />
     <ClInclude Include="resources\resource.h" />
     <ClInclude Include="src\core\logging\log.h" />
     <ClInclude Include="src\core\logging\snapshot\snapshot.h" />

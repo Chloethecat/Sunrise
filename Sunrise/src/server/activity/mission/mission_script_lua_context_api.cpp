@@ -1,11 +1,11 @@
-#include <cstddef>
 #include <charconv>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <string_view>
 
+#include "../../../state/activity/membership/definition.h"
 #include "mission_script_lua_internal.h"
-#include "../../../client/hooks/ember_movies/ember_movies.h"
 #include "mission_script_lua_names.h"
 #include "mission_script_lua_peer_internal.h"
 #include "mission_script_lua_resolve.h"
@@ -25,29 +25,39 @@ namespace {
     return 1;
 }
 
+/**
+ * Arms a native hard wipe at an authored spawn set, or releases one with its request key.
+ * The Lua caller passes `release_request` as the decimal string of the original key.
+ */
 [[nodiscard]] int context_restart_checkpoint(lua_State* state) {
-    static_cast<void>(luaL_checkudata(state,1,kContextMetatable));
-    static constexpr std::array<std::string_view,3> fields{"region","spawn_set_hash","release_request"};
-    refuse_unknown_arguments(state,fields);
-    const auto region=optional_integer_argument(state,"region",-1);
-    const auto hash=optional_integer_argument(state,"spawn_set_hash",0);
-    if (region<0 || region>511 || hash<=0 || hash>=UINT32_MAX)
-        return luaL_error(state,"checkpoint requires an authored region and spawn-set hash");
-    std::uint64_t release{};
-    lua_getfield(state,2,"release_request");
-    if (!lua_isnil(state,-1)) {
-        std::size_t length{};
-        const char* value=luaL_checklstring(state,-1,&length);
-        const auto parsed=std::from_chars(value,value+length,release);
-        if (parsed.ec!=std::errc{} || parsed.ptr!=value+length || release==0)
-            return luaL_error(state,"checkpoint release requires the original RequestKey.value");
+    static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
+    static constexpr std::array<std::string_view, 3> kDeclared{
+        "region", "spawn_set_hash", "release_request"};
+    refuse_unknown_arguments(state, kDeclared);
+    const lua_Integer region = optional_integer_argument(state, "region", -1);
+    const lua_Integer hash = optional_integer_argument(state, "spawn_set_hash", 0);
+    if (region < 0 || region > ::sunrise::state::activity::membership::kMaximumSliceSetIndex
+        || hash <= 0
+        || hash >= (std::numeric_limits<std::uint32_t>::max)()) {
+        return luaL_error(state, "checkpoint requires an authored region and spawn-set hash");
     }
-    lua_pop(state,1);
-    Intent intent{};intent.kind=IntentKind::restartCheckpoint;
-    intent.checkpointReleaseRequest=static_cast<std::uint64_t>(release);
-    intent.effectiveRegion=static_cast<std::int32_t>(region);
-    intent.checkpointSpawnHash=static_cast<std::uint32_t>(hash);
-    return queue_intent(state,active_frame(state),intent);
+    std::uint64_t release = 0;
+    lua_getfield(state, 2, "release_request");
+    if (!lua_isnil(state, -1)) {
+        std::size_t length = 0;
+        const char* const value = luaL_checklstring(state, -1, &length);
+        const auto parsed = std::from_chars(value, value + length, release);
+        if (parsed.ec != std::errc{} || parsed.ptr != value + length || release == 0) {
+            return luaL_error(state, "checkpoint release requires the original RequestKey.value");
+        }
+    }
+    lua_pop(state, 1);
+    Intent intent{};
+    intent.kind = IntentKind::restartCheckpoint;
+    intent.checkpointReleaseRequest = release;
+    intent.effectiveRegion = static_cast<std::int32_t>(region);
+    intent.checkpointSpawnHash = static_cast<std::uint32_t>(hash);
+    return queue_intent(state, active_frame(state), intent);
 }
 
 [[nodiscard]] int context_scene(lua_State* state) {
@@ -193,35 +203,6 @@ resolve_message_name(lua_State* state, std::string_view name, ActivityMessageDef
     return queue_intent(state, frame, intent);
 }
 
-/** Ember's exact packaged movie pair; work is committed as an ordinary mission intent. */
-int context_play_prerendered_movie(lua_State* state) {
-    static_cast<void>(luaL_checkudata(state,1,kContextMetatable));
-    const auto* impl=impl_from_state(state);
-    if (impl->identity.publicTarget || impl->identity.definitionHash!=0x38F926B2U)
-        return luaL_error(state,"pre-rendered movie bridge is scoped to mission_ember");
-    static constexpr std::array<std::string_view,2> fields{"index","stop"};
-    refuse_unknown_arguments(state,fields);
-    const auto index=optional_integer_argument(state,"index",0);
-    if (index<1 || index>2) return luaL_error(state,"unknown Ember bookend index");
-    lua_getfield(state,2,"stop"); const bool stop=lua_toboolean(state,-1); lua_pop(state,1);
-    Intent intent{};intent.kind=IntentKind::playPrerenderedMovie;
-    intent.firstRow=static_cast<std::uint32_t>(index);intent.active=!stop;
-    return queue_intent(state,active_frame(state),intent);
-}
-int context_prerendered_movie_status(lua_State* state) {
-    static_cast<void>(luaL_checkudata(state,1,kContextMetatable));
-    const auto index=luaL_checkinteger(state,2);
-    auto& frame=active_frame(state);
-    const auto* impl=impl_from_state(state);
-    if (impl->identity.definitionHash!=0x38F926B2U || impl->identity.publicTarget
-        || !frame.event || index<1 || index>2) { lua_pushliteral(state,"absent");return 1; }
-    namespace movies=client::hooks::ember_movies;
-    const auto result=movies::status({frame.event->binding.sessionId,frame.event->sourceGeneration},
-        static_cast<unsigned>(index));
-    constexpr std::array<const char*,6> names{"absent","queued","preparing","playing","complete","failed"};
-    lua_pushstring(state,names[static_cast<unsigned>(result)]);return 1;
-}
-
 /** Lua index for the mission context: its collections, phase, variables and timers. */
 [[nodiscard]] int context_index(lua_State* state) {
     static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
@@ -251,10 +232,6 @@ int context_prerendered_movie_status(lua_State* state) {
         lua_pushcfunction(state, &context_scene);
     } else if (key == "slot") {
         lua_pushcfunction(state, &context_slot);
-    } else if (key == "play_prerendered_movie") {
-        lua_pushcfunction(state, &context_play_prerendered_movie);
-    } else if (key == "prerendered_movie_status") {
-        lua_pushcfunction(state, &context_prerendered_movie_status);
     } else if (key == "select_state") {
         lua_pushcfunction(state, &context_select_state);
     } else if (key == "restart_checkpoint") {

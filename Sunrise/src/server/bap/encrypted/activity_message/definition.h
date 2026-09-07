@@ -5,7 +5,6 @@
 #include "../../../../middleware/bap/activity_message/activity_host_control.h"
 #include "../../../../middleware/bap/activity_message/activity_patch_epoch_parser.h"
 #include "../../../../middleware/bap/activity_message/entity_authority.h"
-#include "../../../../middleware/bap/activity_message/activity_host_control.h"
 #include "../../../../state/activity/membership/activity_membership_query.h"
 #include "../../../../state/activity/runtime.h"
 #include "../../../gameplay/group/group_host_sessions.h"
@@ -15,7 +14,6 @@ namespace sunrise::server::bap::encrypted::activity_message {
 /** Outbound delivery staged for one activity State transaction. */
 enum class Delivery : std::uint8_t {
     none,
-    authorityPurgeNotification,
     joinNotifications,
     entitySlotNotification,
     membershipNotification,
@@ -39,7 +37,6 @@ enum class Delivery : std::uint8_t {
 /** State transaction family staged by one activity service request. */
 enum class MutationDomain : std::uint8_t {
     none,
-    authorityPurge,
     entitySlots,
     membership,
     /** The patch epoch is kept on the connection and changes no State. */
@@ -129,8 +126,8 @@ struct ActivityPlan final {
     EntitySlotsRequestedIngress entitySlotsRequested{};
     AuthorityQueryIngress authorityQuery{};
     AuthorityResetIngress authorityReset{};
-    middleware::bap::activity_message::host_control::PurgeAuthorityBody authorityPurge{};
-    std::uint64_t authorityPurgeGeneration{};
+    AuthorityAbdicationIngress authorityAbdication{};
+    AuthorityPurgeIngress authorityPurge{};
     middleware::bap::activity_message::patch_epoch::PatchEpoch patchEpoch{};
     /** Exact target generation whose destination the staged msg1 must encode. */
     state::activity::SessionBinding targetBinding{};

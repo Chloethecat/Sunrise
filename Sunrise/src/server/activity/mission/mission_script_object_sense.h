@@ -1,43 +1,93 @@
 #pragma once
+
 #include <cstdint>
 #include <span>
+
+#include "../../../middleware/bap/activity_message/interactable_object_auth.h"
 #include "../../../middleware/bap/activity_message/sense_update.h"
+
 namespace sunrise::server::activity::mission {
+
+/** Type-4 object Sense root ordinals. */
+inline constexpr std::uint16_t kObjectGenerationOrdinal = 0;
+inline constexpr std::uint16_t kObjectAliveOrdinal = 1;
+inline constexpr std::uint16_t kObjectPresentOrdinal = 2;
+/** Ownership reply: field 0 held, field 1 the owner key. */
+inline constexpr std::uint16_t kOwnerHeldOrdinal = 0;
+inline constexpr std::uint16_t kOwnerKeyOrdinal = 1;
+/** Interaction reply: field 0 is the one-shot used latch. */
+inline constexpr std::uint16_t kInteractedOrdinal = 0;
+
+/** Last object level seen for one slot. */
 struct ObjectInteractionLevel final {
     std::int32_t generation{};
-    bool generationKnown{}, interacted{}, interactionKnown{};
-    bool present{}, alive{}, stateKnown{}, ownerKnown{}, hasOwner{};
+    bool generationKnown{};
+    bool interacted{};
+    bool interactionKnown{};
+    bool present{};
+    bool alive{};
+    bool stateKnown{};
+    bool ownerKnown{};
+    bool hasOwner{};
     std::uint64_t ownerKey{};
 };
-// Do not combine a new object generation with a stale interaction latch. Replay of
-// an accepted true level is silent; the Lua encounter also retains its one-shot receipt.
-[[nodiscard]] inline bool update_object_interaction(ObjectInteractionLevel& level,
+
+/**
+ * Merges one decoded type-4 body into the retained level. A new generation clears the level, so
+ * a stale interaction latch never joins a new object. A body is a full snapshot, so an absent
+ * ownership reply clears the owner.
+ * @return True when this body is the first report of an accepted interaction for its generation.
+ */
+[[nodiscard]] inline bool update_object_interaction(
+    ObjectInteractionLevel& level,
     std::span<const middleware::bap::activity_message::sense_update::DecodedValue> values,
     std::uint32_t root) noexcept {
-    const auto before = level;
-    for (const auto& v : values) {
-        if (!v.present || v.schemaRow != root || v.fieldOrdinal != 0) continue;
-        const auto generation = static_cast<std::int32_t>(v.signedValue);
-        if (level.generationKnown && generation < level.generation) return false;
-        if (!level.generationKnown || generation != level.generation) level = {};
-        level.generation = generation; level.generationKnown = true;
+    namespace object = middleware::bap::activity_message::interactable_object;
+    const ObjectInteractionLevel before = level;
+    for (const auto& value : values) {
+        if (!value.present || value.schemaRow != root
+            || value.fieldOrdinal != kObjectGenerationOrdinal) {
+            continue;
+        }
+        const auto generation = static_cast<std::int32_t>(value.signedValue);
+        if (level.generationKnown && generation < level.generation) {
+            return false;
+        }
+        if (!level.generationKnown || generation != level.generation) {
+            level = {};
+        }
+        level.generation = generation;
+        level.generationKnown = true;
     }
-    // Complete native object bodies clear an absent owner subscription; they are not deltas.
-    level.ownerKnown = false; level.hasOwner = false; level.ownerKey = 0;
-    for (const auto& v : values) {
-        if (v.present && v.schemaRow == root && v.fieldOrdinal == 1) level.alive = v.unsignedValue != 0;
-        if (v.present && v.schemaRow == root && v.fieldOrdinal == 2) {
-            level.present = v.unsignedValue != 0; level.stateKnown = true;
+    level.ownerKnown = false;
+    level.hasOwner = false;
+    level.ownerKey = 0;
+    for (const auto& value : values) {
+        if (!value.present) {
+            continue;
         }
-        if (v.present && v.schemaRow == 0x80809ACCU && v.fieldOrdinal == 0) {
-            level.ownerKnown = true; level.hasOwner = v.unsignedValue != 0;
-        }
-        if (v.present && v.schemaRow == 0x80809ACCU && v.fieldOrdinal == 1) level.ownerKey = v.unsignedValue;
-        if (v.present && v.schemaRow == 0x80804FB7U && v.fieldOrdinal == 0) {
-            level.interacted = v.unsignedValue != 0; level.interactionKnown = true;
+        if (value.schemaRow == root && value.fieldOrdinal == kObjectAliveOrdinal) {
+            level.alive = value.unsignedValue != 0;
+        } else if (value.schemaRow == root && value.fieldOrdinal == kObjectPresentOrdinal) {
+            level.present = value.unsignedValue != 0;
+            level.stateKnown = true;
+        } else if (value.schemaRow == object::kOwnershipReply
+                   && value.fieldOrdinal == kOwnerHeldOrdinal) {
+            level.ownerKnown = true;
+            level.hasOwner = value.unsignedValue != 0;
+        } else if (value.schemaRow == object::kOwnershipReply
+                   && value.fieldOrdinal == kOwnerKeyOrdinal) {
+            level.ownerKey = value.unsignedValue;
+        } else if (value.schemaRow == object::kInteractionReply
+                   && value.fieldOrdinal == kInteractedOrdinal) {
+            level.interacted = value.unsignedValue != 0;
+            level.interactionKnown = true;
         }
     }
-    return level.generationKnown && level.generation > 0 && level.interactionKnown && level.interacted
-        && (!before.interactionKnown || !before.interacted || before.generation != level.generation);
+    return level.generationKnown && level.generation > 0 && level.interactionKnown
+           && level.interacted
+           && (!before.interactionKnown || !before.interacted
+               || before.generation != level.generation);
 }
-}
+
+} // namespace sunrise::server::activity::mission

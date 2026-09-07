@@ -6,10 +6,12 @@
 #include <cstdio>
 #include <span>
 
+#include "../../../middleware/bap/activity_message/damage_monitor_auth.h"
+#include "../../../middleware/bap/activity_message/ghost_link_auth.h"
+#include "../../../middleware/bap/activity_message/scriptable_auth_body.h"
 #include "../../../state/activity/transactions/internal.h"
 #include "../activity_sdk_mission_runtime.h"
 #include "mission_script_cinematic.h"
-#include "mission_script_squad_sense.h"
 #include "mission_script_player_trigger.h"
 #include "mission_script_runtime_internal.h"
 
@@ -28,8 +30,12 @@ constexpr std::uint16_t kTriggerAnyOrdinal = 0;
 constexpr std::uint16_t kTriggerAllOrdinal = 1;
 constexpr std::uint16_t kTriggerCountOrdinal = 2;
 constexpr std::uint16_t kTriggerThresholdOrdinal = 3;
-/** Root ordinals of the two live squad fields. The rest of the root is inert on this build. */
+/** Root ordinal of the squad removal flag. The rest of the root is inert on this build. */
 constexpr std::uint16_t kSquadRemovalOrdinal = 8;
+/** Root ordinals of the type-20 damage Sense body: health, shield, then the echoed revision. */
+constexpr std::uint16_t kDamageHealthOrdinal = 0;
+constexpr std::uint16_t kDamageShieldOrdinal = 1;
+constexpr std::uint16_t kDamageRevisionOrdinal = 2;
 /** Root ordinal of the authored scene's activation token. Signed, bias -2^31. */
 constexpr std::uint16_t kSceneTokenOrdinal = 0;
 /** Root ordinal of the authored scene's completion latch. A zero-width boolean. */
@@ -259,18 +265,8 @@ void push_player_trigger(RuntimeInstance& instance, const host::Event& incident)
     event.firstSlotType = source.slotType;
     event.slotSenseSchema = 0;
     event.playerTriggerRegistryKey = source.volumeRegistryKey;
-    event.playerTriggerSlotType = source.volumeSlotType;
-    std::array<char, 96> fields{};
-    const int written = std::snprintf(fields.data(), fields.size(),
-        "registry=%08x slot=%u volume_registry=%08x volume_slot=%u",
-        source.registryKey, static_cast<unsigned>(source.slotIndex), source.volumeRegistryKey,
-        static_cast<unsigned>(source.volumeSlotIndex));
-    if (written > 0) {
-        log_line(core::log::Level::info, &instance, "player_trigger", "resolved",
-            {fields.data(), (std::min)(static_cast<std::size_t>(written), fields.size() - 1)});
-    }
-
-    event.playerTriggerSlotIndex = source.volumeSlotIndex;
+    event.playerTriggerSlotType = static_cast<std::int8_t>(source.volumeSlotType);
+    event.playerTriggerSlotIndex = static_cast<std::int16_t>(source.volumeSlotIndex);
     push_script_event(instance, event);
 }
 
@@ -314,21 +310,19 @@ void push_cinematic(RuntimeInstance& instance, const host::Event& incident) noex
                  detail);
         return;
     }
-    log_line(core::log::Level::info,
+    using Signal = middleware::bap::activity_message::cinematic_incident::Signal;
+    const Signal signal = incident.cinematicSignal;
+    log_line(core::log::Level::debug,
              &instance,
              "cinematic",
-             incident.cinematicSignal
-                     == middleware::bap::activity_message::cinematic_incident::Signal::started
-                 ? "started"
-                 : incident.cinematicSignal == middleware::bap::activity_message::cinematic_incident::Signal::skipRequested
-                     ? "skip_requested" : "terminated",
+             signal == Signal::started         ? "started"
+             : signal == Signal::skipRequested ? "skip_requested"
+                                               : "terminated",
              detail);
     host::Event event = incident;
-    event.kind = incident.cinematicSignal
-                         == middleware::bap::activity_message::cinematic_incident::Signal::started
-                     ? host::EventKind::cinematicStarted
-                     : incident.cinematicSignal == middleware::bap::activity_message::cinematic_incident::Signal::skipRequested
-                         ? host::EventKind::cinematicSkipRequested : host::EventKind::cinematicTerminated;
+    event.kind = signal == Signal::started         ? host::EventKind::cinematicStarted
+                 : signal == Signal::skipRequested ? host::EventKind::cinematicSkipRequested
+                                                   : host::EventKind::cinematicTerminated;
     event.firstRegistryKey = source.registryKey;
     event.slotObjectTag = source.objectTag;
     event.firstSlotIndex = source.slotIndex;
@@ -393,141 +387,208 @@ void push_trigger_edges(RuntimeInstance& instance,
     }
 }
 
-/** Retains the native movement program revision and completed-command count. */
+/** @return True when the observation is one complete body of the given slot type and schema. */
+[[nodiscard]] bool observation_of(const host::SenseObservation& observation,
+                                  const host::SenseObservationSnapshot& sense,
+                                  std::uint32_t slotType,
+                                  std::uint32_t senseSchema) noexcept {
+    return observation.key.slotType == slotType && observation.key.senseSchema == senseSchema
+           && observation.valueCount != 0 && observation.firstValue <= sense.valueCount
+           && observation.valueCount <= sense.valueCount - observation.firstValue;
+}
+
+/** @return The decoded values of one observation. */
+[[nodiscard]] std::span<const sense_values::DecodedValue>
+observation_values(const host::SenseObservation& observation,
+                   const host::SenseObservationSnapshot& sense) noexcept {
+    return std::span(sense.values).subspan(observation.firstValue, observation.valueCount);
+}
+
+/**
+ * Finds the retained row for one slot, allocating a free row on a first observation.
+ * @return Null when every row is in use.
+ */
+template <typename Row, std::size_t N>
+[[nodiscard]] Row* find_slot_row(std::array<Row, N>& rows,
+                                 const host::SenseObservationKey& key) noexcept {
+    Row* spare = nullptr;
+    for (Row& retained : rows) {
+        if (retained.used && retained.registryKey == key.registryKey
+            && retained.objectTag == key.objectTag && retained.slotIndex == key.slotIndex) {
+            return &retained;
+        }
+        if (!retained.used && spare == nullptr) {
+            spare = &retained;
+        }
+    }
+    if (spare != nullptr) {
+        spare->used = true;
+        spare->registryKey = key.registryKey;
+        spare->objectTag = key.objectTag;
+        spare->slotIndex = key.slotIndex;
+    }
+    return spare;
+}
+
 void push_actor_path_edges(RuntimeInstance& instance,
-                      const host::SenseObservationSnapshot& sense) noexcept {
-    for (std::size_t i = 0; i < sense.observationCount; ++i) {
-        const auto& observation = sense.observations[i];
-        if (observation.key.slotType != 2 || observation.key.senseSchema != 0x80807DA2U
-            || observation.valueCount == 0 || observation.firstValue > sense.valueCount
-            || observation.valueCount > sense.valueCount - observation.firstValue) continue;
-        ActorPathObservation* slot = nullptr;
-        ActorPathObservation* spare = nullptr;
-        for (auto& retained : instance.actorPathObservations) {
-            if (retained.used && retained.registryKey == observation.key.registryKey
-                && retained.objectTag == observation.key.objectTag
-                && retained.slotIndex == observation.key.slotIndex) { slot = &retained; break; }
-            if (!retained.used && spare == nullptr) spare = &retained;
+                           const host::SenseObservationSnapshot& sense) noexcept {
+    namespace auth = middleware::bap::activity_message::scriptable_auth;
+    for (std::size_t index = 0; index < sense.observationCount; ++index) {
+        const host::SenseObservation& observation = sense.observations[index];
+        if (!observation_of(observation, sense, auth::kType2SlotType, auth::kType2SenseSchema)) {
+            continue;
         }
-        if (slot == nullptr) {
-            if (spare == nullptr) continue;
-            slot = spare;
-            slot->used = true;
-            slot->registryKey = observation.key.registryKey;
-            slot->objectTag = observation.key.objectTag;
-            slot->slotIndex = observation.key.slotIndex;
+        ActorPathObservation* const slot = find_slot_row(instance.actorPathObservations, observation.key);
+        if (slot == nullptr
+            || !update_actor_path_level(
+                slot->level, observation_values(observation, sense), observation.key.schemaRow)) {
+            continue;
         }
-        if (!update_actor_path_level(slot->level,
-            std::span(&sense.values[observation.firstValue], observation.valueCount),
-            observation.key.schemaRow)) continue;
-        auto event = sense_edge_event(instance, observation);
+        host::Event event = sense_edge_event(instance, observation);
         event.kind = host::EventKind::actorPathState;
         event.actorGeneration = slot->level.generation;
         event.actorPathRevision = slot->level.revision;
         event.actorPathState = slot->level.state;
         event.actorDeliveryRevision = slot->level.deliveryRevision;
         event.actorDeliveryState = slot->level.deliveryState;
-        event.actorDeliveryKnown = (slot->level.present & 48) == 48;
+        event.actorDeliveryKnown = (slot->level.seen & kActorSeenDelivery) == kActorSeenDelivery;
         event.actorDead = slot->level.dead;
-        std::array<char, 192> details{};
-        const int count = std::snprintf(details.data(), details.size(),
-            "registry=%08x slot=%u generation=%d revision=%d state=%d dead=%u delivery_revision=%d delivery_state=%d received_tick=%llu",
-            slot->registryKey, slot->slotIndex, slot->level.generation,
-            slot->level.revision, slot->level.state, slot->level.dead ? 1U : 0U,
-            event.actorDeliveryKnown ? slot->level.deliveryRevision : -1,
-            event.actorDeliveryKnown ? slot->level.deliveryState : -1,
-            static_cast<unsigned long long>(observation.tick));
-        if (count > 0 && static_cast<std::size_t>(count) < details.size())
-            log_line(core::log::Level::info, &instance, "actor_path", "changed",
-                     {details.data(), static_cast<std::size_t>(count)});
+        std::array<char, 160> details{};
+        const int written = std::snprintf(details.data(),
+                                          details.size(),
+                                          "registry=%08X slot=%u generation=%d revision=%d "
+                                          "state=%d dead=%u delivery_revision=%d delivery_state=%d",
+                                          slot->registryKey,
+                                          static_cast<unsigned>(slot->slotIndex),
+                                          slot->level.generation,
+                                          slot->level.revision,
+                                          slot->level.state,
+                                          slot->level.dead ? 1U : 0U,
+                                          event.actorDeliveryKnown ? slot->level.deliveryRevision : -1,
+                                          event.actorDeliveryKnown ? slot->level.deliveryState : -1);
+        if (written > 0 && static_cast<std::size_t>(written) < details.size()) {
+            log_line(core::log::Level::debug,
+                     &instance,
+                     "actor_path",
+                     "changed",
+                     {details.data(), static_cast<std::size_t>(written)});
+        }
         push_script_event(instance, event);
     }
 }
 
-// Native A774B0 publishes the bound object's health/shield fractions and the Auth revision.
-void push_damage_edges(RuntimeInstance& instance, const host::SenseObservationSnapshot& sense) noexcept {
-    for (std::size_t i = 0; i < sense.observationCount; ++i) {
-        const auto& o = sense.observations[i];
-        if (o.key.slotType != 20 || o.key.senseSchema != 0x80809562U
-            || o.firstValue > sense.valueCount || o.valueCount > sense.valueCount - o.firstValue) continue;
-        float health = -1.0F, shield = -1.0F;
-        std::int32_t revision{}; bool revisionKnown{};
-        for (const auto& v : std::span(&sense.values[o.firstValue], o.valueCount)) {
-            if (!v.present || v.schemaRow != o.key.schemaRow) continue;
-            if (v.fieldOrdinal == 0) health = v.realValue;
-            else if (v.fieldOrdinal == 1) shield = v.realValue;
-            else if (v.fieldOrdinal == 2) { revision = static_cast<std::int32_t>(v.signedValue); revisionKnown = true; }
+void push_damage_edges(RuntimeInstance& instance,
+                       const host::SenseObservationSnapshot& sense) noexcept {
+    namespace damage = middleware::bap::activity_message::damage_monitor;
+    for (std::size_t index = 0; index < sense.observationCount; ++index) {
+        const host::SenseObservation& observation = sense.observations[index];
+        if (!observation_of(observation, sense, damage::kSlotType, damage::kSenseSchema)) {
+            continue;
         }
-        if (!revisionKnown || revision <= 0 || !std::isfinite(health) || !std::isfinite(shield)) continue;
-        DamageObservation* found{}; DamageObservation* spare{};
-        for (auto& row : instance.damageObservations) {
-            if (row.used && row.registryKey == o.key.registryKey && row.objectTag == o.key.objectTag
-                && row.slotIndex == o.key.slotIndex) { found = &row; break; }
-            if (!row.used && spare == nullptr) spare = &row;
+        float health = -1.0F;
+        float shield = -1.0F;
+        std::int32_t revision = 0;
+        bool revisionKnown = false;
+        for (const sense_values::DecodedValue& value : observation_values(observation, sense)) {
+            if (!value.present || value.schemaRow != observation.key.schemaRow) {
+                continue;
+            }
+            if (value.fieldOrdinal == kDamageHealthOrdinal) {
+                health = value.realValue;
+            } else if (value.fieldOrdinal == kDamageShieldOrdinal) {
+                shield = value.realValue;
+            } else if (value.fieldOrdinal == kDamageRevisionOrdinal) {
+                revision = static_cast<std::int32_t>(value.signedValue);
+                revisionKnown = true;
+            }
         }
-        if (found == nullptr) found = spare;
-        if (found == nullptr || (found->used && revision < found->revision)) continue;
-        if (found->used && found->revision == revision && found->health == health && found->shield == shield) continue;
-        *found = {o.key.registryKey, o.key.objectTag, o.key.slotIndex, revision, health, shield, true};
-        auto event = sense_edge_event(instance, o);
+        if (!revisionKnown || revision <= 0 || !std::isfinite(health) || !std::isfinite(shield)) {
+            continue;
+        }
+        DamageObservation* const row = find_slot_row(instance.damageObservations, observation.key);
+        if (row == nullptr || revision < row->revision
+            || (row->revision == revision && row->health == health && row->shield == shield)) {
+            continue;
+        }
+        row->revision = revision;
+        row->health = health;
+        row->shield = shield;
+        host::Event event = sense_edge_event(instance, observation);
         event.kind = host::EventKind::damageState;
-        event.damageHealth = health; event.damageShield = shield; event.damageRevision = revision;
-        std::array<char, 192> details{};
-        const int size = std::snprintf(details.data(), details.size(),
-            "registry=%08X slot=%u revision=%d health=%.4f shield=%.4f",
-            o.key.registryKey, o.key.slotIndex, revision, health, shield);
-        if (size > 0 && static_cast<std::size_t>(size) < details.size())
-            log_line(core::log::Level::info, &instance, "damage", "changed", {details.data(), static_cast<std::size_t>(size)});
+        event.damageHealth = health;
+        event.damageShield = shield;
+        event.damageRevision = revision;
+        std::array<char, 128> details{};
+        const int written = std::snprintf(details.data(),
+                                          details.size(),
+                                          "registry=%08X slot=%u revision=%d health=%.4f shield=%.4f",
+                                          observation.key.registryKey,
+                                          static_cast<unsigned>(observation.key.slotIndex),
+                                          revision,
+                                          static_cast<double>(health),
+                                          static_cast<double>(shield));
+        if (written > 0 && static_cast<std::size_t>(written) < details.size()) {
+            log_line(core::log::Level::debug,
+                     &instance,
+                     "damage",
+                     "changed",
+                     {details.data(), static_cast<std::size_t>(written)});
+        }
         push_script_event(instance, event);
     }
 }
 
 void push_object_interaction_edges(RuntimeInstance& instance,
-                      const host::SenseObservationSnapshot& sense) noexcept {
-    for (std::size_t i = 0; i < sense.observationCount; ++i) {
-        const auto& observation = sense.observations[i];
-        if (observation.key.slotType != 4 || observation.key.senseSchema != 0x8080992EU
-            || observation.valueCount == 0 || observation.firstValue > sense.valueCount
-            || observation.valueCount > sense.valueCount - observation.firstValue) continue;
-        ObjectInteractionObservation* slot = nullptr;
-        ObjectInteractionObservation* spare = nullptr;
-        for (auto& retained : instance.objectInteractionObservations) {
-            if (retained.used && retained.registryKey == observation.key.registryKey
-                && retained.objectTag == observation.key.objectTag
-                && retained.slotIndex == observation.key.slotIndex) { slot = &retained; break; }
-            if (!retained.used && spare == nullptr) spare = &retained;
+                                   const host::SenseObservationSnapshot& sense) noexcept {
+    for (std::size_t index = 0; index < sense.observationCount; ++index) {
+        const host::SenseObservation& observation = sense.observations[index];
+        if (!observation_of(
+                observation, sense, format::kObjectSlotType, format::kObjectSenseSchema)) {
+            continue;
         }
+        ObjectInteractionObservation* const slot =
+            find_slot_row(instance.objectInteractionObservations, observation.key);
         if (slot == nullptr) {
-            if (spare == nullptr) continue;
-            slot = spare;
-            slot->used = true;
-            slot->registryKey = observation.key.registryKey;
-            slot->objectTag = observation.key.objectTag;
-            slot->slotIndex = observation.key.slotIndex;
+            continue;
         }
-        const auto before = slot->level;
-        const bool interacted = update_object_interaction(slot->level,
-            std::span(&sense.values[observation.firstValue], observation.valueCount),
-            observation.key.schemaRow);
-        const auto& level = slot->level;
-        auto event = sense_edge_event(instance, observation);
+        const ObjectInteractionLevel before = slot->level;
+        const bool interacted = update_object_interaction(
+            slot->level, observation_values(observation, sense), observation.key.schemaRow);
+        const ObjectInteractionLevel& level = slot->level;
+        host::Event event = sense_edge_event(instance, observation);
         event.objectGeneration = level.generation;
-        event.objectPresent = level.present; event.objectAlive = level.alive;
-        event.objectOwnerKnown = level.ownerKnown; event.objectHasOwner = level.hasOwner;
+        event.objectPresent = level.present;
+        event.objectAlive = level.alive;
+        event.objectOwnerKnown = level.ownerKnown;
+        event.objectHasOwner = level.hasOwner;
         event.objectOwnerKey = level.ownerKey;
-        if (level.generationKnown && level.generation > 0 && level.stateKnown
+        const bool stateChanged =
+            level.generationKnown && level.generation > 0 && level.stateKnown
             && (!before.stateKnown || before.generation != level.generation
                 || before.present != level.present || before.alive != level.alive
                 || before.ownerKnown != level.ownerKnown || before.hasOwner != level.hasOwner
-                || before.ownerKey != level.ownerKey)) {
+                || before.ownerKey != level.ownerKey);
+        if (stateChanged) {
             event.kind = host::EventKind::objectState;
-            std::array<char, 192> details{};
-            const int size = std::snprintf(details.data(), details.size(),
-                "registry=%08X slot=%u generation=%d present=%u alive=%u owner_known=%u has_owner=%u",
-                observation.key.registryKey, observation.key.slotIndex, level.generation,
-                level.present, level.alive, level.ownerKnown, level.hasOwner);
-            if (size > 0 && static_cast<std::size_t>(size) < details.size())
-                log_line(core::log::Level::info, &instance, "object", "changed", {details.data(), static_cast<std::size_t>(size)});
+            std::array<char, 128> details{};
+            const int written = std::snprintf(details.data(),
+                                              details.size(),
+                                              "registry=%08X slot=%u generation=%d present=%u "
+                                              "alive=%u owner_known=%u has_owner=%u",
+                                              observation.key.registryKey,
+                                              static_cast<unsigned>(observation.key.slotIndex),
+                                              level.generation,
+                                              level.present ? 1U : 0U,
+                                              level.alive ? 1U : 0U,
+                                              level.ownerKnown ? 1U : 0U,
+                                              level.hasOwner ? 1U : 0U);
+            if (written > 0 && static_cast<std::size_t>(written) < details.size()) {
+                log_line(core::log::Level::debug,
+                         &instance,
+                         "object",
+                         "changed",
+                         {details.data(), static_cast<std::size_t>(written)});
+            }
             push_script_event(instance, event);
         }
         if (interacted) {
@@ -539,31 +600,19 @@ void push_object_interaction_edges(RuntimeInstance& instance,
 
 void push_ghost_edges(RuntimeInstance& instance,
                       const host::SenseObservationSnapshot& sense) noexcept {
-    for (std::size_t i = 0; i < sense.observationCount; ++i) {
-        const auto& observation = sense.observations[i];
-        if (observation.key.slotType != 65 || observation.key.senseSchema != 0x80804D3EU
-            || observation.valueCount == 0 || observation.firstValue > sense.valueCount
-            || observation.valueCount > sense.valueCount - observation.firstValue) continue;
-        GhostObservation* slot = nullptr;
-        GhostObservation* spare = nullptr;
-        for (auto& retained : instance.ghostObservations) {
-            if (retained.used && retained.registryKey == observation.key.registryKey
-                && retained.objectTag == observation.key.objectTag
-                && retained.slotIndex == observation.key.slotIndex) { slot = &retained; break; }
-            if (!retained.used && spare == nullptr) spare = &retained;
+    namespace ghost = middleware::bap::activity_message::ghost_link;
+    for (std::size_t index = 0; index < sense.observationCount; ++index) {
+        const host::SenseObservation& observation = sense.observations[index];
+        if (!observation_of(observation, sense, ghost::kSlotType, ghost::kSenseSchema)) {
+            continue;
         }
-        if (slot == nullptr) {
-            if (spare == nullptr) continue;
-            slot = spare;
-            slot->used = true;
-            slot->registryKey = observation.key.registryKey;
-            slot->objectTag = observation.key.objectTag;
-            slot->slotIndex = observation.key.slotIndex;
+        GhostObservation* const slot = find_slot_row(instance.ghostObservations, observation.key);
+        if (slot == nullptr
+            || !update_ghost_level(
+                slot->level, observation_values(observation, sense), observation.key.schemaRow)) {
+            continue;
         }
-        if (!update_ghost_level(slot->level,
-            std::span(&sense.values[observation.firstValue], observation.valueCount),
-            observation.key.schemaRow)) continue;
-        auto event = sense_edge_event(instance, observation);
+        host::Event event = sense_edge_event(instance, observation);
         event.kind = host::EventKind::ghostLinkState;
         event.ghostGeneration = slot->level.generation;
         event.ghostProgress = slot->level.progress;
@@ -599,31 +648,22 @@ void push_squad_edges(RuntimeInstance& instance,
         auto countLength = squad->slotCountLength;
         std::array<std::int32_t, host::kSquadSlotCapacity> incomingCounts{};
         const auto incomingLength = read_squad_consumed_counts(body, incomingCounts);
-        if (incomingLength != 0) { counts = incomingCounts; countLength = incomingLength; }
-        if (!hasAlive && !costsChanged && incomingLength == 0) continue;
+        if (incomingLength != 0) {
+            counts = incomingCounts;
+            countLength = incomingLength;
+        }
+        if (!hasAlive && !costsChanged && incomingLength == 0) {
+            continue;
+        }
         const bool first = !squad->used;
         squad->used = true;
         const std::int32_t previousAlive = first ? 0 : squad->aliveCount;
-        const bool changed = costsChanged || first || squad->aliveCount != alive || squad->removalFlag != removal
+        const bool changed = costsChanged || first || squad->aliveCount != alive
+                             || squad->removalFlag != removal
                              || squad->slotCountLength != countLength
                              || squad->slotCounts != counts;
         if (!changed) {
             continue;
-        }
-        if (instance.programStatus == ProgramStatus::loaded) {
-            std::int64_t consumed = 0;
-            for (std::size_t slot = 0; slot < countLength; ++slot) consumed += counts[slot];
-            std::array<char, 192> fields{};
-            const int written = std::snprintf(fields.data(), fields.size(),
-                "registry=%08x object=%08x slot=%u alive=%d previous=%d removal=%u first=%u consumed=%lld received_tick=%llu",
-                observation.key.registryKey, observation.key.objectTag,
-                static_cast<unsigned>(observation.key.slotIndex), alive, previousAlive,
-                static_cast<unsigned>(removal), static_cast<unsigned>(first),
-                static_cast<long long>(consumed), static_cast<unsigned long long>(observation.tick));
-            if (written > 0) {
-                log_line(core::log::Level::info, &instance, "squad_sense", "changed",
-                    {fields.data(), (std::min)(static_cast<std::size_t>(written), fields.size() - 1)});
-            }
         }
         host::Event state = sense_edge_event(instance, observation);
         state.squadObjectiveCosts = squad->objectiveCosts.values;

@@ -1,46 +1,87 @@
 #pragma once
+
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <span>
-#include "../../encoding/bit_reader.h"
+
 #include "../../encoding/bit_writer.h"
+#include "auth_fields.h"
+#include "scriptable_auth_body.h"
+#include "squad_auth_body.h"
+
+// Type-1 squad Auth that assigns the squad to a native combat objective. Root .0 names the
+// objective, .13 carries the revision that invalidates its cost pass, .16 links a task group.
+// Counts, profile and spawn generation stay absent so the placement is untouched.
+
 namespace sunrise::middleware::bap::activity_message::squad_objective {
-inline constexpr std::uint32_t kSchema = 0x80807EC9;
-inline constexpr std::size_t kBits = 153, kBytes = 20;
-struct Request {
-    std::uint32_t registry{}, revision{};
-    std::uint16_t index{};
-    std::int32_t group{-1};
+
+namespace fields = auth_fields;
+
+inline constexpr std::uint32_t kSchema = squad_auth::kSchema;
+inline constexpr std::size_t kBits = 153;
+inline constexpr std::size_t kBytes = 20;
+/** Absent presence bits for fields .1 to .12. */
+inline constexpr std::uint8_t kAbsentMiddleFieldCount = 12;
+/** Root .15 is present and zero. Meaning unverified. */
+inline constexpr std::uint8_t kField15Width = 6;
+/** Root .16 task group: 5 bits with bias one, so -1 requests costs without a link. */
+inline constexpr std::uint8_t kTaskGroupWidth = 5;
+inline constexpr std::int32_t kTaskGroupBias = 1;
+inline constexpr std::int32_t kNoTaskGroup = -1;
+/** One objective sensor carries this many task groups. */
+inline constexpr std::int32_t kTaskGroupCount = 24;
+/** Root .18 active, 2 bits, written as the active wire value. */
+inline constexpr std::uint8_t kActiveWidth = 2;
+inline constexpr std::uint32_t kActiveValue = 2;
+/** Root .19 mode, 3 bits with bias one. Reserve keeps the counts for a delivery. */
+inline constexpr std::uint8_t kModeWidth = 3;
+inline constexpr std::uint32_t kModeBias = 1;
+
+struct Request final {
+    std::uint32_t registryKey{};
+    std::uint32_t revision{};
+    std::uint16_t objectiveIndex{};
+    std::int32_t taskGroup{kNoTaskGroup};
     bool reserved{};
 };
-// 4E2A90: root 0 selects the objective, root 13 invalidates its cost calculation,
-// root 16 links into an authored task group. -1 requests costs without linking a group.
-// Root 15 is explicitly unset; counts/profile/spawn generation remain absent.
-[[nodiscard]] inline bool encode(Request q, std::span<std::byte> output) noexcept {
-    if (output.size() != kBytes || !q.registry || !q.revision || q.revision > 0x7fffffff
-        || q.index > 32767 || q.group < -1 || q.group >= 24) return false;
-    std::array<std::byte, kBytes> b{};
-    encoding::bits::Writer w(b); std::size_t written{};
-    bool ok = w.write(1,1) && w.write(q.registry,32) && w.write(4,7)
-        && w.write(q.index + 32768U,16) && w.write(0,12)
-        && w.write(1,1) && w.write(q.revision,31) && w.write(0,1)
-        && w.write(1,1) && w.write(0,6) && w.write(1,1) && w.write(q.group + 1,5)
-        && w.write(0,1) && w.write(2,2) && w.write(q.reserved ? 4 : 3,3)
-        && w.write(1,1) && w.write(0x811c9dc5,32)
-        && w.bit_count() == kBits && w.finish(written) && written == kBytes;
-    if (ok) for (std::size_t i=0;i<kBytes;++i) output[i]=b[i];
-    return ok;
+
+/**
+ * Encodes the objective assignment.
+ * @param output Exactly kBytes.
+ * @return False on an out-of-range revision, index or task group.
+ */
+[[nodiscard]] inline bool encode(const Request& request, std::span<std::byte> output) noexcept {
+    if (output.size() != kBytes || request.registryKey == 0 || request.revision == 0
+        || request.revision > fields::kMaximumCounter
+        || request.objectiveIndex > fields::kMaximumClientRefIndex
+        || request.taskGroup < kNoTaskGroup || request.taskGroup >= kTaskGroupCount) {
+        return false;
+    }
+    const auto mode = static_cast<std::uint32_t>(request.reserved ? squad_auth::Mode::reserve
+                                                                  : squad_auth::Mode::mode2);
+    encoding::bits::Writer writer(output);
+    std::size_t written = 0;
+    const std::array<fields::Field, 13> tail{{
+        {0, kAbsentMiddleFieldCount},
+        {1, fields::kPresenceWidth}, // .13 present
+        {request.revision, fields::kCounterWidth},
+        {0, fields::kPresenceWidth}, // .14 absent
+        {1, fields::kPresenceWidth}, // .15 present
+        {0, kField15Width},
+        {1, fields::kPresenceWidth}, // .16 present
+        {static_cast<std::uint32_t>(request.taskGroup + kTaskGroupBias), kTaskGroupWidth},
+        {0, fields::kPresenceWidth}, // .17 absent
+        {kActiveValue, kActiveWidth},
+        {mode + kModeBias, kModeWidth},
+        {1, fields::kPresenceWidth},       // .20 present
+        {fields::kClientRefAbsentKey, 32}, // no name
+    }};
+    return writer.write(1, fields::kPresenceWidth)
+           && fields::write_client_ref(
+               writer, request.registryKey, scriptable_auth::kType3SlotType, request.objectiveIndex)
+           && fields::write_fields(writer, tail)
+           && fields::finish_exact(writer, kBits, kBytes, written);
 }
-[[nodiscard]] inline bool validate(std::span<const std::byte> b, std::size_t bits) noexcept {
-    if (bits != kBits || b.size()!=kBytes) return false;
-    encoding::bits::Reader r(b); std::uint64_t v{}, registry{}, revision{};
-    return r.read(1,v)&&v==1 && r.read(32,registry)&&registry
-        && r.read(7,v)&&v==4 && r.read(16,v)&&v>=32768
-        && r.read(12,v)&&v==0 && r.read(1,v)&&v==1 && r.read(31,revision)&&revision
-        && r.read(1,v)&&v==0 && r.read(1,v)&&v==1 && r.read(6,v)&&v==0
-        && r.read(1,v)&&v==1 && r.read(5,v)&&v<=24
-        && r.read(1,v)&&v==0 && r.read(2,v)&&v==2 && r.read(3,v)&&(v==3 || v==4)
-        && r.read(1,v)&&v==1 && r.read(32,v)&&v==0x811c9dc5
-        && r.read(7,v)&&v==0;
-}
-}
+
+} // namespace sunrise::middleware::bap::activity_message::squad_objective

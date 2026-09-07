@@ -76,24 +76,6 @@ void publish_orbit_handoff(const hooking::detour::Handle& handle) noexcept;
 /** Detaches the orbit handoff release. */
 void uninstall_orbit_handoff() noexcept;
 
-[[nodiscard]] StageResult stage_ember_movie_tick(hooking::detour::Spec& spec) noexcept;
-void publish_ember_movie_tick(const hooking::detour::Handle& handle) noexcept;
-void uninstall_ember_movie_tick() noexcept;
-[[nodiscard]] StageResult stage_ember_movie_ui(hooking::detour::Spec& spec) noexcept;
-void publish_ember_movie_ui(const hooking::detour::Handle& handle) noexcept;
-void uninstall_ember_movie_ui() noexcept;
-[[nodiscard]] StageResult stage_ember_movie_hud(hooking::detour::Spec& spec) noexcept;
-void publish_ember_movie_hud(const hooking::detour::Handle& handle) noexcept;
-void uninstall_ember_movie_hud() noexcept;
-[[nodiscard]] StageResult stage_ember_sunburn(hooking::detour::Spec& spec) noexcept;
-void publish_ember_sunburn(const hooking::detour::Handle& handle) noexcept;
-void uninstall_ember_sunburn() noexcept;
-
-/** LoadingCinematics_Suppressed: travel-only suppression, separate from movie Auth. */
-[[nodiscard]] StageResult stage_loading_cinematics(hooking::detour::Spec& spec) noexcept;
-void publish_loading_cinematics(const hooking::detour::Handle& handle) noexcept;
-void uninstall_loading_cinematics() noexcept;
-
 /**
  * Stages the owner activity slot force. It pins the participation record to the replicated
  * snapshot at `comp + 496` instead of the local one at `comp + 1256`.

@@ -536,8 +536,8 @@ template <typename Index> void canonicalize_scenarios(Index& index) {
                 edge.targetDescriptors = target.descriptors;
                 std::sort(edge.targetDescriptors.begin(),
                           edge.targetDescriptors.end(),
-                          [&graph](std::uint32_t left, std::uint32_t right) {
-                              return graph.descriptors[left].id < graph.descriptors[right].id;
+                          [&graph](std::uint32_t first, std::uint32_t second) {
+                              return graph.descriptors[first].id < graph.descriptors[second].id;
                           });
                 edge.associationExact = associationExact;
                 if (!edge_identity(topology,

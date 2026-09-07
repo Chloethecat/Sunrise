@@ -489,12 +489,6 @@ void consume_established(const gp::Endpoint& from,
         guardAccepted = packet.connectionSequenceLow2 == expectedGuard;
     }
     if (guardAccepted) {
-        // Reliable queues drain even when a later external component rejects its body.
-        // ACKs belong to the validated transport header, independently of this
-        // packet's incoming gameplay lanes. An unsupported lane must not pin
-        // every outgoing contribution: after 128 packets that prevents sending
-        // ACKs at all, leaving native deletion recipients permanently pending.
-        completedCount = acknowledge_external(*peer, packet.ack, completed);
         if (packet.ack.outboundHeadPresent) {
             record_sequence(*peer, packet.ack.outboundHead);
         }

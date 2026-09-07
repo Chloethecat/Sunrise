@@ -30,6 +30,12 @@ constexpr std::size_t kConfigurationBits = 35;
 constexpr std::size_t kPackageBits = 7;
 constexpr std::size_t kQueueBits = 12;
 constexpr std::size_t kSpawnKeyBits = 32 * 32 + 1 + 32;
+/** Optional participation revive delay, a 16-bit half float: 30 s under darkness, else 3 s. */
+constexpr std::uint8_t kHalfWidth = 16;
+constexpr std::uint32_t kDarknessReviveDelayHalf = 0x4F80U;
+constexpr std::uint32_t kDefaultReviveDelayHalf = 0x4200U;
+/** A packed region is bubble times eight plus the state ordinal. */
+constexpr std::uint32_t kStatesPerBubble = 8;
 /**
  * Empty map-generator body, schema `0x80805007`.
  * Two 475-bit records, a u32, then fixed arrays of 32 and 64 u8. The fixed array lengths apply
@@ -115,18 +121,18 @@ constexpr std::size_t kSpawnKeyCount = 32;
            && writer.write(1, kPresenceWidth) && writer.write(snapshot.playerKey, 64)
            && writer.write(0, 5) && writer.write(3, 6) && writer.write(0, 6)
            && writer.write(0, 6)
-           // +736 bypasses DC3770's late spawn-location hold, NOT the HUD timer.
-           // The visible countdown is initialized by 12E9330 from +740 (half)
-           // into player+64, then displayed by 1677E60 via 12EE500/12EE590.
+           // Byte 736 skips the late spawn-location hold. Byte 737 holds the spawn while the
+           // client loads. The revive delay stays authored unless a darkness policy is set.
            && writer.write(1, kPresenceWidth)
            && writer.write(snapshot.awaitClientSync ? kAwaitingClientSync : 0U, 4)
-           && writer.write(0, kPresenceWidth) // +738: preserve authored revive delay.
-           && writer.write(snapshot.hasDarknessPolicy, kPresenceWidth)
+           && writer.write(0, kPresenceWidth)
+           && writer.write(snapshot.hasDarknessPolicy ? 1U : 0U, kPresenceWidth)
            && (!snapshot.hasDarknessPolicy
-               || writer.write(snapshot.darknessEnabled ? 0x4F80U : 0x4200U, 16)) // half 30 / 3
-           && writer.write(0, kPresenceWidth) // Optional spawn override absent.
-           && writer.write(0, kPresenceWidth) && writer.write(128, 8)
-           && writer.write(kSignedZero, 32);
+               || writer.write(snapshot.darknessEnabled ? kDarknessReviveDelayHalf
+                                                        : kDefaultReviveDelayHalf,
+                               kHalfWidth))
+           && writer.write(0, kPresenceWidth) && writer.write(0, kPresenceWidth)
+           && writer.write(128, 8) && writer.write(kSignedZero, 32);
 }
 
 /**
@@ -141,10 +147,13 @@ constexpr std::size_t kSpawnKeyCount = 32;
     bool encoded = writer.write(std::uint32_t{snapshot.lifetime} + kLifetimeBias, kLifetimeWidth)
                    && writer.write(1, 3) && writer.write(0, kPresenceWidth)
                    && writer.write(kSignedZero, 32) && writer.write(kEmptyNameHash, 32)
-                   && writer.write(snapshot.hasDarknessPolicy
-                           ? (snapshot.darknessEnabled && snapshot.hasRegion
-                                  ? kSignedZero + snapshot.region / 8U : kSignedMinusOne)
-                           : kSignedZero, 32) && writer.write(1, 6)
+                   // Under a darkness policy the lifetime names the bubble, or -1 when disabled.
+                   && writer.write(!snapshot.hasDarknessPolicy ? kSignedZero
+                                   : snapshot.darknessEnabled && snapshot.hasRegion
+                                       ? kSignedZero + snapshot.region / kStatesPerBubble
+                                       : kSignedMinusOne,
+                                   32)
+                   && writer.write(1, 6)
                    && writer.write(kWaitingSwitchKey, 32) && writer.write(1, kPresenceWidth)
                    && writer.write(kWaitingSwitchClass, 32) && writer.write(kSignedZero, 32)
                    && writer.write(kSignedZero, 32);
@@ -224,7 +233,7 @@ auth_body_bits(const Snapshot& snapshot, std::uint8_t slotType, bool carriesPlay
     if (slotType == kSlotTypeParticipation) {
         return carriesPlayerKey
                    ? kParticipationBits + (snapshot.hasRegion ? kParticipationRegionBits : 0)
-                         + (snapshot.hasDarknessPolicy ? 16U : 0U)
+                         + (snapshot.hasDarknessPolicy ? kHalfWidth : 0U)
                    : 0;
     }
     if (slotType == kSlotTypeLifetime) {

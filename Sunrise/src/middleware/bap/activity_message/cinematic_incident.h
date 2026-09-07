@@ -10,7 +10,7 @@ namespace sunrise::middleware::bap::activity_message::cinematic_incident {
 inline constexpr std::uint32_t kStartedTarget = 5'239;
 /** Global SObject row emitted for start failure or when the runtime stops owning the resource. */
 inline constexpr std::uint32_t kTerminatedTarget = 1'685;
-/** FNV-1(cinematic_skip), posted by native 1069BE0 through 106A530. */
+/** Global SObject row emitted when the player asks to skip a cinematic. */
 inline constexpr std::uint32_t kSkipTarget = 3'338;
 /** Effective type-17 incident metadata schema selected by the three cinematic SObject rows. */
 inline constexpr std::uint32_t kSchema = 0x808087BFU;

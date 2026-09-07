@@ -1,4 +1,3 @@
-#include "../../../../../middleware/bap/activity_message/darkness_zone_auth.h"
 #include <Windows.h>
 
 #include <algorithm>
@@ -8,10 +7,10 @@
 
 #include "../../../../../middleware/content/packages/tables/region_reader.h"
 #include "../../../../../state/activity/defaults/activity_defaults_snapshot.h"
+#include "../../../../../middleware/bap/activity_message/darkness_zone_auth.h"
 #include "../../../../../state/activity/destination/activity_destination_spawn_binding.h"
 #include "../../../../../state/activity/membership/activity_membership_query.h"
 #include "../../../../../state/activity/runtime.h"
-#include "../../../../../state/activity_sdk/runtime.h"
 #include "../../../../../state/build_data/runtime.h"
 #include "../../../../../state/runtime/runtime.h"
 #include "../../../../gameplay/gameplay_advertisement.h"
@@ -97,16 +96,6 @@ bool client_region_ready(const Session& session, const RefreshReport* refresh) n
                              && lease.bindingGeneration == session.activity.bindingGeneration
                              && lease.regionArrivalPending
                              && static_cast<std::int64_t>(lease.plan.effectiveRegion) != held;
-    if (movePending && (lease.plan.effectiveRegion == 1 || lease.plan.effectiveRegion == 2)) {
-        const auto catalog = state::activity_sdk::snapshot();
-        if (catalog && lease.plan.activityRow < catalog->activities().size()
-            && catalog->activities()[lease.plan.activityRow].definitionHash == 0x38F926B2U
-            && !state::activity::membership::host_teleport_armed(session.activity.session.sessionId)) {
-            // Selecting the movie first prepares roster removal. Keep the old world's spawn
-            // gate open until the qualified cleanup receipt actually arms native travel.
-            return held >= 0;
-        }
-    }
     return !movePending && held >= 0;
 }
 
@@ -585,9 +574,7 @@ build_roster_snapshot(Session& session,
             }
         }
     }
-    // The estate may contain an older SDK objective update for a squad that was
-    // also installed through its lease above. Apply the pending body last even
-    // for that target; otherwise the older body silently wins this packet.
+    // The pending body applies last, so it wins over an older estate body for the same target.
     if (authOverride != nullptr
         && !install_auth_override(layout,
                                   region,
@@ -612,15 +599,16 @@ build_roster_snapshot(Session& session,
             return refuse_override("tail_auth_apply");
         }
     }
-    // Use the final merged estate, so a pending disable wins over retained enable.
-    namespace darkness=middleware::bap::activity_message::darkness_zone;
+    // Read from the merged estate, so a pending disable wins over a retained enable.
+    namespace darkness = middleware::bap::activity_message::darkness_zone;
     for (const auto& value : snapshot.authOverrides) {
-        bool enabled{};
-        if (value.sdkCompiled&&value.present&&value.slotType==darkness::kSlotType
-            &&value.authSchema==darkness::kSchema&&value.byteCount<=value.body.size()
-            &&darkness::decode(std::span(value.body).first(value.byteCount),value.bitCount,enabled)) {
-            snapshot.hasDarknessPolicy=true;
-            snapshot.darknessEnabled=enabled;
+        bool enabled = false;
+        if (value.sdkCompiled && value.present && value.slotType == darkness::kSlotType
+            && value.authSchema == darkness::kSchema && value.byteCount <= value.body.size()
+            && darkness::read_enabled(
+                std::span(value.body).first(value.byteCount), value.bitCount, enabled)) {
+            snapshot.hasDarknessPolicy = true;
+            snapshot.darknessEnabled = enabled;
         }
     }
     // Staging runs before the connection field is published, so a body answering message 52 has to
@@ -648,11 +636,12 @@ build_roster_snapshot(Session& session,
         region.index >= 0 ? static_cast<std::uint32_t>(region.index) : region.arrival;
     snapshot.spawnSetHash =
         state::activity::destination::attachable_spawn_set_hash(selection, fallback.spawnSetHash);
-    // A genuine wipe selects the authored darkness checkpoint, not the mission's
-    // initial arrival override. Keep it in this region while the player respawns.
-    if (const auto checkpoint=state::activity::membership::checkpoint_spawn_hash(
-            session.activity.source.sessionId,region.index); checkpoint!=0)
-        snapshot.spawnSetHash=checkpoint;
+    // An armed wipe respawns at its checkpoint spawn set, not at the arrival override.
+    const std::uint32_t checkpoint = state::activity::membership::checkpoint_spawn_hash(
+        session.activity.source.sessionId, region.index);
+    if (checkpoint != 0) {
+        snapshot.spawnSetHash = checkpoint;
+    }
     snapshot.hasSpawnOverride =
         snapshot.spawnSetHash != 0 && snapshot.spawnSetHash != message::kAbsentSpawnSetHash;
     advance_region_epoch(session, refresh);
@@ -681,8 +670,36 @@ build_roster_snapshot(Session& session,
     if (pendingStateLocal && pendingGroupPosition >= snapshot.roster.groupCount) {
         return refuse_override("pending_group_position");
     }
-    if (finalize_mission_retirement(session, scratch, snapshot, refresh)
-        == MissionSeedRosterResult::refused) return refuse_override("mission_retirement");
+    std::size_t senseCount = 0;
+    for (const message::AuthOverride& auth : snapshot.authOverrides) {
+        if (auth.slotType != 1) {
+            continue;
+        }
+        server::activity::host::SenseObservationKey key{};
+        key.registryKey = auth.key;
+        key.objectTag = auth.objectTag;
+        key.senseSchema = 0x80807ECCU;
+        key.slotIndex = auth.slotIndex;
+        key.slotType = auth.slotType;
+        middleware::bap::activity_message::squad_sense::State recovered{};
+        if (!server::activity::host::snapshot_squad_sense(
+                session.activity.session, session.activity.bindingGeneration, key, recovered)) {
+            continue;
+        }
+        message::SenseOverride& sense = scratch.rosterSenseOverrides[senseCount];
+        sense = {};
+        if (!middleware::bap::activity_message::squad_sense::encode(
+                recovered, sense.body, sense.byteCount, sense.bitCount)) {
+            return refuse_override("squad_sense");
+        }
+        sense.key = auth.key;
+        sense.objectTag = auth.objectTag;
+        sense.slotIndex = auth.slotIndex;
+        sense.slotType = auth.slotType;
+        sense.counter = recovered.counter;
+        ++senseCount;
+    }
+    snapshot.senseOverrides = std::span(scratch.rosterSenseOverrides).first(senseCount);
     return RosterOutcome::published;
 }
 

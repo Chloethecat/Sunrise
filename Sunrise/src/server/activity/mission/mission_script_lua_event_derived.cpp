@@ -64,11 +64,13 @@ push_squad_state_member(lua_State* state, const host::Event& event, std::string_
     } else if (key == "objective_revision") {
         lua_pushinteger(state, event.squadObjectiveRevision);
     } else if (key == "task_costs") {
-        lua_createtable(state, 24, 0);
-        for (unsigned i=0; i<24; ++i) {
-            if (!(event.squadObjectiveCostMask & (1U << i))) continue;
-            lua_pushnumber(state, event.squadObjectiveCosts[i]);
-            lua_rawseti(state, -2, i+1);
+        lua_createtable(state, static_cast<int>(host::kSquadObjectiveGroupCount), 0);
+        for (unsigned group = 0; group < host::kSquadObjectiveGroupCount; ++group) {
+            if ((event.squadObjectiveCostMask & (1U << group)) == 0) {
+                continue;
+            }
+            lua_pushnumber(state, event.squadObjectiveCosts[group]);
+            lua_rawseti(state, -2, static_cast<lua_Integer>(group) + 1);
         }
     } else if (key == "previous_alive_count") {
         lua_pushinteger(state, event.squadPreviousAliveCount);

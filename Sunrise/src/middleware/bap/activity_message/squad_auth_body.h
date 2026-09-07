@@ -47,12 +47,13 @@ inline constexpr std::size_t kAuthoredProfileBitCount = 13;
 /** Buffer one squad body needs at the full requested-count length. */
 inline constexpr std::size_t kMaximumBitCount = exact_body_bit_count(kMaximumRequestedCountLength);
 inline constexpr std::size_t kMaximumByteCount = (kMaximumBitCount + 7) / 8;
-/** Full native Auth may also retain objective fields alongside the spawn preset. */
-inline constexpr std::size_t kMaximumRetainedByteCount = (1313U + 7U) / 8U;
+/** A retained body may carry the objective fields too, up to 1,313 bits. */
+inline constexpr std::size_t kMaximumRetainedBitCount = 1'313;
+inline constexpr std::size_t kMaximumRetainedByteCount = (kMaximumRetainedBitCount + 7U) / 8U;
 /** Spawn generation is an unsigned logical value stored in a 31-bit field. */
 inline constexpr std::uint32_t kMaximumGeneration = 0x7FFFFFFF;
 
-/** Native 4E4580 skips ordinary placement for mode 3, retaining requests for delivery. */
+/** Mode 3 skips ordinary placement and keeps the requests for a passenger delivery. */
 enum class Mode : std::uint8_t {
     mode0 = 0,
     mode2 = 2,

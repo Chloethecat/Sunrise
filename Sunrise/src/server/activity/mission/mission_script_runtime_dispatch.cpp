@@ -17,8 +17,6 @@
 #include "../activity_sdk_squad_runtime.h"
 #include "mission_script_runtime.h"
 #include "mission_script_runtime_internal.h"
-#include "../../../client/hooks/mission_retirement/mission_retirement.h"
-#include "../../../client/hooks/ember_movies/ember_movies.h"
 
 // The intent fan-out reserves one Host output revision, then asks one typed adapter to encode it.
 
@@ -217,8 +215,7 @@ void arm_state_region_teleport(RuntimeInstance& instance,
             instance.view.binding.sessionId, membership::kAbsentSliceSetIndex, 0));
         return;
     }
-    // Native 4C8E40 registers alternate entries as distinct packed regions. A sibling
-    // bookend still needs travel: its cinematic controller is absent in gameplay's world.
+    // Each alternate scenario entry is its own packed region, so a sibling state still travels.
     const std::string_view name(reinterpret_cast<const char*>(destination.packageName.data()),
                                 destination.packageNameLength);
     ::sunrise::state::build_data::scenarios::Definition layout{};
@@ -232,12 +229,8 @@ void arm_state_region_teleport(RuntimeInstance& instance,
         // arm a move it can never finish.
         return;
     }
-    const auto activities = instance.view.catalog->activities();
-    const bool emberBookend = !instance.publicTarget && instance.view.activityRow < activities.size()
-        && activities[instance.view.activityRow].definitionHash == 0x38F926B2U
-        && (plan.effectiveRegion == 1 || plan.effectiveRegion == 2);
     const bool armed = membership::arm_host_teleport(
-        instance.view.binding.sessionId, static_cast<std::int32_t>(plan.effectiveRegion), hash, emberBookend);
+        instance.view.binding.sessionId, static_cast<std::int32_t>(plan.effectiveRegion), hash);
     log_line(core::log::Level::info,
              &instance,
              "state_region",
@@ -286,17 +279,6 @@ void dispatch_intent(RuntimeInstance& instance, std::uint64_t now) noexcept {
     }
     begin_intent_attempt(instance, now);
     switch (intent.kind) {
-    case lua_vm::IntentKind::playPrerenderedMovie: {
-        const auto activities=instance.view.catalog->activities();
-        if (instance.publicTarget || instance.view.activityRow>=activities.size()
-            || activities[instance.view.activityRow].definitionHash!=0x38F926B2U
-            || instance.activeRegion!=0
-            || !client::hooks::ember_movies::request({instance.view.binding.sessionId,
-                instance.view.activityClientGeneration},intent.requestKey,intent.firstRow,!intent.active)) {
-            refuse_delivery(instance,"movie_refused","native movie request unavailable",host::EffectOutcome::refused);
-        } else static_cast<void>(complete_local_effect(instance,"movie_queued"));
-        return;
-    }
     case lua_vm::IntentKind::selectMissionState: {
         scenes::Snapshot selected{};
         const scenes::Status status =
@@ -331,55 +313,53 @@ void dispatch_intent(RuntimeInstance& instance, std::uint64_t now) noexcept {
         // A selected state names its own slice-set region. Until the client transitions there its
         // object registry comes from the loaded slice-set entry, so the new state's objects stay
         // unfindable. Arming the host teleport is the only mid-activity move.
-        const auto activities = instance.view.catalog->activities();
-        const bool emberBookend = !instance.publicTarget
-            && instance.view.activityRow < activities.size()
-            && activities[instance.view.activityRow].definitionHash == 0x38F926B2U
-            && (selected.plan.effectiveRegion == 1 || selected.plan.effectiveRegion == 2);
-        if (emberBookend && selected.regionArrivalPending) {
-            namespace retirement = client::hooks::mission_retirement;
-            const auto cleanup = retirement::status({instance.view.binding.sessionId,
-                selected.activityClientGeneration, selected.revision});
-            if (cleanup == retirement::Status::failed || cleanup == retirement::Status::failedRetiring) {
-                refuse_delivery(instance, "retirement_failed", "native roster cleanup did not complete",
-                    host::EffectOutcome::refused);
-                return;
-            }
-            if (cleanup != retirement::Status::complete) {
-                report_intent_status(instance, kIntentStatusStateTransitionPending, "native_retirement_pending");
-                return;
-            }
-        }
         arm_state_region_teleport(instance, selected.plan);
         static_cast<void>(complete_local_effect(instance, "state_selected"));
         return;
     }
     case lua_vm::IntentKind::restartCheckpoint: {
-        if (intent.checkpointReleaseRequest) {
-            if (::sunrise::state::activity::membership::release_hard_wipe(instance.view.binding,
-                    intent.checkpointReleaseRequest))
-                static_cast<void>(complete_local_effect(instance,"checkpoint_reset_ready"));
-            else refuse_delivery(instance,"checkpoint_refused","wipe_not_active",host::EffectOutcome::refused);
+        if (intent.checkpointReleaseRequest != 0) {
+            if (::sunrise::state::activity::membership::release_hard_wipe(
+                    instance.view.binding, intent.checkpointReleaseRequest)) {
+                static_cast<void>(complete_local_effect(instance, "checkpoint_reset_ready"));
+            } else {
+                refuse_delivery(instance,
+                                "checkpoint_refused",
+                                "wipe_not_active",
+                                host::EffectOutcome::refused);
+            }
             return;
         }
-        namespace data=::sunrise::state::build_data;
-        const auto& destination=instance.view.binding.destination;
-        const std::string_view package(reinterpret_cast<const char*>(destination.packageName.data()),
+        namespace data = ::sunrise::state::build_data;
+        const auto& destination = instance.view.binding.destination;
+        const std::string_view package(
+            reinterpret_cast<const char*>(destination.packageName.data()),
             destination.packageNameLength);
         data::scenarios::Definition layout{};
         data::spawn_sets::NameHash spawn{};
+        // A wipe restarts the whole party at an authored spawn set of the region they are in.
         if (instance.publicTarget || !instance.lastFireteamLife.all_dead()
-            || instance.activeRegion!=intent.effectiveRegion
-            || !data::find_scenario_layout(package,layout)
-            || !data::spawn_sets::find_hash({layout.spawnStem.data(),layout.spawnStemLength},
-                intent.checkpointSpawnHash,spawn) || !spawn.pointCount) {
-            refuse_delivery(instance,"checkpoint_refused","party_or_spawn_unavailable",host::EffectOutcome::refused);
+            || instance.activeRegion != intent.effectiveRegion
+            || !data::find_scenario_layout(package, layout)
+            || !data::spawn_sets::find_hash({layout.spawnStem.data(), layout.spawnStemLength},
+                                            intent.checkpointSpawnHash,
+                                            spawn)
+            || spawn.pointCount == 0) {
+            refuse_delivery(instance,
+                            "checkpoint_refused",
+                            "party_or_spawn_unavailable",
+                            host::EffectOutcome::refused);
             return;
         }
         if (::sunrise::state::activity::membership::arm_hard_wipe(instance.view.binding,
-                intent.requestKey,intent.effectiveRegion,intent.checkpointSpawnHash))
-            static_cast<void>(complete_local_effect(instance,"checkpoint_wipe_armed"));
-        else refuse_delivery(instance,"checkpoint_refused","membership_busy",host::EffectOutcome::refused);
+                                                                  intent.requestKey,
+                                                                  intent.effectiveRegion,
+                                                                  intent.checkpointSpawnHash)) {
+            static_cast<void>(complete_local_effect(instance, "checkpoint_wipe_armed"));
+        } else {
+            refuse_delivery(
+                instance, "checkpoint_refused", "membership_busy", host::EffectOutcome::refused);
+        }
         return;
     }
     case lua_vm::IntentKind::placeSquad: {
@@ -561,11 +541,7 @@ void dispatch_intent(RuntimeInstance& instance, std::uint64_t now) noexcept {
         } else if (!abandon_reserved_delivery(instance, reservation)) {
             return;
         } else if (scene_lease_still_publishing(status)) {
-            // A lease that never publishes stalls the intent until its lifetime expires, and the
-            // status name alone does not say which side moved. The dispatcher gate that lets a
-            // state selection complete tests exactly `revision == publishedRevision`, so a lease
-            // pending immediately afterwards means one of them changed between the two checks.
-            // report_intent_status dedups on the status, so this records the numbers once.
+            // The lease numbers say which side moved. The status dedup reports them once.
             std::array<char, 176> detail{};
             scenes::Snapshot lease{};
             const scenes::Status leaseStatus = scenes::query(instance.view, lease);

@@ -26,6 +26,18 @@ constexpr std::uint32_t kSquadReals = 0x80807ECDU;
 constexpr std::uint32_t kObjectiveBlock = 0x80807F07U, kObjectiveTasks = 0x80807F08U;
 constexpr std::uint32_t kCombatant = 0x80807DA2U, kCombatantAtoms = 0x80807F6EU;
 constexpr std::uint32_t kCombatantKeyed = 0x80807DA3U, kCombatantLanes = 0x80807DA4U;
+/** Type-13 participation root and its nested blocks, in body order. */
+constexpr std::uint32_t kPlayer = 0x80804F2FU, kPlayerState = 0x808094E4U;
+constexpr std::uint32_t kPlayerScalars = 0x80804F39U, kPlayerTail = 0x80804F35U;
+constexpr std::uint32_t kPlayerIdentity = 0x808094DDU, kPlayerKeys = 0x808094DFU;
+constexpr std::uint32_t kPlayerPairs = 0x808094E3U, kPlayerFlags = 0x80804F31U;
+constexpr std::uint32_t kPlayerOptional = 0x80804F34U;
+/** Type-20 damage monitor root: health, shield, echoed revision. */
+constexpr std::uint32_t kDamage = 0x80809562U;
+/** Registered object replies: the interaction latch and the ownership key. */
+constexpr std::uint32_t kInteractionReply = 0x80804FB7U, kOwnershipReply = 0x80809ACCU;
+/** Counted lists inside the participation body. */
+constexpr std::uint64_t kPlayerScalarCountMaximum = 4, kPlayerKeyCountMaximum = 32;
 /** Quantization ceilings the combatant reals carry in their own descriptors. */
 constexpr std::uint32_t kSpatialMaximumBits = 0x45000000U, kUnitMaximumBits = 0x3F800000U;
 
@@ -514,17 +526,16 @@ real_value(std::uint64_t raw, std::uint8_t width, std::uint32_t maximumBits) noe
         if (!reader.read(1, exists)) return NativeStatus::malformed;
         if (!exists) continue;
         if (!reader.read(32, schema)) return NativeStatus::malformed;
-        // F32220 publishes the interaction latch and revision through this registered child.
-        if (schema == 0x80804FB7U) {
-            if (!read_bool(reader, values, 0x80804FB7U, 0, false, index)
-                || !read_signed(reader, values, 0x80804FB7U, 1, 32, 32,
+        if (schema == kInteractionReply) {
+            // The interaction latch and the revision that set it.
+            if (!read_bool(reader, values, kInteractionReply, 0, false, index)
+                || !read_signed(reader, values, kInteractionReply, 1, 32, 32,
                     (std::numeric_limits<std::int32_t>::min)(), false, index))
                 return NativeStatus::malformed;
-        } else if (schema == 0x80809ACCU) {
-            // Runtime flags 0x21 mean exact + custom codec, not optional (0x02).
-            // Native 9F0750 always writes the packed owner key, including zero when unheld.
-            if (!read_bool(reader, values, 0x80809ACCU, 0, false, index)
-                || !read_unsigned(reader, values, 0x80809ACCU, 1, 64, false, index))
+        } else if (schema == kOwnershipReply) {
+            // The owner key is always written, zero when nobody holds the object.
+            if (!read_bool(reader, values, kOwnershipReply, 0, false, index)
+                || !read_unsigned(reader, values, kOwnershipReply, 1, 64, false, index))
                 return NativeStatus::malformed;
         } else return NativeStatus::unsupported;
     }
@@ -583,51 +594,76 @@ real_value(std::uint64_t raw, std::uint8_t width, std::uint32_t maximumBits) noe
     }
     return NativeStatus::complete;
 }
-/** Type13 participation: authored field tables80804F2F/808094E4. In particular,
- * F9CC60 publishes .0.5 from a dead player with a valid Ghost, not a missing actor
- * during region loading. Decode the complete body before accepting that evidence. */
+/**
+ * Decodes the type-13 participation body. The whole body is read before its Ghost flag counts,
+ * because a player mid-load publishes a body with the flag but without a settled actor.
+ */
 [[nodiscard]] NativeStatus decode_player(Reader& reader, Values& values) noexcept {
     constexpr auto signedBias = (std::numeric_limits<std::int32_t>::min)();
-    if (!read_signed(reader,values,0x808094E4,0,32,32,signedBias,true)
-        || !read_unsigned(reader,values,0x808094E4,1,32,true)) return NativeStatus::malformed;
-    for (unsigned i=2;i<=5;++i)
-        if (!read_bool(reader,values,0x808094E4,i,false)) return NativeStatus::malformed;
-    if (!read_signed(reader,values,0x808094E4,6,3,8,1,false)
-        || !read_signed(reader,values,0x808094E4,7,2,8,1,false)) return NativeStatus::malformed;
-    std::uint64_t count{};
-    if (!reader.read(3,count)) return NativeStatus::malformed;
-    if (count>4) return NativeStatus::unsafeCount;
-    for (unsigned i=0;i<count;++i)
-        if (!read_unsigned(reader,values,0x80804F39,0,32,false,i)
-            || !read_real(reader,values,0x80804F39,1,32,false,i)) return NativeStatus::malformed;
-    if (!read_real(reader,values,0x80804F35,1,32,false)
-        || !read_signed(reader,values,0x80804F35,2,5,32,1,false)
-        || !read_signed(reader,values,0x80804F35,3,32,32,signedBias,true)) return NativeStatus::malformed;
-    for (unsigned i=4;i<=6;++i)
-        if (!read_bool(reader,values,0x80804F35,i,false)) return NativeStatus::malformed;
-    if (!read_unsigned(reader,values,0x808094DD,0,64,true)
-        || !read_unsigned(reader,values,0x808094DD,1,5,false)
-        || !read_signed(reader,values,0x808094DD,2,6,8,3,false)) return NativeStatus::malformed;
-    if (!reader.read(6,count)) return NativeStatus::malformed;
-    if (count>32) return NativeStatus::unsafeCount;
-    for (unsigned i=0;i<count;++i)
-        if (!read_unsigned(reader,values,0x808094DF,0,32,false,i)) return NativeStatus::malformed;
-    if (!reader.read(6,count)) return NativeStatus::malformed;
-    if (count>32) return NativeStatus::unsafeCount;
-    for (unsigned i=0;i<count;++i)
-        if (!read_unsigned(reader,values,0x808094E3,0,32,true,i)
-            || !read_unsigned(reader,values,0x808094E3,1,64,true,i)) return NativeStatus::malformed;
-    if (!read_bool(reader,values,0x80804F31,0,false)
-        || !read_unsigned(reader,values,0x80804F31,1,4,false)
-        || !read_unsigned(reader,values,0x80804F31,2,16,true)
-        || !read_unsigned(reader,values,0x80804F31,3,16,true)) return NativeStatus::malformed;
-    bool exists{};
-    if (!present(reader,true,exists)) return NativeStatus::malformed;
-    if (exists && !read_unsigned(reader,values,0x80804F34,0,32,false)) return NativeStatus::malformed;
-    return read_bool(reader,values,0x80804F31,5,false)
-        && read_signed(reader,values,0x80804F31,6,8,8,128,false)
-        && read_signed(reader,values,0x80804F2F,4,32,32,signedBias,false)
-        ? NativeStatus::complete : NativeStatus::malformed;
+    if (!read_signed(reader, values, kPlayerState, 0, 32, 32, signedBias, true)
+        || !read_unsigned(reader, values, kPlayerState, 1, 32, true)) {
+        return NativeStatus::malformed;
+    }
+    for (std::uint16_t ordinal = 2; ordinal <= 5; ++ordinal) {
+        if (!read_bool(reader, values, kPlayerState, ordinal, false)) return NativeStatus::malformed;
+    }
+    if (!read_signed(reader, values, kPlayerState, 6, 3, 8, 1, false)
+        || !read_signed(reader, values, kPlayerState, 7, 2, 8, 1, false)) {
+        return NativeStatus::malformed;
+    }
+    std::uint64_t count = 0;
+    if (!reader.read(3, count)) return NativeStatus::malformed;
+    if (count > kPlayerScalarCountMaximum) return NativeStatus::unsafeCount;
+    for (unsigned index = 0; index < count; ++index) {
+        if (!read_unsigned(reader, values, kPlayerScalars, 0, 32, false, index)
+            || !read_real(reader, values, kPlayerScalars, 1, 32, false, index)) {
+            return NativeStatus::malformed;
+        }
+    }
+    if (!read_real(reader, values, kPlayerTail, 1, 32, false)
+        || !read_signed(reader, values, kPlayerTail, 2, 5, 32, 1, false)
+        || !read_signed(reader, values, kPlayerTail, 3, 32, 32, signedBias, true)) {
+        return NativeStatus::malformed;
+    }
+    for (std::uint16_t ordinal = 4; ordinal <= 6; ++ordinal) {
+        if (!read_bool(reader, values, kPlayerTail, ordinal, false)) return NativeStatus::malformed;
+    }
+    if (!read_unsigned(reader, values, kPlayerIdentity, 0, 64, true)
+        || !read_unsigned(reader, values, kPlayerIdentity, 1, 5, false)
+        || !read_signed(reader, values, kPlayerIdentity, 2, 6, 8, 3, false)) {
+        return NativeStatus::malformed;
+    }
+    if (!reader.read(6, count)) return NativeStatus::malformed;
+    if (count > kPlayerKeyCountMaximum) return NativeStatus::unsafeCount;
+    for (unsigned index = 0; index < count; ++index) {
+        if (!read_unsigned(reader, values, kPlayerKeys, 0, 32, false, index)) {
+            return NativeStatus::malformed;
+        }
+    }
+    if (!reader.read(6, count)) return NativeStatus::malformed;
+    if (count > kPlayerKeyCountMaximum) return NativeStatus::unsafeCount;
+    for (unsigned index = 0; index < count; ++index) {
+        if (!read_unsigned(reader, values, kPlayerPairs, 0, 32, true, index)
+            || !read_unsigned(reader, values, kPlayerPairs, 1, 64, true, index)) {
+            return NativeStatus::malformed;
+        }
+    }
+    if (!read_bool(reader, values, kPlayerFlags, 0, false)
+        || !read_unsigned(reader, values, kPlayerFlags, 1, 4, false)
+        || !read_unsigned(reader, values, kPlayerFlags, 2, 16, true)
+        || !read_unsigned(reader, values, kPlayerFlags, 3, 16, true)) {
+        return NativeStatus::malformed;
+    }
+    bool exists = false;
+    if (!present(reader, true, exists)) return NativeStatus::malformed;
+    if (exists && !read_unsigned(reader, values, kPlayerOptional, 0, 32, false)) {
+        return NativeStatus::malformed;
+    }
+    return read_bool(reader, values, kPlayerFlags, 5, false)
+                   && read_signed(reader, values, kPlayerFlags, 6, 8, 8, 128, false)
+                   && read_signed(reader, values, kPlayer, 4, 32, 32, signedBias, false)
+               ? NativeStatus::complete
+               : NativeStatus::malformed;
 }
 
 /** Decodes one root body of the given schema; the status names how far it got. */
@@ -641,19 +677,17 @@ decode_body(std::uint32_t schema, Reader& reader, Values& values) noexcept {
         return NativeStatus::complete;
     }
     switch (schema) {
-    case 0x80804F2F:
+    case kPlayer:
         return decode_player(reader, values);
-    case 0x80809562U:
-        // Reflected flags 0x21: mandatory raw floats (optional is bit 0x02).
-        // Native A774B0 publishes health/shield/revision as a fixed 12-byte state.
+    case kDamage:
+        // Three mandatory fields: health, shield, then the echoed Auth revision.
         return read_real(reader, values, schema, 0, 32, false)
             && read_real(reader, values, schema, 1, 32, false)
             && read_signed(reader, values, schema, 2, 32, 32,
                 (std::numeric_limits<std::int32_t>::min)(), false)
             ? NativeStatus::complete : NativeStatus::malformed;
     case kGhostLink:
-        // Native E4A590 publishes all three fields: active, elapsed/duration,
-        // and the accepted Auth generation. None has an optional presence bit.
+        // Three mandatory fields: active, elapsed over duration, accepted Auth generation.
         return read_bool(reader, values, kGhostLink, 0, false)
                        && read_real(reader, values, kGhostLink, 1, 32, false)
                        && read_signed(reader, values, kGhostLink, 2, 32, 32,

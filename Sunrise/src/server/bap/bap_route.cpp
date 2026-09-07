@@ -504,15 +504,16 @@ select_activity_mission_seed(const state::activity::SessionBinding& binding,
     }
     if (status == ActivityMissionSeedLeaseStatus::ready) {
         MissionSeedLease& lease = session->activityMissionSeed;
-        // Natural traversal does not select another seed plan. The retained plan can still
-        // name the landing while the client's instantiated world is already Apex.
+        // Ordinary traversal can reach a plan's region before the script selects it, so an open
+        // arrival window closes here when the client already holds that region.
         const auto placement = state::activity::membership::reported_placement(binding.sessionId);
         const auto heldRegion = state::activity::membership::instantiated_region(placement);
         const bool targetHeld = encrypted::push::activity::mission_seed_arrival_window_closed(
-            heldRegion, plan.effectiveRegion, plan.sliceSetIndex,
-            middleware::content::packages::tables::kSliceSetIndexFactor);
+            heldRegion, plan.effectiveRegion);
         if (lease.configured && same_mission_seed_plan(lease.plan, plan)) {
-            if (targetHeld) lease.regionArrivalPending = false;
+            if (targetHeld) {
+                lease.regionArrivalPending = false;
+            }
             // The script may select the plan the roster adopted by default. That is a selection.
             lease.scriptSelected = true;
             return ActivityMissionSeedLeaseStatus::ready;
@@ -538,27 +539,15 @@ select_activity_mission_seed(const state::activity::SessionBinding& binding,
                 }
                 lease.registeredRegions[lease.registeredRegionCount++] = plan.effectiveRegion;
             }
-            // Every distinct packed region selects a native world entry, including a
-            // cinematic variant in the same bubble. Arm travel before waiting for its
-            // exact arrival; the durable state-selection dispatcher handles that order.
+            // A selection that replaces the world waits for the client's arrival there. One that
+            // does not must close any window an earlier selection left open, because an open
+            // window blocks publication and nothing else clears it.
             if (lease.configured
                 && encrypted::push::activity::mission_seed_selection_needs_arrival(
-                    lease.plan.sliceSetIndex,
-                    lease.plan.effectiveRegion,
-                    plan.sliceSetIndex,
-                    plan.effectiveRegion, heldRegion,
-                    middleware::content::packages::tables::kSliceSetIndexFactor)) {
+                    lease.plan.effectiveRegion, plan.effectiveRegion, heldRegion)) {
                 lease.previousPlan = lease.plan;
                 lease.regionArrivalPending = true;
             } else {
-                // This selection replaces no world, so it has no arrival to wait for -- and any
-                // window still open from an earlier one must close here rather than at
-                // publication. While it is set the roster both refuses to commit a published
-                // revision and suppresses the send that would clear it, so a window that outlives
-                // its own selection can never resolve: the lease stays unpublished, every scene
-                // lease on the new state reports a pending mission seed, and the selection's own
-                // gate is skipped so nothing notices. The ending stalled exactly there, with
-                // revision 3 against published 2 and the window still open.
                 lease.regionArrivalPending = false;
             }
             lease.plan = plan;

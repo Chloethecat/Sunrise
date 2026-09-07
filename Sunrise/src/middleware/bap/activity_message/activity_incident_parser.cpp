@@ -132,7 +132,6 @@ Verdict validate(std::span<const std::byte> payload, Incident& parsed) noexcept 
     if (!read_bytes(reader, std::span(parsed.payload).first(parsed.payloadLength))) {
         return Verdict::truncated;
     }
-    parsed.hasPayload = parsed.payloadLength != 0;
     parsed.consumedBits = static_cast<std::uint32_t>(payload.size() * encoding::kBitsPerByte
                                                      - reader.remaining_bits());
     return Verdict::accepted;

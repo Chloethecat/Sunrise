@@ -184,7 +184,7 @@ struct Snapshot final {
     bool hasGrant{};
     bool hasRegion{};
     bool hasSpawnOverride{};
-    /** SDK darkness policy; lifetime +12 stores a bubble, not the slice-set index. */
+    /** Set when the estate carries a darkness sensor body; the lifetime then names the bubble. */
     bool hasDarknessPolicy{};
     bool darknessEnabled{};
     /** Hold the client's spawn while it loads by emitting `awaiting_client_sync`. */

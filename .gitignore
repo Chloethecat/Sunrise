@@ -15,6 +15,3 @@
 # CMake build files
 /build/
 /out/
-
-# Local Python inspection tools and tests
-__pycache__/
