@@ -513,9 +513,13 @@ set_cinematic_active_reserved(const sdk::BoundView& view,
     server::bap::ActivityLinkView link{};
     const SceneStatus live = scene_binding_status(view, link);
     if (live != SceneStatus::ready) return live;
-    const auto selected = behavior_scope::select(occurrences, view.catalog->states(),
-        view.catalog->bubbles(), view.scenarioRow, slots[slotRow].objectIndex,
-        snapshot.plan.stateRow, link.effectiveRegion);
+    const auto selected = behavior_scope::select(occurrences,
+                                                 view.catalog->states(),
+                                                 view.catalog->bubbles(),
+                                                 view.scenarioRow,
+                                                 slots[slotRow].objectIndex,
+                                                 snapshot.plan.stateRow,
+                                                 link.effectiveRegion);
     if (selected.ambiguous) return SceneStatus::ambiguousTarget;
     occurrenceRow = selected.row;
     return occurrenceRow == sdk::format::kAbsentIndex ? SceneStatus::targetUnavailable

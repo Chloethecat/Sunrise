@@ -363,8 +363,7 @@ bool request_squad_override(
                 : stateLocalRosterGroup != nullptr)
         || requestedCounts.size() < squad::kMinimumRequestedCountLength
         || requestedCounts.size() > squad::kMaximumRequestedCountLength
-        || expectedActivityClientGeneration == 0
-        || !squad::valid_mode(mode)
+        || expectedActivityClientGeneration == 0 || !squad::valid_mode(mode)
         || !std::ranges::all_of(requestedCounts, [](std::int32_t count) { return count >= 0; })) {
         return false;
     }

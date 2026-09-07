@@ -5,9 +5,9 @@
 #include <string_view>
 #include <vector>
 
+#include "../../../../../middleware/bap/activity_message/darkness_zone_auth.h"
 #include "../../../../../middleware/content/packages/tables/region_reader.h"
 #include "../../../../../state/activity/defaults/activity_defaults_snapshot.h"
-#include "../../../../../middleware/bap/activity_message/darkness_zone_auth.h"
 #include "../../../../../state/activity/destination/activity_destination_spawn_binding.h"
 #include "../../../../../state/activity/membership/activity_membership_query.h"
 #include "../../../../../state/activity/runtime.h"

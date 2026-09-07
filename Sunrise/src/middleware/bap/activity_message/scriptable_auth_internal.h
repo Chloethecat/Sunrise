@@ -6,6 +6,7 @@
 
 #include "../../encoding/bit_reader.h"
 #include "../../encoding/bit_writer.h"
+#include "auth_fields.h"
 #include "scriptable_auth_body.h"
 
 // Constants and primitives shared by the scriptable-auth codecs.
@@ -15,11 +16,8 @@ namespace sunrise::middleware::bap::activity_message::scriptable_auth {
 
 /** Widths of the scalar wire fields, in bits, and the value a present flag carries. */
 inline constexpr std::uint8_t kReal32Width = 32;
-inline constexpr std::uint8_t kBoolWidth = 1;
 inline constexpr std::uint8_t kEnabled = 1;
 inline constexpr std::uint8_t kSigned32Width = 32;
-/** Signed 32-bit schema fields store zero at the middle of the unsigned wire range. */
-inline constexpr std::uint32_t kSigned32Bias = 0x80000000U;
 /** Signed 16-bit schema fields store zero at the middle of the unsigned wire range. */
 inline constexpr std::uint32_t kSigned16Bias = 0x8000;
 /** Wide schema integers travel as 64-bit fields. */
@@ -29,11 +27,13 @@ inline constexpr std::uint8_t kModeWidth = 2;
 inline constexpr std::int8_t kMinimumMode = -1;
 inline constexpr std::int8_t kMaximumMode = 2;
 inline constexpr std::uint32_t kModeBias = 1;
-/** The nested 0x80809C42 ClientRef is unset when it holds this key, type 0, and index -1. */
-inline constexpr std::uint32_t kClientRefAbsentKey = 0x811C9DC5U;
-inline constexpr std::uint8_t kClientRefTypeWidth = 7;
-inline constexpr std::uint8_t kClientRefIndexWidth = 16;
-inline constexpr std::uint32_t kClientRefIndexBias = 32'768;
+using auth_fields::kBoolWidth;
+using auth_fields::kClientRefAbsentKey;
+using auth_fields::kClientRefIndexBias;
+using auth_fields::kClientRefIndexWidth;
+using auth_fields::kClientRefTypeWidth;
+using auth_fields::kSigned32Bias;
+using auth_fields::write_absent_client_ref;
 
 /** @return True when the unused low bits in the final byte are zero. */
 [[nodiscard]] inline bool finish_padding(encoding::bits::Reader& reader) noexcept {
@@ -41,12 +41,6 @@ inline constexpr std::uint32_t kClientRefIndexBias = 32'768;
     std::uint64_t padding = 0;
     return paddingBits < 8U && reader.read(static_cast<std::uint8_t>(paddingBits), padding)
            && padding == 0 && reader.remaining_bits() == 0;
-}
-
-/** Writes the exact nested 0x80809C42 unset ClientRef. */
-[[nodiscard]] inline bool write_absent_client_ref(encoding::bits::Writer& writer) noexcept {
-    return writer.write(kClientRefAbsentKey, 32) && writer.write(0, kClientRefTypeWidth)
-           && writer.write(kClientRefIndexBias - 1U, kClientRefIndexWidth);
 }
 
 /** Reads and requires the exact nested 0x80809C42 unset ClientRef. */

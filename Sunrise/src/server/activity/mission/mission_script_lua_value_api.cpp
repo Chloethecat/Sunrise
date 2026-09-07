@@ -137,6 +137,7 @@ vector_squad(lua_State* state, const SquadCountVectorHandle& handle, SquadDefini
 
 } // namespace
 
+/** @return The stable Lua name of one squad mode. */
 std::string_view squad_mode_name(std::uint8_t mode) noexcept {
     if (mode == kSquadModeReinforce) {
         return "reinforce";

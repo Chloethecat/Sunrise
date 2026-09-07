@@ -134,8 +134,11 @@ namespace {
         return SceneStatus::missionSeedUnavailable;
     }
     if (lease.plan.stateRow != stateRow
-        && !behavior_scope::live_state(view.catalog->states(), view.catalog->bubbles(),
-            view.scenarioRow, stateRow, link.effectiveRegion)) {
+        && !behavior_scope::live_state(view.catalog->states(),
+                                       view.catalog->bubbles(),
+                                       view.scenarioRow,
+                                       stateRow,
+                                       link.effectiveRegion)) {
         return SceneStatus::wrongState;
     }
     if (lease.publicationPending || lease.publishedRevision != lease.revision) {

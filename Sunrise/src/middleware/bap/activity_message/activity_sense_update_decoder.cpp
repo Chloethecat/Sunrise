@@ -529,15 +529,23 @@ real_value(std::uint64_t raw, std::uint8_t width, std::uint32_t maximumBits) noe
         if (schema == kInteractionReply) {
             // The interaction latch and the revision that set it.
             if (!read_bool(reader, values, kInteractionReply, 0, false, index)
-                || !read_signed(reader, values, kInteractionReply, 1, 32, 32,
-                    (std::numeric_limits<std::int32_t>::min)(), false, index))
+                || !read_signed(reader,
+                                values,
+                                kInteractionReply,
+                                1,
+                                32,
+                                32,
+                                (std::numeric_limits<std::int32_t>::min)(),
+                                false,
+                                index))
                 return NativeStatus::malformed;
         } else if (schema == kOwnershipReply) {
             // The owner key is always written, zero when nobody holds the object.
             if (!read_bool(reader, values, kOwnershipReply, 0, false, index)
                 || !read_unsigned(reader, values, kOwnershipReply, 1, 64, false, index))
                 return NativeStatus::malformed;
-        } else return NativeStatus::unsupported;
+        } else
+            return NativeStatus::unsupported;
     }
     return NativeStatus::complete;
 }
@@ -605,7 +613,8 @@ real_value(std::uint64_t raw, std::uint8_t width, std::uint32_t maximumBits) noe
         return NativeStatus::malformed;
     }
     for (std::uint16_t ordinal = 2; ordinal <= 5; ++ordinal) {
-        if (!read_bool(reader, values, kPlayerState, ordinal, false)) return NativeStatus::malformed;
+        if (!read_bool(reader, values, kPlayerState, ordinal, false))
+            return NativeStatus::malformed;
     }
     if (!read_signed(reader, values, kPlayerState, 6, 3, 8, 1, false)
         || !read_signed(reader, values, kPlayerState, 7, 2, 8, 1, false)) {
@@ -682,17 +691,31 @@ decode_body(std::uint32_t schema, Reader& reader, Values& values) noexcept {
     case kDamage:
         // Three mandatory fields: health, shield, then the echoed Auth revision.
         return read_real(reader, values, schema, 0, 32, false)
-            && read_real(reader, values, schema, 1, 32, false)
-            && read_signed(reader, values, schema, 2, 32, 32,
-                (std::numeric_limits<std::int32_t>::min)(), false)
-            ? NativeStatus::complete : NativeStatus::malformed;
+                       && read_real(reader, values, schema, 1, 32, false)
+                       && read_signed(reader,
+                                      values,
+                                      schema,
+                                      2,
+                                      32,
+                                      32,
+                                      (std::numeric_limits<std::int32_t>::min)(),
+                                      false)
+                   ? NativeStatus::complete
+                   : NativeStatus::malformed;
     case kGhostLink:
         // Three mandatory fields: active, elapsed over duration, accepted Auth generation.
         return read_bool(reader, values, kGhostLink, 0, false)
                        && read_real(reader, values, kGhostLink, 1, 32, false)
-                       && read_signed(reader, values, kGhostLink, 2, 32, 32,
-                                      (std::numeric_limits<std::int32_t>::min)(), false)
-                   ? NativeStatus::complete : NativeStatus::malformed;
+                       && read_signed(reader,
+                                      values,
+                                      kGhostLink,
+                                      2,
+                                      32,
+                                      32,
+                                      (std::numeric_limits<std::int32_t>::min)(),
+                                      false)
+                   ? NativeStatus::complete
+                   : NativeStatus::malformed;
     case kDevice:
         return decode_device(reader, values);
     case kScene:

@@ -147,7 +147,11 @@ inline constexpr std::array<const char*, host::kEventKindCount> kEventHandlerNam
     "on_event_damage_state",
 }};
 
-static_assert([] { for (const auto* name : kEventHandlerNames) if (name == nullptr) return false; return true; }());
+static_assert([] {
+    for (const auto* name : kEventHandlerNames)
+        if (name == nullptr) return false;
+    return true;
+}());
 
 /** Captures immutable callback references while table access remains inside lua_pcall. */
 [[nodiscard]] int capture_program(lua_State* state) {

@@ -139,8 +139,7 @@ void clear_pending_event(PendingMissionEvent& pending) noexcept {
            || event.kind == host::EventKind::ghostLinkState
            || event.kind == host::EventKind::cinematicSkipRequested
            || event.kind == host::EventKind::cinematicTerminated
-           || delivery_lifecycle_event(event.kind)
-           || event.has_sense_observations();
+           || delivery_lifecycle_event(event.kind) || event.has_sense_observations();
 }
 
 /** Faults the instance unless the ordered mission input arrives with no gap, starting at one. */

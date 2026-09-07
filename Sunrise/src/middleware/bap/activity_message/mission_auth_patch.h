@@ -84,8 +84,7 @@ inline constexpr std::array<FieldRule, kCombatantFieldCount> kCombatantRules{{
     {Kind::manifest, true, 0}, // .7
 }};
 
-/** Combatant .6 program layout: revision, two 6-bit header words, a presence bit, kind, completion.
- */
+/** Combatant .6 program layout: revision, two 6-bit header words, presence, kind, completion. */
 inline constexpr std::size_t kProgramLeadBits = 31 + 6;
 inline constexpr std::uint8_t kProgramHeaderWidth = 6;
 inline constexpr std::uint32_t kProgramHeaderSecond = 1;

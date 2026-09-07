@@ -270,42 +270,72 @@ push_joined_revision_member(lua_State* state, const host::Event& event, std::str
 [[nodiscard]] int actor_path_index(lua_State* state) {
     const auto& event = check_event(state, 1);
     const auto key = lua_string_view(state, 2);
-    if (push_common_member(state, event, key) || push_mission_sequence_member(state, event, key)) return 1;
+    if (push_common_member(state, event, key) || push_mission_sequence_member(state, event, key))
+        return 1;
     if (event_surface_visible(state, event.kind)) {
         if (push_slot_identity_member(state, event, key)) return 1;
-        if (key == "generation") { lua_pushinteger(state, event.actorGeneration); return 1; }
-        if (key == "revision") { lua_pushinteger(state, event.actorPathRevision); return 1; }
-        if (key == "path_state") { lua_pushinteger(state, event.actorPathState); return 1; }
+        if (key == "generation") {
+            lua_pushinteger(state, event.actorGeneration);
+            return 1;
+        }
+        if (key == "revision") {
+            lua_pushinteger(state, event.actorPathRevision);
+            return 1;
+        }
+        if (key == "path_state") {
+            lua_pushinteger(state, event.actorPathState);
+            return 1;
+        }
         if (key == "delivery_revision" && event.actorDeliveryKnown) {
-            lua_pushinteger(state, event.actorDeliveryRevision); return 1;
+            lua_pushinteger(state, event.actorDeliveryRevision);
+            return 1;
         }
         if (key == "delivery_state" && event.actorDeliveryKnown) {
-            lua_pushinteger(state, event.actorDeliveryState); return 1;
+            lua_pushinteger(state, event.actorDeliveryState);
+            return 1;
         }
-        if (key == "dead") { lua_pushboolean(state, event.actorDead); return 1; }
+        if (key == "dead") {
+            lua_pushboolean(state, event.actorDead);
+            return 1;
+        }
     }
-    lua_pushnil(state); return 1;
+    lua_pushnil(state);
+    return 1;
 }
 
+/** Lua index for one object interaction event: the common, slot and interaction members. */
 [[nodiscard]] int object_interaction_index(lua_State* state) {
-    const host::Event& event = check_event(state,1);
-    const auto key = lua_string_view(state,2);
-    if (push_common_member(state,event,key) || push_mission_sequence_member(state,event,key)
-        || (event_surface_visible(state,event.kind) && push_slot_identity_member(state,event,key))) return 1;
+    const host::Event& event = check_event(state, 1);
+    const auto key = lua_string_view(state, 2);
+    if (push_common_member(state, event, key) || push_mission_sequence_member(state, event, key)
+        || (event_surface_visible(state, event.kind)
+            && push_slot_identity_member(state, event, key)))
+        return 1;
     if (event.kind == host::EventKind::damageState) {
-        if (key == "health") lua_pushnumber(state,event.damageHealth);
-        else if (key == "shield") lua_pushnumber(state,event.damageShield);
-        else if (key == "revision") lua_pushinteger(state,event.damageRevision);
-        else lua_pushnil(state);
+        if (key == "health")
+            lua_pushnumber(state, event.damageHealth);
+        else if (key == "shield")
+            lua_pushnumber(state, event.damageShield);
+        else if (key == "revision")
+            lua_pushinteger(state, event.damageRevision);
+        else
+            lua_pushnil(state);
         return 1;
     }
-    if (key == "generation") lua_pushinteger(state,event.objectGeneration);
-    else if (key == "present") lua_pushboolean(state,event.objectPresent);
-    else if (key == "alive") lua_pushboolean(state,event.objectAlive);
-    else if (key == "owner_known") lua_pushboolean(state,event.objectOwnerKnown);
-    else if (key == "has_owner") lua_pushboolean(state,event.objectHasOwner);
-    else if (key == "owner_key" && event.objectOwnerKey != 0) push_u64_string(state,event.objectOwnerKey);
-    else lua_pushnil(state);
+    if (key == "generation")
+        lua_pushinteger(state, event.objectGeneration);
+    else if (key == "present")
+        lua_pushboolean(state, event.objectPresent);
+    else if (key == "alive")
+        lua_pushboolean(state, event.objectAlive);
+    else if (key == "owner_known")
+        lua_pushboolean(state, event.objectOwnerKnown);
+    else if (key == "has_owner")
+        lua_pushboolean(state, event.objectHasOwner);
+    else if (key == "owner_key" && event.objectOwnerKey != 0)
+        push_u64_string(state, event.objectOwnerKey);
+    else
+        lua_pushnil(state);
     return 1;
 }
 
@@ -313,12 +343,22 @@ push_joined_revision_member(lua_State* state, const host::Event& event, std::str
 [[nodiscard]] int ghost_link_index(lua_State* state) {
     const host::Event& event = check_event(state, 1);
     const std::string_view key = lua_string_view(state, 2);
-    if (push_common_member(state, event, key) || push_mission_sequence_member(state, event, key)) return 1;
+    if (push_common_member(state, event, key) || push_mission_sequence_member(state, event, key))
+        return 1;
     if (event_surface_visible(state, event.kind)) {
         if (push_slot_identity_member(state, event, key)) return 1;
-        if (key == "generation") { lua_pushinteger(state, event.ghostGeneration); return 1; }
-        if (key == "progress") { lua_pushnumber(state, event.ghostProgress); return 1; }
-        if (key == "active") { lua_pushboolean(state, event.ghostActive); return 1; }
+        if (key == "generation") {
+            lua_pushinteger(state, event.ghostGeneration);
+            return 1;
+        }
+        if (key == "progress") {
+            lua_pushnumber(state, event.ghostProgress);
+            return 1;
+        }
+        if (key == "active") {
+            lua_pushboolean(state, event.ghostActive);
+            return 1;
+        }
     }
     lua_pushnil(state);
     return 1;
@@ -479,14 +519,20 @@ push_joined_revision_member(lua_State* state, const host::Event& event, std::str
     return 1;
 }
 
+/** Lua index for one fireteam state event: the alive, dead and unknown counts. */
 [[nodiscard]] int fireteam_state_index(lua_State* state) {
-    const auto& event=check_event(state,1);
-    const auto key=lua_string_view(state,2);
-    if (push_common_member(state,event,key) || push_mission_sequence_member(state,event,key)) return 1;
-    if (key=="alive_count") lua_pushinteger(state,event.fireteamAlive);
-    else if (key=="dead_count") lua_pushinteger(state,event.fireteamDead);
-    else if (key=="unknown_count") lua_pushinteger(state,event.fireteamUnknown);
-    else lua_pushnil(state);
+    const auto& event = check_event(state, 1);
+    const auto key = lua_string_view(state, 2);
+    if (push_common_member(state, event, key) || push_mission_sequence_member(state, event, key))
+        return 1;
+    if (key == "alive_count")
+        lua_pushinteger(state, event.fireteamAlive);
+    else if (key == "dead_count")
+        lua_pushinteger(state, event.fireteamDead);
+    else if (key == "unknown_count")
+        lua_pushinteger(state, event.fireteamUnknown);
+    else
+        lua_pushnil(state);
     return 1;
 }
 
@@ -494,7 +540,7 @@ push_joined_revision_member(lua_State* state, const host::Event& event, std::str
 
 /** Installs the derived and internal view metatables. */
 void register_derived_event_metatables(lua_State* state) {
-    register_metatable(state,kFireteamStateEventMetatable,&fireteam_state_index);
+    register_metatable(state, kFireteamStateEventMetatable, &fireteam_state_index);
     register_metatable(state, kTriggerEnteredEventMetatable, &trigger_entered_index);
     register_metatable(state, kTriggerExitedEventMetatable, &trigger_exited_index);
     register_metatable(state, kSquadStateEventMetatable, &squad_state_index);

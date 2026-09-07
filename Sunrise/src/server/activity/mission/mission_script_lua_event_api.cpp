@@ -55,8 +55,10 @@ namespace sunrise::server::activity::mission::lua_vm::detail {
         return "actorPathState";
     case host::EventKind::objectInteracted:
         return "objectInteracted";
-    case host::EventKind::damageState: return "damageState";
-    case host::EventKind::objectState: return "objectState";
+    case host::EventKind::damageState:
+        return "damageState";
+    case host::EventKind::objectState:
+        return "objectState";
     case host::EventKind::ghostLinkState:
         return "ghostLinkState";
     case host::EventKind::clientMessageReceived:
@@ -164,7 +166,8 @@ namespace sunrise::server::activity::mission::lua_vm::detail {
     case host::EventKind::objectInteracted:
         return kObjectInteractionEventMetatable;
     case host::EventKind::damageState:
-    case host::EventKind::objectState: return kObjectInteractionEventMetatable;
+    case host::EventKind::objectState:
+        return kObjectInteractionEventMetatable;
     case host::EventKind::ghostLinkState:
         return kGhostLinkEventMetatable;
     }

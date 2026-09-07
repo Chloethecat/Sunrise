@@ -23,8 +23,7 @@ inline constexpr std::uint32_t kSigned32Bias = 0x80000000U;
 /** Generations and revisions are 31-bit counters that the client accepts only while positive. */
 inline constexpr std::uint8_t kCounterWidth = 31;
 inline constexpr std::uint32_t kMaximumCounter = 0x7FFFFFFFU;
-/** A nested ClientRef is a 32-bit registry key, a 7-bit biased slot type and a 16-bit biased index.
- */
+/** A ClientRef is a 32-bit registry key, a 7-bit biased slot type and a 16-bit biased index. */
 inline constexpr std::uint8_t kClientRefKeyWidth = 32;
 inline constexpr std::uint8_t kClientRefTypeWidth = 7;
 inline constexpr std::uint8_t kClientRefIndexWidth = 16;

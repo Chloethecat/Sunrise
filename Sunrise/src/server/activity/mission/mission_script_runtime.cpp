@@ -288,8 +288,10 @@ void clear_instance(RuntimeInstance& instance, bool clearPending) noexcept {
     instance.objectiveObservations = {};
     instance.sessionRoster = {};
     instance.sessionRosterObserved = false;
-    instance.playerLife={};instance.playerLifeGeneration=0;
-    instance.lastFireteamLife={};instance.fireteamLifePublished=false;
+    instance.playerLife = {};
+    instance.playerLifeGeneration = 0;
+    instance.lastFireteamLife = {};
+    instance.fireteamLifePublished = false;
     std::vector<host::Event>{}.swap(instance.scriptEvents);
     instance.firstScriptEventAttempt = 0;
     instance.nextScriptEventAttempt = 0;

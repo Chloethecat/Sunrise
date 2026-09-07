@@ -146,17 +146,17 @@ constexpr std::size_t kSpawnKeyCount = 32;
     // name hash; zero is a hash that no row matches.
     bool encoded = writer.write(std::uint32_t{snapshot.lifetime} + kLifetimeBias, kLifetimeWidth)
                    && writer.write(1, 3) && writer.write(0, kPresenceWidth)
-                   && writer.write(kSignedZero, 32) && writer.write(kEmptyNameHash, 32)
+                   && writer.write(kSignedZero, 32)
+                   && writer.write(kEmptyNameHash, 32)
                    // Under a darkness policy the lifetime names the bubble, or -1 when disabled.
                    && writer.write(!snapshot.hasDarknessPolicy ? kSignedZero
                                    : snapshot.darknessEnabled && snapshot.hasRegion
                                        ? kSignedZero + snapshot.region / kStatesPerBubble
                                        : kSignedMinusOne,
                                    32)
-                   && writer.write(1, 6)
-                   && writer.write(kWaitingSwitchKey, 32) && writer.write(1, kPresenceWidth)
-                   && writer.write(kWaitingSwitchClass, 32) && writer.write(kSignedZero, 32)
-                   && writer.write(kSignedZero, 32);
+                   && writer.write(1, 6) && writer.write(kWaitingSwitchKey, 32)
+                   && writer.write(1, kPresenceWidth) && writer.write(kWaitingSwitchClass, 32)
+                   && writer.write(kSignedZero, 32) && writer.write(kSignedZero, 32);
     for (std::size_t index = 0; encoded && index < kSpawnOverrideCount; ++index) {
         const std::uint32_t slice =
             snapshot.hasSpawnOverride ? snapshot.spawnSliceSet + kSpawnOverrideIndexBias : 0U;

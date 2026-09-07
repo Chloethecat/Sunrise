@@ -37,8 +37,7 @@ namespace {
     const lua_Integer region = optional_integer_argument(state, "region", -1);
     const lua_Integer hash = optional_integer_argument(state, "spawn_set_hash", 0);
     if (region < 0 || region > ::sunrise::state::activity::membership::kMaximumSliceSetIndex
-        || hash <= 0
-        || hash >= (std::numeric_limits<std::uint32_t>::max)()) {
+        || hash <= 0 || hash >= (std::numeric_limits<std::uint32_t>::max)()) {
         return luaL_error(state, "checkpoint requires an authored region and spawn-set hash");
     }
     std::uint64_t release = 0;

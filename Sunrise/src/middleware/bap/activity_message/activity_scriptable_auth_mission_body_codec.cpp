@@ -427,7 +427,8 @@ bool encode_type68(const Type68Preset& preset,
                    && reference.registryKey != kClientRefAbsentKey);
     };
     // A navpoint rides only on a visible entry in the enter state.
-    const bool navpointAllowed = preset.navpoint.slotIndex < 0 || (preset.visible && preset.state == 0);
+    const bool navpointAllowed =
+        preset.navpoint.slotIndex < 0 || (preset.visible && preset.state == 0);
     if (!valid_reference(preset.audience, kType70SlotType)
         || !valid_reference(preset.navpoint, kType47SlotType) || !navpointAllowed
         || output.size() < kType68ByteCount || preset.state < 0 || preset.state > 2
@@ -446,13 +447,11 @@ bool encode_type68(const Type68Preset& preset,
                         kClientRefIndexWidth)
         && write_absent_client_ref(writer);
     for (std::size_t index = 0; encoded && index < kType68EntryCount; ++index) {
-        encoded = index == 0 && preset.visible
-                      ? write_directive_entry(writer,
-                                              preset.nameHash,
-                                              preset.elementIndex,
-                                              preset.state,
-                                              preset.navpoint)
-                      : write_directive_entry(writer, kClientRefAbsentKey, 0, -1);
+        encoded =
+            index == 0 && preset.visible
+                ? write_directive_entry(
+                      writer, preset.nameHash, preset.elementIndex, preset.state, preset.navpoint)
+                : write_directive_entry(writer, kClientRefAbsentKey, 0, -1);
     }
     encoded = encoded && writer.write(preset.visible ? 1U : 0U, kDirectiveActiveIndexWidth);
     return encoded && writer.bit_count() == kType68BitCount && writer.finish(written)

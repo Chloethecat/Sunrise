@@ -82,7 +82,8 @@ bool arm_hard_wipe(const SessionBinding& binding,
                    std::uint64_t requestKey,
                    std::int32_t region,
                    std::uint32_t spawnSetHash) noexcept {
-    if (requestKey == 0 || region < 0 || spawnSetHash == 0 || spawnSetHash == kInvalidSpawnSetHash) {
+    if (requestKey == 0 || region < 0 || spawnSetHash == 0
+        || spawnSetHash == kInvalidSpawnSetHash) {
         return false;
     }
     bool accepted = false;

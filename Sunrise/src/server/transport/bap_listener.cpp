@@ -1,5 +1,4 @@
 #include "bap_listener.h"
-#include "bap_frame_batch.h"
 
 #include <WS2tcpip.h>
 #include <WinSock2.h>
@@ -9,6 +8,7 @@
 #include "../../core/logging/log.h"
 #include "../../core/settings/settings.h"
 #include "../activity/host_runtime.h"
+#include "bap_frame_batch.h"
 #include "core/threading/data_mutex.h"
 #include "internal.h"
 

@@ -38,7 +38,8 @@ packet_has_sense_key(const middleware::bap::activity_message::sense_update::Deco
                      const SenseObservationKey& key,
                      std::size_t first) noexcept {
     for (std::size_t index = first; index < packet.objectCount; ++index) {
-        if (packet.objects[index].status == middleware::bap::activity_message::sense_update::ObjectStatus::decoded
+        if (packet.objects[index].status
+                == middleware::bap::activity_message::sense_update::ObjectStatus::decoded
             && packet.objects[index].hasGeneration && same_sense_key(key, packet.objects[index])) {
             return true;
         }
@@ -51,11 +52,11 @@ packet_has_sense_key(const middleware::bap::activity_message::sense_update::Deco
     namespace sense = middleware::bap::activity_message::sense_update;
     const auto& packet = input.decoded;
     return input.sourceGeneration != 0 && input.clientMessageSequence != 0
-        && input.verdict == state::activity::receipts::Verdict::framed
-        && input.decodeStatus == packet.status && sense::observation_packet(packet)
-        && input.groupsSeen == packet.groupsSeen && input.groupsDecoded == packet.groupsDecoded
-        && input.groupsSkipped == packet.groupsSkipped && input.objectsSeen == packet.objectsSeen
-        && input.objectsDecoded == packet.objectsDecoded;
+           && input.verdict == state::activity::receipts::Verdict::framed
+           && input.decodeStatus == packet.status && sense::observation_packet(packet)
+           && input.groupsSeen == packet.groupsSeen && input.groupsDecoded == packet.groupsDecoded
+           && input.groupsSkipped == packet.groupsSkipped && input.objectsSeen == packet.objectsSeen
+           && input.objectsDecoded == packet.objectsDecoded;
 }
 
 /** Mixes one fixed-width value into the local scene change guard. */
@@ -260,8 +261,9 @@ void trace_scene_sense(Instance& instance, const SenseInput& input) noexcept {
     }
     for (std::size_t index = 0; index < packet.objectCount; ++index) {
         const sense::DecodedObject& object = packet.objects[index];
-        if (object.status != sense::ObjectStatus::decoded || !object.hasGeneration || object.slotType
-            != static_cast<std::uint8_t>(state::activity_sdk::format::kAuthoredSceneSlotType)
+        if (object.status != sense::ObjectStatus::decoded || !object.hasGeneration
+            || object.slotType
+                   != static_cast<std::uint8_t>(state::activity_sdk::format::kAuthoredSceneSlotType)
             || packet_has_sense_key(packet,
                                     {object.registryKey,
                                      object.objectTag,
@@ -338,7 +340,8 @@ void trace_scene_sense(Instance& instance, const SenseInput& input) noexcept {
     }
 }
 
-/** Replaces only fully decoded keys in an accepted packet; omitted or unsupported keys stay retained. */
+/** Replaces only fully decoded keys in an accepted packet; omitted or unsupported keys stay
+ * retained. */
 [[nodiscard]] bool
 retain_sense_observations(Instance& instance, const SenseInput& input, std::uint64_t now) noexcept {
     namespace sense = middleware::bap::activity_message::sense_update;

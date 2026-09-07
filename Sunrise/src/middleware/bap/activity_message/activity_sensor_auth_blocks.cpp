@@ -1,7 +1,7 @@
 #include <algorithm>
 
-#include "sensor_auth_update.h"
 #include "roster_presence.h"
+#include "sensor_auth_update.h"
 
 namespace sunrise::middleware::bap::activity_message::sensor_auth_update {
 namespace {

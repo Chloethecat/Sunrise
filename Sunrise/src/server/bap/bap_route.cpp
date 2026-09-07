@@ -10,8 +10,8 @@
 #include <string_view>
 
 #include "../../core/logging/log.h"
-#include "../../state/activity/runtime.h"
 #include "../../state/activity/membership/activity_membership_query.h"
+#include "../../state/activity/runtime.h"
 #include "../../state/build_data/runtime.h"
 #include "../../state/matchmaking/matchmaking_state.h"
 #include "../../state/runtime/runtime.h"
@@ -19,9 +19,9 @@
 #include "activity_authority_query_owner.h"
 #include "activity_authority_reset_owner.h"
 #include "activity_mission_seed_lease.h"
-#include "encrypted/push/activity/mission_seed_world_change.h"
 #include "core/threading/srw_lock.h"
 #include "encrypted/bap_connection_publication.h"
+#include "encrypted/push/activity/mission_seed_world_change.h"
 #include "internal.h"
 #include "runtime.h"
 

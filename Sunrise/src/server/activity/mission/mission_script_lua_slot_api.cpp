@@ -300,16 +300,13 @@ constexpr std::size_t kOccupancyAuthByteCount = 11;
                                          .elementIndex = resolved.elementIndex,
                                          .state = static_cast<std::int8_t>(directiveState),
                                          .visible = true};
-    if (!optional_slot_reference(state,
-                                 "audience",
-                                 scriptable_auth::kType70SlotType,
-                                 preset.audience)) {
-        return luaL_error(state, "directive audience requires an authored type-70 engagement sensor");
+    if (!optional_slot_reference(
+            state, "audience", scriptable_auth::kType70SlotType, preset.audience)) {
+        return luaL_error(state,
+                          "directive audience requires an authored type-70 engagement sensor");
     }
-    if (!optional_slot_reference(state,
-                                 "navpoint",
-                                 scriptable_auth::kType47SlotType,
-                                 preset.navpoint)) {
+    if (!optional_slot_reference(
+            state, "navpoint", scriptable_auth::kType47SlotType, preset.navpoint)) {
         return luaL_error(state, "directive navpoint requires a current authored type-47 slot");
     }
     std::array<std::byte, scriptable_auth::kType68ByteCount> body{};
@@ -433,12 +430,12 @@ constexpr std::int8_t kFilterModeInside = 1;
                 || volume.slotType != auth::kType60SlotType) {
                 return luaL_error(state, "inside_any requires authored type-60 volumes");
             }
-            body.predicates[body.count++] = auth::Type34ModeFlagSlotRef{
-                kFilterModeDirect,
-                true,
-                {volume.registryKey,
-                 static_cast<std::int8_t>(auth::kType60SlotType),
-                 static_cast<std::int16_t>(volume.slotIndex)}};
+            body.predicates[body.count++] =
+                auth::Type34ModeFlagSlotRef{kFilterModeDirect,
+                                            true,
+                                            {volume.registryKey,
+                                             static_cast<std::int8_t>(auth::kType60SlotType),
+                                             static_cast<std::int16_t>(volume.slotIndex)}};
             lua_pop(state, 1);
         }
     }
@@ -459,7 +456,8 @@ constexpr std::int8_t kFilterModeInside = 1;
         return luaL_error(state, "filter inside must be an authored type-60 volume");
     }
     if (inside.slotIndex >= 0) {
-        body.predicates[body.count++] = auth::Type34ModeFlagSlotRef{kFilterModeInside, false, inside};
+        body.predicates[body.count++] =
+            auth::Type34ModeFlagSlotRef{kFilterModeInside, false, inside};
     }
     std::array<std::byte, auth::kType34MaximumByteCount> bytes{};
     std::size_t written = 0;
@@ -488,7 +486,8 @@ constexpr std::int8_t kFilterModeInside = 1;
         const bool present = !lua_isnil(state, -1);
         lua_pop(state, 1);
         if (!present
-            || !optional_slot_reference(state, "filter", scriptable_auth::kType34SlotType, filter)) {
+            || !optional_slot_reference(
+                state, "filter", scriptable_auth::kType34SlotType, filter)) {
             return luaL_error(state, "mission effect requires a type-34 filter");
         }
     }
@@ -572,7 +571,8 @@ constexpr std::int8_t kFilterModeInside = 1;
     namespace object = middleware::bap::activity_message::interactable_object;
     const auto* const handle =
         static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
-    static constexpr std::array<std::string_view, 3> kDeclared{"generation", "track_owner", "active"};
+    static constexpr std::array<std::string_view, 3> kDeclared{
+        "generation", "track_owner", "active"};
     refuse_unknown_arguments(state, kDeclared);
     SlotDefinition slot{};
     if (!current_slot(state, *handle, slot) || !exact_object_slot(slot)) {
@@ -688,7 +688,8 @@ constexpr std::int8_t kFilterModeInside = 1;
 }
 
 /** @return True when one live Slot row is an exact squad in the given registry. */
-[[nodiscard]] bool exact_squad_of(const SlotDefinition& squad, const SlotDefinition& owner) noexcept {
+[[nodiscard]] bool exact_squad_of(const SlotDefinition& squad,
+                                  const SlotDefinition& owner) noexcept {
     return squad.slotType == format::kSquadSlotType
            && squad.componentClass == format::kSquadComponentClass
            && (squad.flags & format::kSlotSchemaJoinExact) != 0
@@ -723,8 +724,8 @@ constexpr std::int8_t kFilterModeInside = 1;
     if (!valid_counter(revision) || group < objective::kNoTaskGroup
         || group >= objective::kTaskGroupCount
         || target.slotIndex > auth_fields::kMaximumClientRefIndex) {
-        return luaL_error(
-            state, "combat objective revision, group or index is outside its native range");
+        return luaL_error(state,
+                          "combat objective revision, group or index is outside its native range");
     }
     std::array<std::byte, objective::kBytes> body{};
     if (!objective::encode({target.registryKey,
@@ -759,8 +760,8 @@ constexpr std::int8_t kFilterModeInside = 1;
     }
     if (!valid_counter(generation) || !valid_counter(revision)
         || path.slotIndex > auth_fields::kMaximumClientRefIndex) {
-        return luaL_error(
-            state, "actor path generation, revision or index is outside its native range");
+        return luaL_error(state,
+                          "actor path generation, revision or index is outside its native range");
     }
     std::array<std::byte, combatant::kPathBytes> body{};
     if (!combatant::encode_path({static_cast<std::uint32_t>(generation),
@@ -865,7 +866,8 @@ constexpr std::int8_t kFilterModeInside = 1;
     SlotDefinition actor{};
     if (!current_slot(state, *handle, actor) || !exact_combatant_slot(actor)
         || !valid_counter(generation) || !valid_counter(revision)) {
-        return luaL_error(state, "delivery requires an exact actor and positive generation/revision");
+        return luaL_error(state,
+                          "delivery requires an exact actor and positive generation/revision");
     }
     lua_getfield(state, 2, "squads");
     luaL_checktype(state, -1, LUA_TTABLE);
@@ -901,7 +903,8 @@ constexpr std::int8_t kFilterModeInside = 1;
     SlotDefinition actor{};
     if (!current_slot(state, *handle, actor) || !exact_combatant_slot(actor)
         || !valid_counter(generation)) {
-        return luaL_error(state, "actor retirement requires an exact member and positive generation");
+        return luaL_error(state,
+                          "actor retirement requires an exact member and positive generation");
     }
     std::array<std::byte, combatant::kRetireBytes> body{};
     if (!combatant::encode_retire(static_cast<std::uint32_t>(generation), body)) {

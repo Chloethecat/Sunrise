@@ -318,9 +318,10 @@ template <typename Index> void canonicalize_scenarios(Index& index) {
     std::map<TargetGroup, std::vector<std::uint32_t>> groups{};
     std::size_t authoritativeCount = 0;
     const GraphSpawner& spawner = graph.spawners[spawnerRow];
-    const auto sourceStatus = scopedSource != format::kAbsentIndex
-        ? SourceDescriptorStatus::exact : spawner.sourceDescriptorStatus;
-    const auto sourceRow = scopedSource != format::kAbsentIndex ? scopedSource : spawner.sourceDescriptorRow;
+    const auto sourceStatus = scopedSource != format::kAbsentIndex ? SourceDescriptorStatus::exact
+                                                                   : spawner.sourceDescriptorStatus;
+    const auto sourceRow =
+        scopedSource != format::kAbsentIndex ? scopedSource : spawner.sourceDescriptorRow;
     for (const std::uint32_t descriptorRow : candidates) {
         const GraphDescriptor& descriptor = graph.descriptors[descriptorRow];
         // Object keys are reused by campaign and arcade scenarios. A reference can only
@@ -392,21 +393,26 @@ template <typename Index> void canonicalize_scenarios(Index& index) {
 
 /** A reused config is unambiguous in disjoint scenario contexts. Never resolve two
  * different source slots that coexist in the same scenario by arbitrary row order. */
-[[nodiscard]] std::vector<std::uint32_t> scoped_sources(const GraphSnapshot& graph,
-    const GraphSpawner& spawner, const std::vector<std::vector<std::uint32_t>>& scenarios) {
-    std::map<std::pair<std::uint32_t,std::uint32_t>,std::uint32_t> logical;
-    for (std::uint32_t i=0;i<spawner.sourceDescriptorCandidates.count;++i) {
-        const auto row=graph.sourceDescriptorCandidates[spawner.sourceDescriptorCandidates.first+i].descriptorRow;
-        const auto& d=graph.descriptors[row];logical.try_emplace({d.objectIndex,d.slotIndex},row);
+[[nodiscard]] std::vector<std::uint32_t>
+scoped_sources(const GraphSnapshot& graph,
+               const GraphSpawner& spawner,
+               const std::vector<std::vector<std::uint32_t>>& scenarios) {
+    std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> logical;
+    for (std::uint32_t i = 0; i < spawner.sourceDescriptorCandidates.count; ++i) {
+        const auto row =
+            graph.sourceDescriptorCandidates[spawner.sourceDescriptorCandidates.first + i]
+                .descriptorRow;
+        const auto& d = graph.descriptors[row];
+        logical.try_emplace({d.objectIndex, d.slotIndex}, row);
     }
     std::vector<std::uint32_t> result;
-    for (const auto& [identity,row]:logical) {
-        const auto& owned=scenarios[identity.first];
-        const bool overlap=std::any_of(logical.begin(),logical.end(),[&](const auto& other) {
-            if (other.first==identity) return false;
-            const auto& peers=scenarios[other.first.first];
-            return std::any_of(owned.begin(),owned.end(),[&](auto scenario) {
-                return std::binary_search(peers.begin(),peers.end(),scenario);
+    for (const auto& [identity, row] : logical) {
+        const auto& owned = scenarios[identity.first];
+        const bool overlap = std::any_of(logical.begin(), logical.end(), [&](const auto& other) {
+            if (other.first == identity) return false;
+            const auto& peers = scenarios[other.first.first];
+            return std::any_of(owned.begin(), owned.end(), [&](auto scenario) {
+                return std::binary_search(peers.begin(), peers.end(), scenario);
             });
         });
         if (!overlap) result.push_back(row);
@@ -478,7 +484,7 @@ template <typename Index> void canonicalize_scenarios(Index& index) {
         }
 
         spawner.references.first = static_cast<std::uint32_t>(graph.references.size());
-        auto sources = scoped_sources(graph,spawner,scenariosByObject);
+        auto sources = scoped_sources(graph, spawner, scenariosByObject);
         if (sources.empty()) sources.push_back(format::kAbsentIndex);
         for (const auto sourceRow : sources) {
             std::map<TargetGroup, ExactTarget> exactTargets{};
@@ -494,13 +500,15 @@ template <typename Index> void canonicalize_scenarios(Index& index) {
                                        rulesByConfig,
                                        scenariosByObject,
                                        exactTargets,
-                                       statuses[ordinal], sourceRow)) {
+                                       statuses[ordinal],
+                                       sourceRow)) {
                     return false;
                 }
             }
-            const bool hasAmbiguous =
-                std::find(statuses.begin(), statuses.end(), ReferenceResolutionStatus::targetAmbiguous)
-                != statuses.end();
+            const bool hasAmbiguous = std::find(statuses.begin(),
+                                                statuses.end(),
+                                                ReferenceResolutionStatus::targetAmbiguous)
+                                      != statuses.end();
             const bool hasOther = std::any_of(statuses.begin(), statuses.end(), [](auto status) {
                 return status != ReferenceResolutionStatus::exact
                        && status != ReferenceResolutionStatus::invalidEncoding;
@@ -509,16 +517,16 @@ template <typename Index> void canonicalize_scenarios(Index& index) {
             const bool bothAbsent = std::all_of(statuses.begin(), statuses.end(), [](auto status) {
                 return status == ReferenceResolutionStatus::invalidEncoding;
             });
-            if (bothAbsent && spawner.hasInlinePointSet && spawner.inlineRuleRow != format::kAbsentIndex
+            if (bothAbsent && spawner.hasInlinePointSet
+                && spawner.inlineRuleRow != format::kAbsentIndex
                 && sourceRow != format::kAbsentIndex && exactTargets.empty()) {
                 const GraphDescriptor& source = graph.descriptors[sourceRow];
                 ExactTarget& target =
                     exactTargets[{spawner.inlineRuleRow, source.objectIndex, source.slotIndex}];
                 target.descriptors = {sourceRow};
             }
-            const bool associationExact =
-                sourceRow != format::kAbsentIndex && !hasAmbiguous && !hasOther
-                && !exactTargets.empty();
+            const bool associationExact = sourceRow != format::kAbsentIndex && !hasAmbiguous
+                                          && !hasOther && !exactTargets.empty();
             if (sourceRow == format::kAbsentIndex) {
                 continue;
             }
@@ -569,7 +577,8 @@ template <typename Index> void canonicalize_scenarios(Index& index) {
                 output.push_back(std::move(edge));
             }
         }
-        spawner.references.count = static_cast<std::uint32_t>(graph.references.size()) - spawner.references.first;
+        spawner.references.count =
+            static_cast<std::uint32_t>(graph.references.size()) - spawner.references.first;
     }
     std::sort(
         output.begin(), output.end(), [](const PendingEdge& first, const PendingEdge& second) {

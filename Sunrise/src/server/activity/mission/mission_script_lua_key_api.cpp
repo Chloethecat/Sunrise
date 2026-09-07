@@ -19,13 +19,15 @@ namespace {
     return 1;
 }
 
+/** Lua index for one request key: matches and value. */
 [[nodiscard]] int request_key_index(lua_State* state) {
     static_cast<void>(luaL_checkudata(state, 1, kRequestKeyMetatable));
     const std::string_view key = lua_string_view(state, 2);
     if (key == "matches") {
         lua_pushcfunction(state, &request_key_matches);
     } else if (key == "value") {
-        const auto* handle = static_cast<const RequestKeyHandle*>(luaL_checkudata(state, 1, kRequestKeyMetatable));
+        const auto* handle =
+            static_cast<const RequestKeyHandle*>(luaL_checkudata(state, 1, kRequestKeyMetatable));
         push_u64_string(state, handle->key);
     } else {
         lua_pushnil(state);

@@ -97,8 +97,8 @@ struct PreparedSquad final {
     const auto actors = catalog.actor_classes();
     bool found = false;
     // A named type-2 member needs its parent's authored profile but zero loose actors.
-    const bool loose = std::any_of(requestedCounts.begin(), requestedCounts.end(),
-                                    [](auto count) { return count > 0; });
+    const bool loose = std::any_of(
+        requestedCounts.begin(), requestedCounts.end(), [](auto count) { return count > 0; });
     for (std::size_t index = 0; index < members.size(); ++index) {
         if (loose && requestedCounts[index] <= 0) {
             continue;

@@ -1,7 +1,7 @@
 #include <algorithm>
 #include <array>
-#include <cstddef>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <span>
@@ -115,8 +115,13 @@ sense_value(std::span<const sense_values::DecodedValue> body,
     if (spare == nullptr) {
         for (SquadObservation& retained : instance.squadObservations) {
             bool empty = retained.aliveCount == 0;
-            for (const auto count : retained.slotCounts) empty = empty && count == 0;
-            if (empty) { retained = {}; spare = &retained; break; }
+            for (const auto count : retained.slotCounts)
+                empty = empty && count == 0;
+            if (empty) {
+                retained = {};
+                spare = &retained;
+                break;
+            }
         }
     }
     if (spare == nullptr) {
@@ -430,6 +435,7 @@ template <typename Row, std::size_t N>
     return spare;
 }
 
+/** Raises one event per named actor whose movement or delivery level changed. */
 void push_actor_path_edges(RuntimeInstance& instance,
                            const host::SenseObservationSnapshot& sense) noexcept {
     namespace auth = middleware::bap::activity_message::scriptable_auth;
@@ -438,7 +444,8 @@ void push_actor_path_edges(RuntimeInstance& instance,
         if (!observation_of(observation, sense, auth::kType2SlotType, auth::kType2SenseSchema)) {
             continue;
         }
-        ActorPathObservation* const slot = find_slot_row(instance.actorPathObservations, observation.key);
+        ActorPathObservation* const slot =
+            find_slot_row(instance.actorPathObservations, observation.key);
         if (slot == nullptr
             || !update_actor_path_level(
                 slot->level, observation_values(observation, sense), observation.key.schemaRow)) {
@@ -454,18 +461,19 @@ void push_actor_path_edges(RuntimeInstance& instance,
         event.actorDeliveryKnown = (slot->level.seen & kActorSeenDelivery) == kActorSeenDelivery;
         event.actorDead = slot->level.dead;
         std::array<char, 160> details{};
-        const int written = std::snprintf(details.data(),
-                                          details.size(),
-                                          "registry=%08X slot=%u generation=%d revision=%d "
-                                          "state=%d dead=%u delivery_revision=%d delivery_state=%d",
-                                          slot->registryKey,
-                                          static_cast<unsigned>(slot->slotIndex),
-                                          slot->level.generation,
-                                          slot->level.revision,
-                                          slot->level.state,
-                                          slot->level.dead ? 1U : 0U,
-                                          event.actorDeliveryKnown ? slot->level.deliveryRevision : -1,
-                                          event.actorDeliveryKnown ? slot->level.deliveryState : -1);
+        const int written =
+            std::snprintf(details.data(),
+                          details.size(),
+                          "registry=%08X slot=%u generation=%d revision=%d "
+                          "state=%d dead=%u delivery_revision=%d delivery_state=%d",
+                          slot->registryKey,
+                          static_cast<unsigned>(slot->slotIndex),
+                          slot->level.generation,
+                          slot->level.revision,
+                          slot->level.state,
+                          slot->level.dead ? 1U : 0U,
+                          event.actorDeliveryKnown ? slot->level.deliveryRevision : -1,
+                          event.actorDeliveryKnown ? slot->level.deliveryState : -1);
         if (written > 0 && static_cast<std::size_t>(written) < details.size()) {
             log_line(core::log::Level::debug,
                      &instance,
@@ -477,6 +485,7 @@ void push_actor_path_edges(RuntimeInstance& instance,
     }
 }
 
+/** Raises one event per damage monitor whose health, shield or revision changed. */
 void push_damage_edges(RuntimeInstance& instance,
                        const host::SenseObservationSnapshot& sense) noexcept {
     namespace damage = middleware::bap::activity_message::damage_monitor;
@@ -519,14 +528,15 @@ void push_damage_edges(RuntimeInstance& instance,
         event.damageShield = shield;
         event.damageRevision = revision;
         std::array<char, 128> details{};
-        const int written = std::snprintf(details.data(),
-                                          details.size(),
-                                          "registry=%08X slot=%u revision=%d health=%.4f shield=%.4f",
-                                          observation.key.registryKey,
-                                          static_cast<unsigned>(observation.key.slotIndex),
-                                          revision,
-                                          static_cast<double>(health),
-                                          static_cast<double>(shield));
+        const int written =
+            std::snprintf(details.data(),
+                          details.size(),
+                          "registry=%08X slot=%u revision=%d health=%.4f shield=%.4f",
+                          observation.key.registryKey,
+                          static_cast<unsigned>(observation.key.slotIndex),
+                          revision,
+                          static_cast<double>(health),
+                          static_cast<double>(shield));
         if (written > 0 && static_cast<std::size_t>(written) < details.size()) {
             log_line(core::log::Level::debug,
                      &instance,
@@ -538,6 +548,7 @@ void push_damage_edges(RuntimeInstance& instance,
     }
 }
 
+/** Raises object state and accepted interaction events per interactable object. */
 void push_object_interaction_edges(RuntimeInstance& instance,
                                    const host::SenseObservationSnapshot& sense) noexcept {
     for (std::size_t index = 0; index < sense.observationCount; ++index) {
@@ -598,6 +609,7 @@ void push_object_interaction_edges(RuntimeInstance& instance,
     }
 }
 
+/** Raises one event per Ghost link whose level changed. */
 void push_ghost_edges(RuntimeInstance& instance,
                       const host::SenseObservationSnapshot& sense) noexcept {
     namespace ghost = middleware::bap::activity_message::ghost_link;
@@ -658,10 +670,9 @@ void push_squad_edges(RuntimeInstance& instance,
         const bool first = !squad->used;
         squad->used = true;
         const std::int32_t previousAlive = first ? 0 : squad->aliveCount;
-        const bool changed = costsChanged || first || squad->aliveCount != alive
-                             || squad->removalFlag != removal
-                             || squad->slotCountLength != countLength
-                             || squad->slotCounts != counts;
+        const bool changed =
+            costsChanged || first || squad->aliveCount != alive || squad->removalFlag != removal
+            || squad->slotCountLength != countLength || squad->slotCounts != counts;
         if (!changed) {
             continue;
         }

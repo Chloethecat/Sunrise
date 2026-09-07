@@ -58,7 +58,6 @@ inline constexpr std::size_t kPathBytes = 20;
 inline constexpr std::size_t kActionBits = 254;
 inline constexpr std::size_t kActionBytes = 32;
 inline constexpr std::size_t kDeliveryBits = 132;
-inline constexpr std::size_t kDeliveryBytes = 17;
 inline constexpr std::size_t kDeliveryMaximumBytes =
     (kDeliveryBits + kManifestSquadBits * (kMaximumManifestSquads - 1) + 7) / 8;
 inline constexpr std::size_t kRetireBits = 77;

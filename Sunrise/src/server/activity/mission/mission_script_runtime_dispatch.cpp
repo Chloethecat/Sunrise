@@ -563,9 +563,8 @@ void dispatch_intent(RuntimeInstance& instance, std::uint64_t now) noexcept {
             report_intent_status(
                 instance,
                 kIntentStatusSceneLeasePending,
-                written > 0
-                    ? std::string_view{detail.data(), static_cast<std::size_t>(written)}
-                    : scenes::status_name(status));
+                written > 0 ? std::string_view{detail.data(), static_cast<std::size_t>(written)}
+                            : scenes::status_name(status));
         } else {
             refuse_delivery(instance,
                             sequence ? "sequence_refused" : "cinematic_refused",

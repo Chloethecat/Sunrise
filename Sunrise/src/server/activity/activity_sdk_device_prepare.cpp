@@ -473,9 +473,8 @@ prepare_slot(const sdk::BoundView& view, std::uint32_t slotRow, PreparedDevice& 
         || typed(message::ghost_link::kSlotType,
                  message::ghost_link::kComponentClass,
                  message::ghost_link::kAuthSchema)
-        || typed(format::kSquadSlotType,
-                 format::kSquadComponentClass,
-                 message::squad_objective::kSchema)
+        || typed(
+            format::kSquadSlotType, format::kSquadComponentClass, message::squad_objective::kSchema)
         || typed(auth::kType2SlotType, auth::kType2ComponentClass, auth::kType2Schema);
     const bool occupancy = slotType == format::kOccupancySlotType
                            && authSchema == format::kOccupancyAuthSchema
