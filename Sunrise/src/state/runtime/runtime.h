@@ -140,7 +140,10 @@ struct PendingItemAcquisition {
     std::int32_t previousQuestValue{};
     bool prepared{};
 
-    /** Account-scoped initialization must publish even when acquisition charges no materials. */
+    /**
+     * Account-scoped quest writes need an account update even when no materials were charged.
+     * @return True for a profile inventory change or an unset account-scoped quest value.
+     */
     [[nodiscard]] bool updates_account() const noexcept {
         return profileChanged
                || (questInitialization.scope
@@ -575,17 +578,21 @@ set_selected_title(std::uint16_t recordIndex, std::uint64_t& characterSoid, bool
 [[nodiscard]] bool
 reserve_selected_character_inventory_serial(std::int32_t& mutationSerial) noexcept;
 
-/** Builds account and unlock after-images without committing the prepared acquisition. */
+/**
+ * Preview inventory and quest values together without changing the save.
+ * @param mutation Prepared acquisition checked against current saved state.
+ * @param after Receives the candidate account; use only on success.
+ * @param afterUnlocks Receives matching account and selected-character unlocks on success.
+ * @return False when the acquisition is stale or its saved unlocks cannot be read.
+ */
 [[nodiscard]] bool preview_item_acquisition(const PendingItemAcquisition& mutation,
                                             AccountState& after,
                                             unlocks::Table& afterUnlocks) noexcept;
 
 /**
- * Commits a prepared inventory insertion only while its selected character, existing loadout,
- * and next inventory serial still match the prepare-time view.
- *
- * @param mutation Prepared mutation, always cleared before this function returns.
- * @return True when the insertion commits atomically and leaves the whole account valid.
+ * Inventory and first-step state share one transaction; failure rolls both back.
+ * @param mutation Prepared grant consumed on either success or failure.
+ * @return True when both writes commit against the unchanged prepared state.
  */
 [[nodiscard]] bool commit_item_acquisition(PendingItemAcquisition& mutation) noexcept;
 

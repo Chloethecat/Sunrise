@@ -37,6 +37,7 @@ struct Definition {
     /** Item index of the plug this one stands for, or kUnavailableLinkedPlugIndex when it stands
      * alone. */
     std::uint16_t linkedPlugIndex{kUnavailableLinkedPlugIndex};
+    /** Empty unless this item is the first member of a supported quest set. */
     QuestInitialization questInitialization{};
 };
 

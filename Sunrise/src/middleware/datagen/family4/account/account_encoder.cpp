@@ -79,6 +79,13 @@ bool encode(const state::AccountState& state, std::span<std::byte> output) noexc
     return state::unlocks::snapshot(unlocks) && encode(state, output, unlocks);
 }
 
+/**
+ * Account-wide unlocks use the supplied snapshot; per-character flags still use saved state.
+ * @param state Account identity, roster, preferences, and inventory to encode.
+ * @param output Receives the account object; unchanged on failure.
+ * @param unlocks Account unlocks from the same live or prepared view as state.
+ * @return False when state, saved flags, mappings, or output bounds are invalid.
+ */
 bool encode(const state::AccountState& state,
             std::span<std::byte> output,
             const state::unlocks::Table& unlocks) noexcept {

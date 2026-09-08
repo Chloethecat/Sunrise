@@ -22,7 +22,15 @@ namespace sunrise::middleware::datagen::family4::character {
                           const state::equipment::light::Evaluation& lightEvaluation,
                           std::span<std::byte> output) noexcept;
 
-/** Encodes a prepared unlock after-image without first writing it to the live save. */
+/**
+ * Character unlocks must match the live or prepared inventory view being encoded.
+ * @param state Character identity and inventory to encode.
+ * @param resolvedLoadout Item mappings for this character's inventory.
+ * @param lightEvaluation Equipment light values for the same loadout.
+ * @param output Receives the character object; unchanged on failure.
+ * @param unlocks Unlock snapshot for this character, including any prepared quest value.
+ * @return False when state, mappings, light values, or output bounds are invalid.
+ */
 [[nodiscard]] bool encode(const state::CharacterState& state,
                           const loadout::ResolvedLoadout& resolvedLoadout,
                           const state::equipment::light::Evaluation& lightEvaluation,

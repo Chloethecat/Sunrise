@@ -47,7 +47,15 @@ bool exotic_catalysts_settled() noexcept {
     return state::build_data::exotic_catalysts_ready() || g_catalystsUnsupported;
 }
 
-/** Walks the located item index table, then publishes every domain that depends on it. */
+/**
+ * Publishes missing item domains from the located index table and its definitions.
+ * @param source Borrowed package source.
+ * @param storage Pass storage holding the table in child, root data, maps, and output rows.
+ * @param table Located item index array within storage.child.
+ * @param rowCount Starts at zero; receives the rows retained even if publication fails.
+ * @param reason Receives the last stage reached or its failure reason.
+ * @return True when this pass's required item domains are ready; failure may retain prior results.
+ */
 bool build_item_rows(const reader::Source& source,
                      Storage& storage,
                      const tables::Array& table,
@@ -108,7 +116,8 @@ bool build_item_rows(const reader::Source& source,
             corrected_plug_category(item.definitionHash, item.plugCategoryHash);
         build_items::QuestInitialization quest{};
         const auto parentIndex = tables::items::quest_parent(storage.definition);
-        if (needDefinitions && itemClass == tables::kItemDefinitionClass && parentIndex < table.count) {
+        if (needDefinitions && itemClass == tables::kItemDefinitionClass
+            && parentIndex < table.count) {
             std::span<const std::byte> parent = storage.definition;
             tables::IndexRow parentRow{};
             std::uint32_t parentClass = itemClass;

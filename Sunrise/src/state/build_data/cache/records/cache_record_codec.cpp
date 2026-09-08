@@ -51,8 +51,8 @@ bool decode(const NamedRecord& record, content::Definition& value) noexcept {
 /**
  * Encodes one installed-build item mapping with its padding zeroed.
  * @param value Runtime row.
- * @param record Receives the packed disk row.
- * @return True when the optional quest initialization has a supported scope and bank row.
+ * @param record Receives the packed disk row; use only on success.
+ * @return True for empty quest state or a supported first-step value, scope, and bank row.
  */
 bool encode(const items::Definition& value, ItemRecord& record) noexcept {
     record = {
@@ -72,7 +72,12 @@ bool encode(const items::Definition& value, ItemRecord& record) noexcept {
     return items::valid(value.questInitialization);
 }
 
-/** Decodes one installed-build item mapping. */
+/**
+ * Cached quest state must fit the same bank limits as freshly read item metadata.
+ * @param record Packed disk row.
+ * @param value Receives the runtime item mapping; use only on success.
+ * @return True for empty quest state or a supported first-step value, scope, and bank row.
+ */
 bool decode(const ItemRecord& record, items::Definition& value) noexcept {
     value = {record.definitionHash,
              record.definitionIndex,

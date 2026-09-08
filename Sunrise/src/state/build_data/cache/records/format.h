@@ -30,11 +30,7 @@ namespace sunrise::state::build_data::cache::records {
 
 /** These 8 ASCII bytes mark a Sunrise build-data file. */
 inline constexpr std::array<char, 8> kCacheMagic{'S', 'U', 'N', 'R', 'I', 'S', 'E', 'B'};
-/**
- * Current build-data cache format. Any other version on disk is rebuilt rather than read.
- * Bump it when a stored shape changes or when the extraction filling it changes what it writes,
- * because a cached row survives a code change and a corrected walk keeps publishing old rows.
- */
+/** Bump when stored layouts or extracted values change; other versions are rebuilt. */
 inline constexpr std::uint32_t kCacheFormatVersion = 65;
 /** Signed -1 on disk means there is no equipment slot. */
 inline constexpr std::int8_t kAbsentEquipmentSlot = -1;
