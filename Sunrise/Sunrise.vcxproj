@@ -1125,6 +1125,8 @@
     <ClCompile Include="src\middleware\gameplay\peer\peer_container.cpp" />
     <ClCompile Include="src\middleware\gameplay\peer\connect_messages.cpp" />
     <ClCompile Include="src\middleware\gameplay\peer\established_packet.cpp" />
+    <ClCompile Include="src\middleware\gameplay\peer\packet_fragments.cpp" />
+    <ClCompile Include="src\server\gameplay\peer\peer_packet_fragments.cpp" />
     <ClCompile Include="src\middleware\gameplay\external\common_state.cpp" />
     <ClCompile Include="src\middleware\gameplay\external\control_state_codec.cpp" />
     <ClCompile Include="src\middleware\gameplay\external\external_entity_codec.cpp" />
@@ -1973,6 +1975,8 @@
     <ClInclude Include="src\middleware\gameplay\peer\peer_container.h" />
     <ClInclude Include="src\middleware\gameplay\peer\connect_messages.h" />
     <ClInclude Include="src\middleware\gameplay\peer\established_packet.h" />
+    <ClInclude Include="src\middleware\gameplay\peer\packet_fragments.h" />
+    <ClInclude Include="src\server\gameplay\peer\peer_packet_fragments.h" />
     <ClInclude Include="src\middleware\gameplay\external\common_state.h" />
     <ClInclude Include="src\middleware\gameplay\external\control_state_codec.h" />
     <ClInclude Include="src\middleware\gameplay\external\external_entity_codec.h" />

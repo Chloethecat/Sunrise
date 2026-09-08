@@ -11,6 +11,7 @@
 #include "../../../state/activity/membership/activity_membership_query.h"
 #include "../../../state/build_data/runtime.h"
 #include "../../../state/build_data/spawn_sets/spawn_set_catalog.h"
+#include "../../gameplay/squad_entity_retirement.h"
 #include "../activity_sdk_device_runtime.h"
 #include "../activity_sdk_lifetime_runtime.h"
 #include "../activity_sdk_mission_runtime.h"
@@ -278,6 +279,33 @@ void dispatch_intent(RuntimeInstance& instance, std::uint64_t now) noexcept {
     begin_intent_attempt(instance, now);
     switch (intent.kind) {
     case lua_vm::IntentKind::selectMissionState: {
+        if (intent.retirePlacedProps) {
+            namespace retirement = server::gameplay::squad_entity_retirement;
+            const auto* world = instance.worldView.snapshot();
+            const auto placement =
+                state::activity::membership::reported_placement(instance.view.binding.sessionId);
+            const auto status =
+                world == nullptr || instance.publicTarget
+                    ? retirement::TransitionStatus::refused
+                    : retirement::begin_placed_transition(
+                          instance.view,
+                          *world,
+                          intent.requestKey,
+                          state::activity::membership::instantiated_region(placement),
+                          intent.effectiveRegion);
+            if (status == retirement::TransitionStatus::pending) {
+                report_intent_status(
+                    instance, kIntentStatusStateTransitionPending, "placed_retirement_pending");
+                return;
+            }
+            if (status != retirement::TransitionStatus::ready) {
+                refuse_delivery(instance,
+                                "state_refused",
+                                "placed_lifetimes_unavailable",
+                                host::EffectOutcome::refused);
+                return;
+            }
+        }
         scenes::Snapshot selected{};
         const scenes::Status status =
             scenes::select_state(instance.view,

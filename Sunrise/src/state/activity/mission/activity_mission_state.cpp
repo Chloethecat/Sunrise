@@ -125,7 +125,8 @@ namespace {
            && left.actorCommandSelector == right.actorCommandSelector
            && left.actorCommandValue == right.actorCommandValue
            && left.authBitCount == right.authBitCount
-           && left.effectiveRegion == right.effectiveRegion && left.slotIndex == right.slotIndex
+           && left.effectiveRegion == right.effectiveRegion
+           && left.retirePlacedProps == right.retirePlacedProps && left.slotIndex == right.slotIndex
            && left.deviceValue == right.deviceValue && left.squadMode == right.squadMode
            && left.squadRetireOnReturn == right.squadRetireOnReturn
            && left.squadCount == right.squadCount && left.deviceChannel == right.deviceChannel
