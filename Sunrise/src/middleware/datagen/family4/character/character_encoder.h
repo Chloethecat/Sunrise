@@ -4,6 +4,7 @@
 
 #include "../../../../state/account/account_state.h"
 #include "../../../../state/equipment/light/definition.h"
+#include "../../../../state/unlocks/definition.h"
 #include "../loadout/definition.h"
 
 namespace sunrise::middleware::datagen::family4::character {
@@ -20,5 +21,12 @@ namespace sunrise::middleware::datagen::family4::character {
                           const loadout::ResolvedLoadout& resolvedLoadout,
                           const state::equipment::light::Evaluation& lightEvaluation,
                           std::span<std::byte> output) noexcept;
+
+/** Encodes a prepared unlock after-image without first writing it to the live save. */
+[[nodiscard]] bool encode(const state::CharacterState& state,
+                          const loadout::ResolvedLoadout& resolvedLoadout,
+                          const state::equipment::light::Evaluation& lightEvaluation,
+                          std::span<std::byte> output,
+                          const state::unlocks::Table& unlocks) noexcept;
 
 } // namespace sunrise::middleware::datagen::family4::character

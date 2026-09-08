@@ -52,7 +52,7 @@ bool decode(const NamedRecord& record, content::Definition& value) noexcept {
  * Encodes one installed-build item mapping with its padding zeroed.
  * @param value Runtime row.
  * @param record Receives the packed disk row.
- * @return Always true, because an unknown bucket has its own unset value.
+ * @return True when the optional quest initialization has a supported scope and bank row.
  */
 bool encode(const items::Definition& value, ItemRecord& record) noexcept {
     record = {
@@ -65,8 +65,11 @@ bool encode(const items::Definition& value, ItemRecord& record) noexcept {
         value.plugCategoryHash,
         value.rollSetIndex,
         value.linkedPlugIndex,
+        value.questInitialization.value,
+        value.questInitialization.row,
+        static_cast<std::uint8_t>(value.questInitialization.scope),
     };
-    return true;
+    return items::valid(value.questInitialization);
 }
 
 /** Decodes one installed-build item mapping. */
@@ -79,8 +82,11 @@ bool decode(const ItemRecord& record, items::Definition& value) noexcept {
              record.tier,
              record.plugCategoryHash,
              record.rollSetIndex,
-             record.linkedPlugIndex};
-    return true;
+             record.linkedPlugIndex,
+             {record.questInitialValue,
+              record.questValueRow,
+              static_cast<items::QuestInitialization::Scope>(record.questValueScope)}};
+    return items::valid(value.questInitialization);
 }
 
 /** Encodes one collectible ordinal and its optional item link. */

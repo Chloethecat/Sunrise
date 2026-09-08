@@ -1,6 +1,7 @@
 #include <array>
 #include <span>
 
+#include "../../../../middleware/content/packages/tables/quest_initialization_reader.h"
 #include "../../../../state/build_data/items/catalysts/exotic_catalyst_builder.h"
 #include "../../../../state/build_data/items/details/item_detail_catalog.h"
 #include "../../../../state/build_data/runtime.h"
@@ -97,13 +98,39 @@ bool build_item_rows(const reader::Source& source,
         tables::items::Row item{};
         item.definitionHash = row.definitionHash;
         item.definitionIndex = static_cast<std::uint16_t>(index);
-        if (!reader::read_tag(source, storage.scratch, row.targetTag, storage.definition)
+        std::uint32_t itemClass = 0;
+        if (!reader::read_tag(source, storage.scratch, row.targetTag, storage.definition, itemClass)
             || !tables::items::read_definition(std::span<const std::byte>{storage.definition},
                                                item)) {
             continue;
         }
         const std::uint32_t plugCategoryHash =
             corrected_plug_category(item.definitionHash, item.plugCategoryHash);
+        build_items::QuestInitialization quest{};
+        const auto parentIndex = tables::items::quest_parent(storage.definition);
+        if (needDefinitions && itemClass == 0x80807BEAU && parentIndex < table.count) {
+            std::span<const std::byte> parent = storage.definition;
+            tables::IndexRow parentRow{};
+            std::uint32_t parentClass = itemClass;
+            const bool parentReady = parentIndex == item.definitionIndex
+                                     || (tables::index_row(container, table, parentIndex, parentRow)
+                                         && reader::read_tag(source,
+                                                             storage.scratch,
+                                                             parentRow.targetTag,
+                                                             storage.questParentDefinition,
+                                                             parentClass));
+            if (parentIndex != item.definitionIndex) {
+                parent = storage.questParentDefinition;
+            }
+            if (parentReady && parentClass == 0x80807BEAU) {
+                quest =
+                    tables::items::read_quest_initialization(storage.definition,
+                                                             item.definitionIndex,
+                                                             parent,
+                                                             static_cast<std::size_t>(table.count),
+                                                             storage.questValueMap);
+            }
+        }
         storage.rows[rowCount++] =
             state::build_data::items::Definition{item.definitionHash,
                                                  item.definitionIndex,
@@ -113,7 +140,8 @@ bool build_item_rows(const reader::Source& source,
                                                  item.tier,
                                                  plugCategoryHash,
                                                  item.rollSetIndex,
-                                                 item.linkedPlugIndex};
+                                                 item.linkedPlugIndex,
+                                                 quest};
         if (needSocketRows) {
             storage.specialPlugCategories[item.definitionIndex] =
                 special_plug_category(plugCategoryHash);

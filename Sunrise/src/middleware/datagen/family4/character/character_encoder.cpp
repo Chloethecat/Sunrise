@@ -241,6 +241,16 @@ bool encode(const state::CharacterState& state,
             const loadout::ResolvedLoadout& resolvedLoadout,
             const state::equipment::light::Evaluation& lightEvaluation,
             std::span<std::byte> output) noexcept {
+    state::unlocks::Table unlocks;
+    return state::unlocks::snapshot(unlocks)
+           && encode(state, resolvedLoadout, lightEvaluation, output, unlocks);
+}
+
+bool encode(const state::CharacterState& state,
+            const loadout::ResolvedLoadout& resolvedLoadout,
+            const state::equipment::light::Evaluation& lightEvaluation,
+            std::span<std::byte> output,
+            const state::unlocks::Table& unlocks) noexcept {
     if (!valid(state) || !valid(resolvedLoadout)
         || !summary_matches_loadout(resolvedLoadout, lightEvaluation)
         || output.size() < layout::kObjectSize) {
@@ -280,10 +290,6 @@ bool encode(const state::CharacterState& state,
     }
     // Acquired flags and objective progress are live world state, written by the request that
     // changed them.
-    state::unlocks::Table unlocks;
-    if (!state::unlocks::snapshot(unlocks)) {
-        return false;
-    }
     for (std::size_t index = 0; index < object.acquiredFlags.size(); ++index) {
         object.acquiredFlags[index] = static_cast<std::byte>(
             index < unlocks.characterObjectFlags.size() ? unlocks.characterObjectFlags[index]

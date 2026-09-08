@@ -134,6 +134,7 @@ bool read_unlock_slot_maps(const reader::Source& source,
         return false;
     }
     const std::span<const std::byte> valueMap{storage.child};
+    storage.questValueMap = storage.child;
     const bool valueMapRead =
         read_slot_map(valueMap, tables::kAccountValueMapDescriptor, maps.accountValue);
     (void)read_slot_map(valueMap, tables::kCharacterValueMapDescriptor, maps.characterValue);

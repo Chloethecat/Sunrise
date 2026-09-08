@@ -3,6 +3,7 @@
 #include <span>
 
 #include "../../../../state/account/account_state.h"
+#include "../../../../state/unlocks/definition.h"
 
 namespace sunrise::middleware::datagen::family4::account {
 
@@ -13,5 +14,10 @@ namespace sunrise::middleware::datagen::family4::account {
  * @return True when State is valid and every required fixed region fits.
  */
 [[nodiscard]] bool encode(const state::AccountState& state, std::span<std::byte> output) noexcept;
+
+/** Encodes a prepared unlock after-image without first writing it to the live save. */
+[[nodiscard]] bool encode(const state::AccountState& state,
+                          std::span<std::byte> output,
+                          const state::unlocks::Table& unlocks) noexcept;
 
 } // namespace sunrise::middleware::datagen::family4::account

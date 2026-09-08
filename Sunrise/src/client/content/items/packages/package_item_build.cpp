@@ -115,7 +115,8 @@ bool build() noexcept {
             storage.root = storage.child;
             // Records, nodes, season pass rewards and catalysts all resolve slots through the
             // two unlock mapping tables, so they are read once here.
-            if (!state::build_data::record_definitions_ready()
+            if (!state::build_data::item_definitions_ready()
+                || !state::build_data::record_definitions_ready()
                 || !state::build_data::node_definitions_ready()
                 || !state::build_data::season_pass_ready() || !exotic_catalysts_settled()) {
                 reason = "unlock_maps";

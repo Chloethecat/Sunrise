@@ -6,6 +6,7 @@
 #include <span>
 #include <variant>
 
+#include "../build_data/items/quest_initialization.h"
 #include "../build_data/records/definition.h"
 #include "state.h"
 
@@ -135,7 +136,16 @@ struct PendingItemAcquisition {
     bool profileChanged{};
     /** Skips Collections revalidation for direct rewards. */
     bool directGrant{};
+    build_data::items::QuestInitialization questInitialization{};
+    std::int32_t previousQuestValue{};
     bool prepared{};
+
+    [[nodiscard]] bool updates_account() const noexcept {
+        return profileChanged
+               || (questInitialization.scope
+                       == build_data::items::QuestInitialization::Scope::account
+                   && previousQuestValue == 0);
+    }
 };
 
 /** One profile row an exchange changed, named the way the account's change ring names it. */
@@ -566,7 +576,8 @@ reserve_selected_character_inventory_serial(std::int32_t& mutationSerial) noexce
 
 /** Builds the exact full-account after-image while a prepared item pull remains current. */
 [[nodiscard]] bool preview_item_acquisition(const PendingItemAcquisition& mutation,
-                                            AccountState& after) noexcept;
+                                            AccountState& after,
+                                            unlocks::Table& afterUnlocks) noexcept;
 
 /**
  * Commits a prepared inventory insertion only while its selected character, existing loadout,
