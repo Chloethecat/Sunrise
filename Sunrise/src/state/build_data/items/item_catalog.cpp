@@ -106,7 +106,7 @@ bool valid(std::span<const Definition> definitions) noexcept {
         if (definition.definitionIndex >= definitions.size() || occupied[definition.definitionIndex]
             || !valid(definition.questInitialization)
             || (definition.questInitialization.scope != QuestInitialization::Scope::none
-                && definition.bucketId != 40)) {
+                && definition.bucketId != kPursuitBucketId)) {
             return false;
         }
         occupied[definition.definitionIndex] = true;

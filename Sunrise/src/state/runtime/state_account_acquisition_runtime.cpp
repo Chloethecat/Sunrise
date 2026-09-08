@@ -40,7 +40,7 @@ using Quest = build_data::items::QuestInitialization;
         return false;
     }
     if (mutation.questInitialization.scope == Quest::Scope::none) {
-        return mutation.previousQuestValue == 0;
+        return mutation.previousQuestValue == build_data::items::kUnsetQuestValue;
     }
     std::int32_t current = 0;
     return investment::store::read_unlock(
@@ -536,7 +536,8 @@ bool commit_item_acquisition(PendingItemAcquisition& mutation) noexcept {
         return false;
     }
     const auto& quest = prepared.questInitialization;
-    if (quest.scope != Quest::Scope::none && prepared.previousQuestValue == 0
+    if (quest.scope != Quest::Scope::none
+        && prepared.previousQuestValue == build_data::items::kUnsetQuestValue
         && !investment::store::write_unlock(quest_bank(quest), quest.row, quest.value)) {
         return false;
     }

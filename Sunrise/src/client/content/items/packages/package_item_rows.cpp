@@ -108,7 +108,7 @@ bool build_item_rows(const reader::Source& source,
             corrected_plug_category(item.definitionHash, item.plugCategoryHash);
         build_items::QuestInitialization quest{};
         const auto parentIndex = tables::items::quest_parent(storage.definition);
-        if (needDefinitions && itemClass == 0x80807BEAU && parentIndex < table.count) {
+        if (needDefinitions && itemClass == tables::kItemDefinitionClass && parentIndex < table.count) {
             std::span<const std::byte> parent = storage.definition;
             tables::IndexRow parentRow{};
             std::uint32_t parentClass = itemClass;
@@ -122,7 +122,7 @@ bool build_item_rows(const reader::Source& source,
             if (parentIndex != item.definitionIndex) {
                 parent = storage.questParentDefinition;
             }
-            if (parentReady && parentClass == 0x80807BEAU) {
+            if (parentReady && parentClass == tables::kItemDefinitionClass) {
                 quest =
                     tables::items::read_quest_initialization(storage.definition,
                                                              item.definitionIndex,

@@ -8,7 +8,10 @@
 
 namespace sunrise::middleware::content::packages::tables::items {
 
-/** Returns the objective block's set-bearing item index, or 0xFFFF when unsupported. */
+/** No supported set-bearing item was resolved from the pursuit definition. */
+inline constexpr std::uint16_t kUnavailableQuestParent = 0xFFFFU;
+
+/** Returns the objective block's set-bearing item index, or kUnavailableQuestParent. */
 [[nodiscard]] std::uint16_t quest_parent(std::span<const std::byte> definition) noexcept;
 
 /**

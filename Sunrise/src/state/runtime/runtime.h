@@ -145,7 +145,7 @@ struct PendingItemAcquisition {
         return profileChanged
                || (questInitialization.scope
                        == build_data::items::QuestInitialization::Scope::account
-                   && previousQuestValue == 0);
+                   && previousQuestValue == build_data::items::kUnsetQuestValue);
     }
 };
 
