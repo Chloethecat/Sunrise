@@ -1,7 +1,5 @@
 # Quest-set initialization checks
 
-Branch: `fix/quest-set-initialization`, based on `878b639dd2257924feb01252679634e7bdca4259`.
-
 This change initializes a supported quest set when its first item is acquired and
 the saved set value is zero. The value comes from the first `(value, itemIndex)`
 entry, not the set block's ordering field and not a fixed `100`. Existing nonzero
@@ -59,16 +57,12 @@ separate-root extension recognizes 34 additional character-scoped first steps,
 for 216 total (50 account + 166 character). It includes the confirmed contract
 for item 13138: character row 162, initial value -1583618456; its five later
 members remain excluded. The optional content check reports the current total.
-This is **not** an
-in-game pass count or proof of every vendor's eligibility policy. Technical
-Knockout's gameplay regression has passed on the installed patch: the user
-confirmed the vendor behavior, and the post-test save contains the acquired
-item and initialized account value. Do not repeat that case without a relevant
-regression or behavior change. The user also confirmed Sight, Shoot, Repeat's
-quest-step acquisition behavior and persistence across a client restart after
-the separate-root extension was installed. That gameplay report is accepted;
-its post-test database was not independently inspected. These two completed
-cases do not establish completion/turn-in or text-acknowledgement support.
+These counts describe structural coverage, not gameplay passes or universal
+vendor eligibility. Gameplay checks passed for Technical Knockout acquisition
+and vendor availability (also checked in saved state), and Sight, Shoot, Repeat
+acquisition and persistence across restart (tester-reported). Neither establishes
+quest completion, turn-in or text-acknowledgement support. Manual repairs of
+pre-existing campaign saves are not fresh-acquisition tests for this patch.
 
 The supported shape is an objective-bearing pursuit (bucket 40), linked to a
 mode-1 set, with one unambiguous first-member identifier and one supported

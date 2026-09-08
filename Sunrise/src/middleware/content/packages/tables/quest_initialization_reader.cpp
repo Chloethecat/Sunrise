@@ -11,10 +11,10 @@ namespace {
 using Quest = state::build_data::items::QuestInitialization;
 
 /** These are serialized block pointers, not count/relative array descriptors. */
-bool block(std::span<const std::byte> bytes,
-           std::size_t field,
-           std::uint32_t expectedClass,
-           std::size_t& offset) noexcept {
+[[nodiscard]] bool block(std::span<const std::byte> bytes,
+                         std::size_t field,
+                         std::uint32_t expectedClass,
+                         std::size_t& offset) noexcept {
     std::int64_t relative = 0;
     if (!read(bytes, field, relative) || relative == 0
         || relative
@@ -31,11 +31,12 @@ bool block(std::span<const std::byte> bytes,
     return read(bytes, offset - 4, actualClass) && actualClass == expectedClass;
 }
 
-bool array(std::span<const std::byte> bytes,
-           std::size_t field,
-           std::uint32_t expectedClass,
-           std::size_t stride,
-           Array& rows) noexcept {
+/** Bounds an authored array using its element class and fixed stride. */
+[[nodiscard]] bool array(std::span<const std::byte> bytes,
+                         std::size_t field,
+                         std::uint32_t expectedClass,
+                         std::size_t stride,
+                         Array& rows) noexcept {
     return find_array_at(bytes, field, rows) && rows.elementClass == expectedClass
            && rows.dataOffset <= bytes.size()
            && rows.count <= (bytes.size() - rows.dataOffset) / stride;
@@ -48,7 +49,7 @@ std::uint16_t quest_parent(std::span<const std::byte> definition) noexcept {
     std::size_t objective = 0;
     std::uint16_t parent = 0xFFFFU;
     Array objectives{};
-    if (definition.size() < 240 || !read(definition, 184, bucket) || bucket != 40
+    if (definition.size() < 240 || !read(definition, kBucketIdOffset, bucket) || bucket != 40
         || !block(definition, 0x30, 0x808077EBU, objective)
         || !array(definition, objective, 0x808087B1U, 2, objectives)
         || !read(definition, objective + 0x1C, parent)) {
@@ -95,8 +96,8 @@ Quest read_quest_initialization(std::span<const std::byte> definition,
     if (separateRoot) {
         std::uint8_t parentBucket = 0;
         std::int64_t parentObjective = 0;
-        if (parentIndex == itemIndex || !read(parent, 184, parentBucket) || parentBucket != 37
-            || !read(parent, 0x30, parentObjective) || parentObjective != 0) {
+        if (parentIndex == itemIndex || !read(parent, kBucketIdOffset, parentBucket)
+            || parentBucket != 37 || !read(parent, 0x30, parentObjective) || parentObjective != 0) {
             return {};
         }
     }

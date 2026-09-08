@@ -140,6 +140,7 @@ struct PendingItemAcquisition {
     std::int32_t previousQuestValue{};
     bool prepared{};
 
+    /** Account-scoped initialization must publish even when acquisition charges no materials. */
     [[nodiscard]] bool updates_account() const noexcept {
         return profileChanged
                || (questInitialization.scope
@@ -574,7 +575,7 @@ set_selected_title(std::uint16_t recordIndex, std::uint64_t& characterSoid, bool
 [[nodiscard]] bool
 reserve_selected_character_inventory_serial(std::int32_t& mutationSerial) noexcept;
 
-/** Builds the exact full-account after-image while a prepared item pull remains current. */
+/** Builds account and unlock after-images without committing the prepared acquisition. */
 [[nodiscard]] bool preview_item_acquisition(const PendingItemAcquisition& mutation,
                                             AccountState& after,
                                             unlocks::Table& afterUnlocks) noexcept;

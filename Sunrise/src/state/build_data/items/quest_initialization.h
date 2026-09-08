@@ -6,7 +6,7 @@
 
 namespace sunrise::state::build_data::items {
 
-/** Only the first member of a supported, item-presence-gated quest set. */
+/** Authored initial value and bank row for the first member of a supported quest set. */
 struct QuestInitialization {
     enum class Scope : std::uint8_t { none, account, character };
     std::int32_t value{};
@@ -16,6 +16,7 @@ struct QuestInitialization {
     bool operator==(const QuestInitialization&) const = default;
 };
 
+/** An empty plan is valid; a supported plan must fit its persistent value bank. */
 [[nodiscard]] constexpr bool valid(const QuestInitialization& quest) noexcept {
     using Scope = QuestInitialization::Scope;
     if (quest.scope == Scope::none) {

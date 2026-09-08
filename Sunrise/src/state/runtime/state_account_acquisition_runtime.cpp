@@ -25,6 +25,7 @@ namespace runtime::detail {
 
 using Quest = build_data::items::QuestInitialization;
 
+/** Selects the persistent bank after the nonempty initialization plan has been validated. */
 [[nodiscard]] investment::store::Bank quest_bank(const Quest& quest) noexcept {
     return quest.scope == Quest::Scope::account ? investment::store::Bank::objectiveValues
                                                 : investment::store::Bank::characterObjectValues;
@@ -387,7 +388,7 @@ valid_item_acquisition_source(const PendingItemAcquisition& mutation) noexcept {
            && definition.definitionHash == mutation.acquiredDefinitionHash;
 }
 
-/** Applies one validated insertion over an exact current account without taking State locks. */
+/** Applies an insertion and checks its saved quest value while the caller holds the State lock. */
 [[nodiscard]] bool materialize_item_acquisition(const AccountState& current,
                                                 const PendingItemAcquisition& mutation,
                                                 AccountState& after) noexcept {
@@ -523,7 +524,7 @@ bool preview_direct_item_bundle(const PendingDirectItemBundle& mutation,
     return materialize_direct_item_bundle(account_snapshot(), mutation, after);
 }
 
-/** Commits one prepared insertion only while its prepare-time loadout remains current. */
+/** Commits inventory and initial quest state together while the prepared view remains current. */
 bool commit_item_acquisition(PendingItemAcquisition& mutation) noexcept {
     const PendingItemAcquisition& prepared = mutation;
     const PendingConsumption consume{mutation};

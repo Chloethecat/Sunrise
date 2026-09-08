@@ -1,14 +1,25 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <span>
+
 #include "../../../../state/build_data/items/quest_initialization.h"
-#include "items.h"
 
 namespace sunrise::middleware::content::packages::tables::items {
 
 /** Returns the objective block's set-bearing item index, or 0xFFFF when unsupported. */
 [[nodiscard]] std::uint16_t quest_parent(std::span<const std::byte> definition) noexcept;
 
-/** Unsupported/malformed contracts return an empty plan; they never imply a guessed write. */
+/**
+ * Resolves the first member of a supported quest set to its saved value-bank row.
+ * @param definition Objective-bearing pursuit definition.
+ * @param itemIndex Definition's ordinal in the item table.
+ * @param parent Set-bearing definition named by quest_parent, possibly definition itself.
+ * @param itemCount Bounds for authored item indices.
+ * @param valueMap Serialized unlock value mapping table.
+ * @return An empty plan for unsupported or malformed content; no guessed state write.
+ */
 [[nodiscard]] state::build_data::items::QuestInitialization
 read_quest_initialization(std::span<const std::byte> definition,
                           std::uint16_t itemIndex,
