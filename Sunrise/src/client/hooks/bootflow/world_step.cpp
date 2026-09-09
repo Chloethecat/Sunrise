@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "../../../core/logging/log.h"
+#include "../../activity/mission_launch.h"
 #include "bootflow_hook_lifecycle.h"
 #include "internal.h"
 #include "spawn/slice_set_sample.h"
@@ -55,6 +56,7 @@ std::atomic_uint64_t g_publishedSliceSetTick{0};
 void poll_world_step() noexcept {
     g_publishedStep.store(read_step(), std::memory_order_relaxed);
     g_publishedTick.store(GetTickCount64(), std::memory_order_release);
+    client::activity::mission_launch::poll();
 }
 
 /** Publishes the client's current local slice-set index. */

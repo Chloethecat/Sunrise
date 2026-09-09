@@ -2155,5 +2155,28 @@
     <None Include="resources\database\account_settings_schema.sql" />
     <None Include="resources\database\account_settings_defaults.sql" />
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\client\ui\mission_launch\mission_launch_panel.cpp" />
+    <ClInclude Include="src\client\ui\mission_launch\mission_launch_panel.h" />
+    <ClInclude Include="src\client\ui\mission_launch\mission_launch_model.h" />
+    <ClInclude Include="src\client\ui\mission_launch\mission_launch_cards.h" />
+    <ClCompile Include="src\client\ui\mission_launch\mission_launch_art.cpp" />
+    <ClInclude Include="src\client\ui\mission_launch\mission_launch_art.h" />
+    <ClInclude Include="src\client\ui\mission_launch\mission_launch_manual.h" />
+    <ClInclude Include="src\client\ui\mission_launch\mission_launch_detail_style.h" />
+    <ClCompile Include="src\client\activity\mission_launch.cpp" />
+    <ClInclude Include="src\client\activity\mission_launch.h" />
+    <ClInclude Include="src\client\activity\mission_launch_options.h" />
+    <ClCompile Include="src\client\content\activity\activity_catalog_build.cpp" />
+    <ClInclude Include="src\client\content\activity\activity_catalog_build.h" />
+    <ClInclude Include="src\client\content\activity\activity_presentation_build.h" />
+    <ClInclude Include="src\client\content\activity\activity_menu_text_build.h" />
+    <ClCompile Include="src\state\build_data\activities\activity_catalog.cpp" />
+    <ClInclude Include="src\state\build_data\activities\activity_catalog.h" />
+    <ClInclude Include="src\state\build_data\activities\activity_artwork.h" />
+    <ClInclude Include="src\state\build_data\activities\activity_releases.h" />
+    <ClInclude Include="src\middleware\content\packages\tables\activity_table.h" />
+    <ClInclude Include="src\middleware\content\packages\tables\activity_presentation_table.h" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

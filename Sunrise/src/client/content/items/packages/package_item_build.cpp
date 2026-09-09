@@ -7,7 +7,9 @@
 #include "../../../../core/logging/log.h"
 #include "../../../../middleware/content/packages/reader/reader.h"
 #include "../../../../middleware/content/packages/tables/definition_index_table.h"
+#include "../../../../state/build_data/activities/activity_catalog.h"
 #include "../../../../state/build_data/runtime.h"
+#include "../../activity/activity_catalog_build.h"
 #include "../../activity/entity_position_profile_build.h"
 #include "../../hash_names/hash_name_build.h"
 #include "../../scenarios/scenario_build.h"
@@ -47,7 +49,9 @@ bool ready() noexcept {
     return root_domains_ready() && state::build_data::scenario_layouts_ready()
            && state::build_data::spawn_sets_ready() && state::build_data::hash_names_ready()
            && state::build_data::vendor_catalog_ready()
-           && content::activity::entity_position_profiles::ready();
+           && content::activity::entity_position_profiles::ready()
+           && (state::build_data::activities::ready()
+               || state::build_data::activities::extraction_failed());
 }
 
 /** Publishes the dense item table from the installed packages, once. */
@@ -70,6 +74,8 @@ bool build() noexcept {
     // storage. Both are independent of the item table, so a failure here leaves it alone.
     {
         const reader::Source packageSource{directory.chars.data(), &keys};
+        // Process-local launcher data is extracted even when persistent build data was loaded.
+        (void)content::activity::build_catalog(packageSource, storage.scratch);
         (void)content::activity::entity_position_profiles::build(packageSource, storage.scratch);
         (void)content::scenarios::build(packageSource, storage.scratch);
         (void)content::spawn_sets::build(packageSource, storage.scratch);
