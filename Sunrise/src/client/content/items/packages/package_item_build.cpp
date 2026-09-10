@@ -50,7 +50,10 @@ bool ready() noexcept {
            && content::activity::entity_position_profiles::ready();
 }
 
-/** Publishes the dense item table from the installed packages, once. */
+/**
+ * Publishes missing package domains while retaining completed domains for later calls.
+ * @return True when every owned domain is ready; false leaves unfinished work for another call.
+ */
 bool build() noexcept {
     static Storage storage{};
     reader::BlockKeys keys{};
@@ -113,9 +116,9 @@ bool build() noexcept {
             }
             // The same root names the bucket and socket-list tables.
             storage.root = storage.child;
-            // Records, nodes, season pass rewards and catalysts all resolve slots through the
-            // two unlock mapping tables, so they are read once here.
-            if (!state::build_data::record_definitions_ready()
+            // Quest, record, node, season and catalyst reads share these unlock maps.
+            if (!state::build_data::item_definitions_ready()
+                || !state::build_data::record_definitions_ready()
                 || !state::build_data::node_definitions_ready()
                 || !state::build_data::season_pass_ready() || !exotic_catalysts_settled()) {
                 reason = "unlock_maps";
