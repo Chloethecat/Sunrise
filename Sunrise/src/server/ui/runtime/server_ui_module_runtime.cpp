@@ -20,7 +20,6 @@ core::ui::modules::registry::PageRegistration g_hostPage;
 
 /** @return True when the Server module owns its Core UI registry slot. */
 bool initialize() noexcept {
-    // Activity Launcher exposes manual overrides; keep the old panel unregistered.
     return g_hostPage.acquire(core::ui::modules::Owner::server,
                               kHostStableId,
                               kHostDisplayName,

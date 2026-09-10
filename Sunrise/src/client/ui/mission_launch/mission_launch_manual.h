@@ -2,16 +2,16 @@
 
 #include <imgui.h>
 
-#include "../../../server/ui/activity_override/activity_override_lists.h"
 #include "../../activity/mission_launch_options.h"
+#include "mission_launch_lists.h"
 #include "mission_launch_model.h"
 
 namespace sunrise::client::ui::mission_launch::manual {
 namespace options = client::activity::mission_launch;
-namespace picker = server::ui::activity_override;
+namespace picker = lists;
 namespace forced = state::activity::forced;
 
-// A local draft, never the standalone override panel's published state or picker globals.
+// A local draft, never the published override state.
 inline picker::Lists g_lists{};
 inline options::ManualScratch g_validation{};
 inline forced::ForcedDestination g_value{};
@@ -20,28 +20,7 @@ inline std::uint16_t g_detailIndex{0xFFFF}, g_transport{0xFFFF};
 inline std::size_t g_revision{};
 inline std::array<char, 96> g_activitySearch{};
 
-/** The shared picker has two compiled name aliases; this panel displays only extracted names. */
-inline picker::Label spawn_label(std::size_t index) noexcept {
-    picker::Label label{};
-    if (index >= g_lists.spawnCount) {
-        return label;
-    }
-    state::build_data::hash_names::Name extracted{};
-    const bool named = state::build_data::find_hash_name(g_lists.spawnHashes[index], extracted)
-                       && extracted.nameLength > 0 && extracted.nameLength <= extracted.name.size();
-    const std::string_view markers(g_lists.spawns[index].data());
-    (void)std::snprintf(label.data(),
-                        label.size(),
-                        "0x%08X%s%.*s%s%s",
-                        g_lists.spawnHashes[index],
-                        named ? "  " : "",
-                        named ? static_cast<int>(extracted.nameLength) : 0,
-                        extracted.name.data(),
-                        contains(markers, "(candidate)") ? "  (candidate)" : "",
-                        contains(markers, "(not loaded)") ? "  (not loaded)" : "");
-    return label;
-}
-
+/** Restarts the draft on one destination and rebuilds its dependent rows. */
 inline void select_destination(std::string_view name) noexcept {
     g_value = {};
     if (name.size() > g_value.packageName.size()) {
@@ -62,6 +41,7 @@ inline void select_transport(std::uint16_t index) noexcept {
     g_value.activityIndex = g_value.hasActivityIndex ? index : 0;
 }
 
+/** Picks a bubble, drops the dependent slice and spawn picks, and defaults the slice. */
 inline void select_bubble(std::uint8_t bubble) noexcept {
     g_value.hasBubble = true;
     g_value.bubble = bubble;
@@ -109,6 +89,7 @@ inline void start_custom() noexcept {
     select_destination({});
 }
 
+/** Draws the destination picker of the custom launch page. */
 inline void custom_activity() noexcept {
     picker::refresh_activities(g_lists);
     if (g_revision != state::build_data::scenario_layout_count()) {
@@ -144,6 +125,7 @@ inline void custom_activity() noexcept {
     }
 }
 
+/** Draws the launch-route picker: the catalog rows whose package is the drafted destination. */
 inline void transport_picker(std::span<const Activity> rows,
                              std::span<const bool> available) noexcept {
     ImGui::TextUnformatted("Activity variant");
@@ -179,6 +161,7 @@ inline void transport_picker(std::span<const Activity> rows,
     }
 }
 
+/** Draws the bubble, slice and spawn pickers for the drafted destination. */
 inline void arrival_fields() noexcept {
     if (!g_enabled) {
         return;
@@ -249,11 +232,9 @@ inline void arrival_fields() noexcept {
     ImGui::TextUnformatted("Spawn");
     ImGui::SetNextItemWidth(-1.0F);
     const char* spawnPreview = "Client picks";
-    picker::Label spawnValue{};
     for (std::size_t i = 0; i < g_lists.spawnCount; ++i) {
         if (g_value.hasSpawnSetHash && g_value.spawnSetHash == g_lists.spawnHashes[i]) {
-            spawnValue = spawn_label(i);
-            spawnPreview = spawnValue.data();
+            spawnPreview = g_lists.spawns[i].data();
         }
     }
     if (ImGui::BeginCombo("##manual_spawn", spawnPreview)) {
@@ -276,8 +257,7 @@ inline void arrival_fields() noexcept {
                     std::span(g_validation.spawns).first(g_validation.spawnCount))
                 == options::ManualError::none;
             ImGui::BeginDisabled(!supported);
-            const auto label = spawn_label(i);
-            if (ImGui::Selectable(label.data(),
+            if (ImGui::Selectable(g_lists.spawns[i].data(),
                                   g_value.hasSpawnSetHash
                                       && g_value.spawnSetHash == g_lists.spawnHashes[i])) {
                 g_value.hasSpawnSetHash = true;
