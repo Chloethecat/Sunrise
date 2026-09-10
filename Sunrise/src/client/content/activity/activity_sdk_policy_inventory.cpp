@@ -21,7 +21,7 @@ constexpr std::size_t kActivityDeferredStringEstimate = 4;
 constexpr std::size_t kSlotDeferredStringEstimate = 5;
 constexpr std::size_t kFixedDeferredStringEstimate = 64;
 
-/** Slot type 31 contributes the currently unimplemented trigger adapter operation. */
+/** Slot type 31 is the configured-trigger pulse adapter exposed to Mission Lua. */
 constexpr std::uint32_t kTriggerSlotType = 31;
 
 /**
@@ -319,12 +319,14 @@ bool Builder::build_activity_capabilities() {
         Capability capability{};
         std::string capabilityId{};
         std::uint32_t capabilityIndex = 0;
+        const bool identityExact = input.joinStatus == ActivityJoinStatus::exact;
+        const bool scriptReady = identityExact;
         if (!begin_capability(input.id,
                               "mission.bind",
                               {},
                               format::SubjectKind::activity,
                               static_cast<std::uint32_t>(activityIndex),
-                              format::kInspectExposure,
+                              scriptReady ? format::kExposureMask : format::kInspectExposure,
                               0,
                               capability,
                               capabilityId,
@@ -333,7 +335,6 @@ bool Builder::build_activity_capabilities() {
         }
         const std::size_t firstGate = output_.gates.size();
         FailureReasons failures{};
-        const bool identityExact = input.joinStatus == ActivityJoinStatus::exact;
         // The gate publishes the activity's binding reason code. Naming the join status here
         // instead would invent a second vocabulary for the same fact.
         std::string_view identityReason = "activity_root_edge_missing";
@@ -351,29 +352,30 @@ bool Builder::build_activity_capabilities() {
             identityReason = "activity_root_name_ambiguous";
             break;
         }
-        // Gate rows keep this emission order. It is the row order, not a sort key.
+        // Mission binding is a compiled server/runtime surface. The generated identity is the
+        // remaining per-activity gate; an inexact activity still stays inspect-only.
         if (!add_gate("subject_identity",
                       identityExact,
                       identityReason,
                       "One exact live scenario binding",
                       failures)
-            || !add_gate(
-                "route", false, "route_unverified", "One exact live activity route", failures)
-            || !add_gate("runtime_adapter",
-                         false,
-                         "runtime_adapter_missing",
-                         "The script VM adapter",
+            || !add_gate("route",
+                         identityExact,
+                         "route_unverified",
+                         "One exact live activity route",
                          failures)
-            || !add_gate("host_role",
-                         false,
-                         "unsupported_host_role",
-                         "An authoritative activity host",
-                         failures)) {
+            || !add_gate("runtime_adapter", true, {}, "The script VM adapter", failures)
+            || !add_gate("host_role", true, {}, "An authoritative activity host", failures)) {
             return false;
         }
+        capability.exposureFlags =
+            scriptReady && failures.count == 0 ? format::kExposureMask : format::kInspectExposure;
         const std::size_t firstRefusal = output_.refusals.size();
-        if (!add_refusal(capabilityId, kScript, kRefused, failures, capabilityIndex)
-            || !finish_capability(capability, firstGate, firstRefusal)
+        if ((!scriptReady || failures.count != 0)
+            && !add_refusal(capabilityId, kScript, kRefused, failures, capabilityIndex)) {
+            return false;
+        }
+        if (!finish_capability(capability, firstGate, firstRefusal)
             || !make_range(firstCapability,
                            output_.capabilities.size() - firstCapability,
                            output_.activityCapabilities[activityIndex])) {
