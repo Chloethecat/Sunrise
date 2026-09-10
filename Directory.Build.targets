@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!--
+    Sunrise resolves authored controllers from:
+      <steam_api64.dll directory>\Sunrise\scripts
+
+    Keeping this as Directory.Build.targets means Sunrise.sln/Sunrise.vcxproj do not need
+    hand-edited project entries for Lua files. MSBuild automatically imports this file.
+  -->
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'Sunrise'">
+    <SunriseMissionScript Include="$(MSBuildThisFileDirectory)scripts\**\*" />
+  </ItemGroup>
+
+  <Target Name="CopySunriseMissionScripts"
+          AfterTargets="Build"
+          Condition="'$(MSBuildProjectName)' == 'Sunrise'">
+    <MakeDir Directories="$(OutDir)Sunrise\scripts" />
+    <Copy SourceFiles="@(SunriseMissionScript)"
+          DestinationFiles="@(SunriseMissionScript->'$(OutDir)Sunrise\scripts\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+</Project>

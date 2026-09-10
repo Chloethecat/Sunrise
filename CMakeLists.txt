@@ -134,6 +134,18 @@ set_target_properties(steam_api64 PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/build/x64/$<CONFIG>"
 )
 
+# Authored Mission Lua lives in the repository and is copied beside the built DLL into the
+# artifact directory the mission runtime already searches: <dll directory>/Sunrise/scripts.
+set(SUNRISE_MISSION_SCRIPT_DIRECTORY "${CMAKE_SOURCE_DIR}/scripts")
+add_custom_command(TARGET steam_api64 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:steam_api64>/Sunrise/scripts"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${SUNRISE_MISSION_SCRIPT_DIRECTORY}"
+        "$<TARGET_FILE_DIR:steam_api64>/Sunrise/scripts"
+    COMMENT "Copying Sunrise mission scripts"
+)
+
 set_source_files_properties(Sunrise/vendor/sqlite/sqlite3.c PROPERTIES
     COMPILE_DEFINITIONS "SQLITE_OMIT_LOAD_EXTENSION;SQLITE_THREADSAFE=1"
 )
